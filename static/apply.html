@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apply to Baleegh Academy</title>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:wght@600&family=Noto+Sans+Thaana:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#10262b;--lagoon:#0b4f5c;--mist:#eaf4f4;--line:#c9dcdc;--sun:#d9a21b;--coral:#b8432f;
+--body:"Atkinson Hyperlegible","Noto Sans Thaana",system-ui,sans-serif;--head:"Fraunces",Georgia,serif}
+*{box-sizing:border-box}
+html[dir=rtl]{--body:"Noto Sans Thaana","Atkinson Hyperlegible",system-ui,sans-serif;--head:"Noto Sans Thaana",serif}
+body{margin:0;font:16px/1.5 var(--body);color:var(--ink);background:var(--mist)}
+main{max-width:620px;margin:0 auto;padding:1.2rem}
+h1,h2{font-family:var(--head);color:var(--lagoon);margin:0 0 .5rem}
+.panel{background:#fff;border:1px solid var(--line);border-radius:8px;padding:1.1rem;margin-bottom:1rem}
+label{display:flex;flex-direction:column;gap:.2rem;font-size:.9rem;margin-bottom:.8rem}
+input,select{font:inherit;padding:.55rem;border:1px solid var(--line);border-radius:6px;min-height:44px;background:#fff}
+input[type=file]{padding:.4rem}
+.btn{background:var(--lagoon);color:#fff;border:0;border-radius:6px;padding:.6rem 1.1rem;min-height:44px;font:inherit;cursor:pointer;text-decoration:none;display:inline-block}
+.btn.alt{background:var(--sun);color:var(--ink)}
+.msg{padding:.7rem .9rem;border-radius:6px;margin-bottom:.8rem}.err{background:#f8e1dc;color:var(--coral)}.ok{background:#dff1e3;color:#1f6b35}
+.hint{font-size:.85rem;color:#4a6468}.hp{position:absolute;left:-9999px}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem}
+.top button{background:none;border:1px solid var(--line);border-radius:6px;padding:.3rem .7rem;cursor:pointer;font:inherit}
+:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
+</style>
+</head>
+<body>
+<main>
+<div class="top"><h1 id="title">Apply to Baleegh Academy</h1><span><button data-l="en">EN</button> <button data-l="dv">ދިވެހި</button></span></div>
+<div id="out"></div>
+<form id="f" class="panel" enctype="multipart/form-data" novalidate>
+  <div class="hp" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
+  <label><span data-t="a_name">Full name</span><input name="full_name" required autocomplete="name"></label>
+  <label><span data-t="a_dob">Date of birth</span><input name="date_of_birth" id="dob" type="date" required></label>
+  <label><span data-t="a_grade">Grade (if you are in school)</span><input name="grade"></label>
+  <label><span data-t="a_phone">Phone number</span><input name="phone" type="tel" required autocomplete="tel"></label>
+  <label><span data-t="a_email">Email (your login will use this)</span><input name="email" type="email" required autocomplete="email"></label>
+  <label><span data-t="a_island">Island</span><input name="island"></label>
+  <label><span data-t="a_course">Course</span><select name="course_id" id="course" required></select></label>
+  <label><span data-t="a_batch">Preferred batch</span><select name="batch_id" id="batch"></select></label>
+  <label><span data-t="a_id">Copy of your ID card (PDF, JPG or PNG, up to 5 MB)</span><input name="id_card" type="file" accept=".pdf,.jpg,.jpeg,.png" required></label>
+  <div id="guardian" hidden>
+    <h2 data-t="a_guardian">Guardian details (required under 18)</h2>
+    <label><span data-t="a_gname">Guardian full name</span><input name="guardian_name"></label>
+    <label><span data-t="a_grel">Relationship</span><input name="guardian_relationship"></label>
+    <label><span data-t="a_gphone">Guardian phone</span><input name="guardian_phone" type="tel"></label>
+    <label><span data-t="a_gid">Copy of guardian's ID card</span><input name="guardian_id" type="file" accept=".pdf,.jpg,.jpeg,.png"></label>
+  </div>
+  <p class="hint" data-t="a_privacy">Your ID copies are stored privately and only academy admins can open them.</p>
+  <button class="btn" id="go"><span data-t="a_submit">Submit application</span></button>
+</form>
+<form id="sf" class="panel">
+  <h2 data-t="a_check">Check your application</h2>
+  <label><span data-t="a_ref">Reference number</span><input id="sref" placeholder="BA-XXXXXX"></label>
+  <label><span data-t="a_phone">Phone number</span><input id="sphone" type="tel"></label>
+  <button class="btn alt"><span data-t="a_lookup">Check status</span></button>
+</form>
+<p><a class="btn alt" id="wa" href="#" target="_blank" rel="noopener" data-t="a_wa">Chat with us on WhatsApp</a></p>
+</main>
+<script>
+const API = window.PORTAL_API || "";
+const EN = {a_name:"Full name",a_dob:"Date of birth",a_grade:"Grade (if you are in school)",a_phone:"Phone number",a_email:"Email (your login will use this)",a_island:"Island",a_course:"Course",a_batch:"Preferred batch",a_id:"Copy of your ID card (PDF, JPG or PNG, up to 5 MB)",a_guardian:"Guardian details (required under 18)",a_gname:"Guardian full name",a_grel:"Relationship",a_gphone:"Guardian phone",a_gid:"Copy of guardian's ID card",a_privacy:"Your ID copies are stored privately and only academy admins can open them.",a_submit:"Submit application",a_check:"Check your application",a_ref:"Reference number",a_lookup:"Check status",a_wa:"Chat with us on WhatsApp",title:"Apply to Baleegh Academy",sent:"Application received. Your reference is",keep:"Keep this reference and your phone number to check your status.",any:"No preference",spots:"seats left",full:"full, waitlist",st_pending:"Under review",st_approved:"Approved. We will message you your login details.",st_rejected:"Not accepted",st_waitlist:"On the waiting list"};
+let T = {}, lang = localStorage.getItem("lang") || "en", wa = "";
+const t = k => T[k] || EN[k] || k;
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const show = (m, ok) => { $("#out").innerHTML = `<div class="msg ${ok ? "ok" : "err"}" role="status">${m}</div>`; window.scrollTo(0, 0); };
+async function setLang(l) {
+  lang = l; localStorage.setItem("lang", l);
+  T = l === "dv" ? await fetch(API + "/i18n/dv.json").then(r => r.json()).catch(() => ({})) : {};
+  document.documentElement.lang = l; document.documentElement.dir = l === "dv" ? "rtl" : "ltr";
+  document.querySelectorAll("[data-t]").forEach(e => e.textContent = t(e.dataset.t));
+  $("#title").textContent = t("title");
+}
+document.querySelectorAll("[data-l]").forEach(b => b.onclick = () => setLang(b.dataset.l));
+let batches = [], minorAge = 18;
+async function init() {
+  const [courses, bs, info] = await Promise.all(["/public/courses", "/public/batches", "/public/info"].map(p => fetch(API + "/api" + p).then(r => r.json())));
+  batches = bs; wa = info.whatsapp; minorAge = info.minor_age || 18;
+  if (info.applications_open === false) { $("#f").hidden = true; const m = document.createElement("div"); m.className = "msg err"; m.textContent = info.applications_closed_message || "Applications are closed at the moment. Please contact us on WhatsApp."; $("#f").before(m); }
+  $("#wa").href = "https://wa.me/" + wa + "?text=" + encodeURIComponent("Assalaamu alaikum, I have a question about joining " + info.academy_name);
+  const open = courses.filter(c => c.status === "open");
+  $("#course").innerHTML = open.map(c => `<option value="${c.id}">${esc(c.name)} ${esc(c.level || "")} (MVR ${c.monthly_fee_mvr}/month)</option>`).join("");
+  fillBatches(); await setLang(lang);
+}
+function fillBatches() {
+  const cid = +$("#course").value;
+  $("#batch").innerHTML = `<option value="">${t("any")}</option>` + batches.filter(b => b.course_id === cid).map(b =>
+    `<option value="${b.id}">${esc(b.code)} ${esc(b.start_time || "")} (${b.spots > 0 ? b.spots + " " + t("spots") : t("full")})</option>`).join("");
+}
+$("#course").onchange = fillBatches;
+$("#dob").onchange = () => {
+  const d = new Date($("#dob").value); if (isNaN(d)) return;
+  const n = new Date(); let age = n.getFullYear() - d.getFullYear();
+  if (n.getMonth() < d.getMonth() || (n.getMonth() === d.getMonth() && n.getDate() < d.getDate())) age--;
+  $("#guardian").hidden = age >= minorAge;
+};
+$("#f").onsubmit = async e => {
+  e.preventDefault(); $("#go").disabled = true;
+  try {
+    const r = await fetch(API + "/api/public/apply", {method: "POST", body: new FormData($("#f"))});
+    const j = await r.json();
+    if (!r.ok) return show(esc(j.error || "Something went wrong"));
+    const phone = $("#f").phone.value;
+    const link = "https://wa.me/" + wa + "?text=" + encodeURIComponent("Assalaamu alaikum, I applied to Baleegh Academy. Reference " + j.ref);
+    show(`${esc(t("sent"))} <b>${esc(j.ref)}</b>. ${esc(t("keep"))} <a href="${link}" target="_blank" rel="noopener">WhatsApp</a>`, true);
+    $("#f").reset(); $("#guardian").hidden = true; $("#sref").value = j.ref; $("#sphone").value = phone;
+  } catch { show("Could not reach the server. Check your connection and try again."); }
+  finally { $("#go").disabled = false; }
+};
+$("#sf").onsubmit = async e => {
+  e.preventDefault();
+  const r = await fetch(API + "/api/public/apply/status", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ref: $("#sref").value, phone: $("#sphone").value})});
+  const j = await r.json();
+  if (!r.ok) return show(esc(j.error));
+  show(esc(t("st_" + j.status)) + (j.reason ? ": " + esc(j.reason) : ""), j.status !== "rejected");
+};
+init();
+</script>
+</body>
+</html>

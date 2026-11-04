@@ -1,0 +1,59 @@
+BALEEGH ACADEMY PORTAL - TEST REPORT, PHASE 4 (fees and payments)
+Run on 26 Oct 2026. Python 3.12, Flask 3.1, SQLite, reportlab 4.4, Chromium via Playwright 1.56.
+
+AUTOMATED TESTS (python -m unittest tests.test_phase1 tests.test_phase2 tests.test_phase3 tests.test_phase4)
+  Phase 1   9 tests   passed
+  Phase 2  11 tests   passed
+  Phase 3  18 tests   passed
+  Phase 4  46 tests   passed
+  TOTAL    84 of 84 passed (the 38 earlier tests still pass unchanged)
+
+PHASE 4 TESTS COVER (each test builds its own data and uses a fixed clock, 12 March 2026)
+  Invoices: amount from course fee, first invoice on approval and on admin enrollment, generating twice makes no duplicates,
+            waitlisted / dropped / fee-0 / not-yet-enrolled skipped, fee change leaves old invoices alone, due-day and
+            first-month settings, transfer moves the open invoice, re-enroll after drop, voiding open invoices after a drop
+  Discounts: fixed and percent, reason required, never below 0, one-off invoice discounts, family concession
+  Slips: PDF/JPG/PNG accepted; executable, fake content, oversize and bad dates rejected; another student's invoice refused;
+         rate limit; reject needs a reason, student sees it and can re-upload
+  Verification: marks paid and issues a receipt, double-verify 409, partial payment leaves a balance, over-payment blocked,
+                reversal reopens the balance, receipt numbers never reused, duplicate-slip warning needing confirmation
+  Payments and receipts: cash payment, sequential numbers with prefix setting, PDF starts with %PDF, no bank account on it,
+                         identical on re-download, another student 404, teacher 403, no token 401
+  Reminders: overdue derived from the clock, WhatsApp and Viber links with the 960 prefix (student and guardian), templates
+             fill placeholders, "reminder sent" recorded, email OFF by default and never pretends, email works against a real
+             local SMTP server and a failure is not recorded as sent
+  Void / waive / reopen, monthly report (invoiced = collected + outstanding), CSV content, dashboard numbers
+  Access control: every fee endpoint checked for teacher (403), student on admin routes (403), no token (401);
+                  students see only their own money; teachers see no fee data anywhere
+  Audit log: every money-changing action is recorded with who and when
+  Language: every new string in en.json, every Dhivehi key exists in English, Thaana present in the Dhivehi drafts, fees.js served
+  Database: upgrade from a Phase 3 database by restarting; the database itself refuses negative money, a wrong total,
+            an "overdue" status and a duplicate invoice
+
+BROWSER TEST (python tests/e2e_browser.py; real Chromium, phone-sized 390x800 screen)
+  46 of 46 checks passed, no script errors (21 earlier checks + 25 for fees).
+  Flow: admin enters bank details and generates the invoice (a second press creates nothing)
+        -> student sees bank details and the invoice, uploads a slip -> admin opens the slip and rejects it with a reason
+        -> student sees the reason and uploads again -> admin verifies MVR 300 (partial) -> student sees the MVR 50 balance
+        -> admin records MVR 50 cash -> invoice shows Paid -> student downloads the PDF receipt
+        -> dashboard, monthly report and CSV show the numbers -> Dhivehi view keeps MVR amounts and invoice numbers left-to-right
+        -> every admin Fees sub-tab and the student Fees page fit a phone with no sideways scrolling; buttons and fields are 44px tall.
+
+PROBLEMS FOUND AND FIXED DURING THIS PHASE
+  1. Small buttons (.btn.sm, 32px) and phone nav buttons (43px) were under the 44px tap-target rule. Fixed in index.html.
+  2. Three unit tests and one browser check were wrong, not the product: two unit tests assumed a student name and a balance that
+     the test had not created, the fake mail server did not really stop (so the "mail server is down" case still connected),
+     and the browser check assumed the invoice was not yet overdue (it is, after the 10th). All fixed; each check still fails
+     if the behaviour breaks.
+  3. fees.js was missing, so the language test failed until it was written. Nothing else in the backend needed changing.
+
+NOT TESTED (be aware)
+  - Real bank statements, real transfer slips from Maldivian banks, real money
+  - Real WhatsApp / Viber delivery (links are built and the click is recorded; I cannot open the apps)
+  - A real email service or Google Workspace SMTP (only a local fake SMTP server)
+  - PostgreSQL (SQL is written to be compatible; the receipt-number counter relies on SQLite's write lock, so on Postgres use a
+    sequence or SELECT ... FOR UPDATE before going multi-server)
+  - Real phones, Safari/iOS, Firefox, screen readers; only Chromium at 390px
+  - Several gunicorn workers at once (the slip rate limit is per process)
+  - Thaana text on receipts (not supported by the built-in PDF fonts; prints "?")
+  - Dhivehi wording: machine drafts, needs a native speaker (marked in dv.json "_review")

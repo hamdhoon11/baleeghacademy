@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Baleegh Academy Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:wght@600&family=Noto+Sans+Thaana:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#10262b;--lagoon:#0b4f5c;--mist:#eaf4f4;--line:#c9dcdc;--sun:#d9a21b;--coral:#b8432f;--white:#fff;
+--body:"Atkinson Hyperlegible","Noto Sans Thaana",system-ui,sans-serif;--head:"Fraunces",Georgia,serif;box-sizing:border-box}
+*,*::before,*::after{box-sizing:inherit}
+html[dir=rtl]{--body:"Noto Sans Thaana","Atkinson Hyperlegible",system-ui,sans-serif;--head:"Noto Sans Thaana",serif}
+body{margin:0;font:16px/1.5 var(--body);color:var(--ink);background:var(--mist)}
+h1,h2,h3{font-family:var(--head);font-weight:600;margin:0 0 .6rem;color:var(--lagoon)}
+h1{font-size:1.7rem}h2{font-size:1.3rem}
+button,input,select{font:inherit}
+:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+nav{background:var(--lagoon);color:#fff;padding:1.2rem 1rem;display:flex;flex-direction:column;gap:.2rem;position:sticky;top:0;height:100vh}
+nav .brand{font:600 1.25rem var(--head);margin-bottom:1rem}
+nav button{background:none;border:0;color:#d7ecec;text-align:start;padding:.6rem .8rem;border-radius:6px;cursor:pointer}
+nav button[aria-current=page]{background:#fff;color:var(--lagoon);font-weight:700}
+nav .sp{flex:1}
+main{padding:1.5rem;max-width:1000px;width:100%;min-width:0}
+.panel{background:var(--white);border:1px solid var(--line);border-radius:8px;padding:1rem;margin-bottom:1rem;overflow-x:auto}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.8rem;margin-bottom:1rem}
+.stat{background:var(--white);border-inline-start:5px solid var(--sun);padding:.8rem 1rem}
+.stat b{display:block;font:600 2rem var(--head);color:var(--lagoon)}
+table{border-collapse:collapse;width:100%;min-width:480px}
+th,td{text-align:start;padding:.5rem .6rem;border-bottom:1px solid var(--line)}
+th{font-weight:700;color:var(--lagoon)}
+form.row{display:flex;flex-wrap:wrap;gap:.6rem;align-items:end}
+label{display:flex;flex-direction:column;font-size:.85rem;gap:.2rem;flex:1 1 150px}
+input,select{padding:.5rem;border:1px solid var(--line);border-radius:6px;background:#fff;min-height:44px}
+.btn{background:var(--lagoon);color:#fff;border:0;border-radius:6px;padding:.55rem 1rem;min-height:44px;cursor:pointer;text-decoration:none;display:inline-block}
+.btn.alt{background:var(--sun);color:var(--ink)}
+.btn.danger{background:var(--coral)}
+.banner{background:#fbefc8;color:#5c4300;border-radius:6px;padding:.6rem .8rem;margin-bottom:.8rem;white-space:pre-wrap}
+.btn.sm{padding:.2rem .6rem;min-height:44px;font-size:.85rem}
+.msg{padding:.6rem .8rem;border-radius:6px;margin-bottom:.8rem}
+.msg.err{background:#f8e1dc;color:var(--coral)}.msg.ok{background:#dff1e3;color:#1f6b35}
+.login{max-width:380px;margin:8vh auto;padding:1rem}
+.login .panel{padding:1.4rem}
+.lang{display:flex;gap:.4rem;justify-content:center;margin-top:.8rem}
+.lang button{background:none;border:1px solid var(--line);border-radius:6px;padding:.3rem .7rem;cursor:pointer}
+.tag{display:inline-block;padding:0 .5rem;border-radius:99px;background:var(--mist);font-size:.8rem}
+.tag.ok{background:#dff1e3;color:#1f6b35}.tag.bad{background:#f8e1dc;color:var(--coral)}.tag.warn{background:#fbefc8;color:#7a5a00}
+textarea{font:inherit;padding:.5rem;border:1px solid var(--line);border-radius:6px;width:100%;resize:vertical}
+.cl{display:flex;justify-content:space-between;align-items:center;gap:.8rem;padding:.6rem 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.cl.off{opacity:.65}.cl:last-child{border-bottom:0}
+.panel.cl{padding:.8rem 1rem}
+.next{border-inline-start:6px solid var(--sun)}
+.bigtime{font:600 1.4rem var(--head);color:var(--lagoon);margin:.2rem 0}
+.btn.big{font-size:1.1rem;padding:.7rem 1.6rem}
+.hint{font-size:.85rem;color:#4a6468}.pre{white-space:pre-wrap}
+.seg{display:flex;flex-wrap:wrap;gap:.3rem}
+.seg label{position:relative;flex:0 0 auto;flex-direction:row}
+.seg input{position:absolute;opacity:0;inset:0;width:100%;height:100%;margin:0;cursor:pointer}
+.seg span{display:block;padding:.5rem .8rem;border:1px solid var(--line);border-radius:6px;min-height:44px;line-height:1.7;background:#fff}
+.seg input:checked+span{background:var(--lagoon);color:#fff;border-color:var(--lagoon)}
+.seg input:checked+span::before{content:"\2713\00a0"}
+.seg input:focus-visible+span{outline:3px solid var(--sun);outline-offset:2px}
+.subtabs{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.8rem}
+.subtabs button{background:#fff;border:1px solid var(--line);border-radius:6px;padding:.5rem .9rem;min-height:44px;cursor:pointer}
+.subtabs button[aria-current=true]{background:var(--lagoon);color:#fff;border-color:var(--lagoon)}
+.sub{border-bottom:1px solid var(--line);padding:.7rem 0}.sub:last-child{border-bottom:0}
+fieldset.days{border:1px solid var(--line);border-radius:6px;display:flex;flex-wrap:wrap;gap:.3rem;flex:1 1 100%;margin:0}
+fieldset.days label{flex:0 0 auto;flex-direction:row;align-items:center;gap:.3rem;padding:.2rem .5rem}
+@media(max-width:760px){.app{grid-template-columns:1fr}
+nav{position:fixed;bottom:0;inset-inline:0;top:auto;height:auto;flex-direction:row;overflow-x:auto;padding:.4rem;z-index:5}
+nav .brand,nav .sp{display:none}nav button{white-space:nowrap;padding:.6rem .7rem;min-height:44px}
+main{padding:1rem 1rem 5.5rem}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// Set API to your backend URL when the frontend is hosted on Netlify (same-origin when served by Flask).
+const API = window.PORTAL_API || "";
+let T = {}, EN = {}, lang = localStorage.getItem("lang") || "en";
+let S = {token: sessionStorage.getItem("tok"), user: null, view: null, note: null};
+const t = k => T[k] || EN[k] || k;
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const $ = s => document.querySelector(s);
+
+async function api(path, method = "GET", body) {
+  const r = await fetch(API + "/api" + path, {method, headers: {"Content-Type": "application/json", ...(S.token ? {Authorization: "Bearer " + S.token} : {})}, body: body ? JSON.stringify(body) : undefined});
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && S.token) { signout(); throw new Error(j.error); }
+  if (!r.ok) throw new Error(j.error || "Something went wrong");
+  return j;
+}
+async function loadLang(l) {
+  lang = l; localStorage.setItem("lang", l);
+  EN = await (await fetch(API + "/i18n/en.json")).json();
+  T = l === "en" ? {} : await (await fetch(API + "/i18n/" + l + ".json")).json();
+  document.documentElement.lang = l; document.documentElement.dir = l === "dv" ? "rtl" : "ltr";
+}
+function signout() { sessionStorage.removeItem("tok"); S = {token: null, user: null, view: null, info: S.info}; render(); }
+const flash = (m, ok) => { S.note = {m, ok}; };
+const note = () => { const n = S.note; S.note = null; return n ? `<div class="msg ${n.ok ? "ok" : "err"}" role="status">${esc(n.m)}</div>` : ""; };
+
+const TABS = {
+  admin: ["dashboard", "admissions", "courses", "batches", "classroom", "people", "enrollments", "settings", "audit"],
+  teacher: ["home", "classroom"], student: ["home", "assignments", "progress", "materials"]
+};
+// admins with limited permissions only see the tabs for their areas (the server enforces this too)
+const TAB_PERM = {admissions: "admissions", courses: "courses", batches: "batches", classroom: "classroom", people: "people", enrollments: "enrollments", fees: "fees", settings: "settings", audit: "audit"};
+const tabOk = v => S.user.role !== "admin" || !S.user.permissions || !TAB_PERM[v] || S.user.permissions.includes(TAB_PERM[v]);
+const table = (cols, data, extra) => data.length ? `<table><thead><tr>${cols.map(c => `<th>${esc(t(c))}</th>`).join("")}${extra ? "<th></th>" : ""}</tr></thead><tbody>${data.map(r => `<tr>${cols.map(c => `<td>${esc(r[c])}</td>`).join("")}${extra ? `<td>${extra(r)}</td>` : ""}</tr>`).join("")}</tbody></table>` : `<p>${t("empty")}</p>`;
+const field = (id, label, type = "text", opts) => opts ? `<label>${esc(t(label))}<select id="${id}">${opts.map(o => `<option value="${esc(o[0])}">${esc(o[1])}</option>`).join("")}</select></label>` : `<label>${esc(t(label))}<input id="${id}" type="${type}"></label>`;
+const val = id => $("#" + id).value.trim();
+const form = (id, inner, btn) => `<form class="row" id="${id}">${inner}<button class="btn alt">${esc(t(btn || "add"))}</button></form>`;
+function onSubmit(id, fn) { const f = $("#" + id); if (f) f.onsubmit = async e => { e.preventDefault(); try { await fn(); flash(t("saved"), true); } catch (x) { flash(x.message); } render(); }; }
+
+const views = {
+  async dashboard() {
+    const d = await api("/dashboard");
+    return `<h1>${t("dashboard")}</h1><div class="stats">${["pending_applications", "students", "teachers", "batches_active", "active_enrollments", "waitlisted"].map(k => `<div class="stat"><b>${d[k]}</b>${esc(t(k))}</div>`).join("")}</div><div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
+  },
+  async admissions() {
+    const f = S.filter || "pending";
+    const [list, bs] = await Promise.all([api("/applications?status=" + f), api("/batches")]);
+    const a = S.sel ? list.find(x => x.id === S.sel) : null;
+    setTimeout(() => {
+      $("#af").onchange = e => { S.filter = e.target.value; S.sel = null; S.result = null; render(); };
+      document.querySelectorAll("[data-rev]").forEach(b => b.onclick = () => { S.sel = +b.dataset.rev; S.result = null; render(); });
+      const act = (id, fn) => { const el = $("#" + id); if (el) el.onclick = async () => { try { await fn(); } catch (x) { flash(x.message); } render(); }; };
+      const open = which => async () => { const w = window.open("", "_blank"); try { const r = await fetch(API + "/api/applications/" + a.id + "/file/" + which, {headers: {Authorization: "Bearer " + S.token}}); if (!r.ok) throw new Error((await r.json()).error); w.location = URL.createObjectURL(await r.blob()); } catch (x) { w.close(); flash(x.message); render(); } };
+      if (a) {
+        $("#vi") && ($("#vi").onclick = open("id")); $("#vg") && ($("#vg").onclick = open("guardian_id"));
+        act("ap", async () => { S.result = await api("/applications/" + a.id + "/approve", "POST", {batch_id: val("ab"), delete_files: $("#adel").checked}); S.filter = "approved"; });
+        act("rj", async () => { const r = prompt(t("reason_prompt")); if (!r) return; await api("/applications/" + a.id + "/reject", "POST", {reason: r}); S.sel = null; flash(t("saved"), true); });
+        act("wl", async () => { await api("/applications/" + a.id + "/waitlist", "POST"); S.sel = null; flash(t("saved"), true); });
+        act("df", async () => { await api("/applications/" + a.id + "/files", "DELETE"); flash(t("saved"), true); });
+      }
+    });
+    const R = S.result ? `<div class="msg ok"><b>${esc(t("temp_pw"))}:</b> ${esc(S.result.temp_password)}<br><a class="btn sm alt" href="${esc(S.result.whatsapp_link)}" target="_blank" rel="noopener">${t("send_whatsapp")}</a></div>` : "";
+    const D = a ? `<div class="panel"><h2>${esc(a.full_name)} · ${esc(a.ref)}</h2><p>${esc(a.course_name)} ${esc(a.batch_code || "")} · ${esc(a.phone)} · ${esc(a.email)} · ${esc(a.island || "")}<br>${esc(t("date_of_birth"))}: ${esc(a.date_of_birth)} ${a.is_minor ? '<span class="tag">&lt;18</span>' : ""}</p>${a.is_minor ? `<p>${esc(t("guardian_name"))}: ${esc(a.guardian_name)} (${esc(a.guardian_relationship)}) ${esc(a.guardian_phone)}</p>` : ""}${a.reject_reason ? `<p>${esc(a.reject_reason)}</p>` : ""}
+      <p>${a.has_id ? `<button class="btn sm" id="vi">${t("view_id")}</button> ` : ""}${a.has_guardian_id ? `<button class="btn sm" id="vg">${t("view_guardian_id")}</button> ` : ""}${a.has_id || a.has_guardian_id ? `<button class="btn sm" id="df">${t("delete_files")}</button>` : ""}</p>
+      ${["pending", "waitlist"].includes(a.status) ? `<div class="row" style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:end">${field("ab", "assign_batch", "", bs.map(x => [x.id, x.course_name + " " + x.code]))}<label style="flex:0"><span><input type="checkbox" id="adel"> ${esc(t("delete_after"))}</span></label><button class="btn" id="ap">${t("approve")}</button>${a.status === "pending" ? `<button class="btn alt" id="wl">${t("put_waitlist")}</button>` : ""}<button class="btn alt" id="rj">${t("reject")}</button></div>` : ""}</div>` : "";
+    setTimeout(() => { if (a && $("#ab") && a.batch_id) $("#ab").value = a.batch_id; });
+    return `<h1>${t("admissions")}</h1>${R}<div class="panel"><label>${t("status")}<select id="af">${["pending", "waitlist", "approved", "rejected"].map(x => `<option value="${x}" ${x === f ? "selected" : ""}>${esc(t(x === "waitlist" ? "waitlist" : x))}</option>`).join("")}</select></label>${table(["ref", "full_name", "course_name", "batch_code", "phone", "created_at"], list, r => `<button class="btn sm" data-rev="${r.id}">${t("review")}</button>`)}</div>${D}`;
+  },
+  async courses() {
+    const c = await api("/courses");
+    setTimeout(() => onSubmit("fc", () => api("/courses", "POST", {name: val("cn"), level: val("cl"), monthly_fee_mvr: val("cf"), textbook: val("ct"), status: val("cs")})));
+    return `<h1>${t("courses")}</h1><div class="panel">${form("fc", field("cn", "name") + field("cl", "level") + field("cf", "fee", "number") + field("ct", "textbook") + field("cs", "status", "", [["open", "open"], ["upcoming", "upcoming"], ["closed", "closed"]]))}</div><div class="panel">${table(["name", "level", "monthly_fee_mvr", "status"], c)}</div>`;
+  },
+  async people() {
+    const u = await api("/users");
+    setTimeout(() => { onSubmit("fu", () => api("/users", "POST", {full_name: val("un"), email: val("ue"), password: val("up"), role: val("ur")}));
+      document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = async () => { try { await api("/users/" + b.dataset.toggle, "PATCH", {is_active: b.dataset.on !== "1"}); } catch (x) { flash(x.message); } render(); }); });
+    return `<h1>${t("people")}</h1><div class="panel">${form("fu", field("un", "name") + field("ue", "email", "email") + field("up", "password", "password") + field("ur", "role", "", [["student", "student"], ["teacher", "teacher"], ["admin", "admin"]]))}</div><div class="panel">${table(["full_name", "email", "role", "is_active"], u.map(x => ({...x, is_active: x.is_active ? "✓" : "✗"})), r => `<button class="btn sm" data-toggle="${r.id}" data-on="${r.is_active === "✓" ? 1 : 0}">${r.is_active === "✓" ? "Disable" : "Enable"}</button>`)}</div>`;
+  },
+  async enrollments() {
+    const [e, st, b] = await Promise.all([api("/enrollments"), api("/users?role=student"), api("/batches")]);
+    setTimeout(() => { onSubmit("fe", () => api("/enrollments", "POST", {student_id: val("es"), batch_id: val("eb")}));
+      document.querySelectorAll("[data-drop]").forEach(x => x.onclick = async () => { try { await api("/enrollments/" + x.dataset.drop, "PATCH", {status: "dropped"}); } catch (y) { flash(y.message); } render(); }); });
+    return `<h1>${t("enrollments")}</h1><div class="panel">${form("fe", field("es", "student", "", st.map(x => [x.id, x.full_name])) + field("eb", "batch", "", b.map(x => [x.id, x.course_name + " " + x.code])), "enroll")}</div><div class="panel">${table(["student_name", "course_name", "batch_code", "status"], e, r => ["active", "waitlist"].includes(r.status) ? `<button class="btn sm" data-drop="${r.id}">${t("drop")}</button>` : "")}</div>`;
+  },
+  async settings() {
+    const s = await api("/settings");
+    const keys = Object.keys(s);
+    setTimeout(() => { keys.forEach(k => $("#s_" + k).value = s[k]); onSubmit("fs", () => api("/settings", "PUT", Object.fromEntries(keys.map(k => [k, val("s_" + k)])))); });
+    return `<h1>${t("settings")}</h1><div class="panel">${form("fs", keys.map(k => field("s_" + k, k)).join(""), "save")}</div>`;
+  },
+  async audit() { return `<h1>${t("audit")}</h1><div class="panel">${table(["at", "user_name", "action", "entity", "detail"], await api("/audit"))}</div>`; },
+};
+
+async function render() {
+  const root = $("#root");
+  if (!S.token) {
+    root.innerHTML = `<div class="login"><div class="panel"><h1>${esc((S.info && S.info.academy_name) || t("app"))}</h1>${S.info && S.info.tagline ? `<p class="hint">${esc(S.info.tagline)}</p>` : ""}${S.info && S.info.banner ? `<div class="banner" role="note">${esc(S.info.banner)}</div>` : ""}${note()}<form id="fl"><label>${t("email")}<input id="le" type="email" autocomplete="username" required></label><br><label>${t("password")}<input id="lp" type="password" autocomplete="current-password" required></label><br><button class="btn">${t("signin")}</button></form><div class="lang"><button data-l="en">English</button><button data-l="dv">ދިވެހި</button></div></div></div>`;
+    $("#fl").onsubmit = async e => { e.preventDefault(); try { const r = await api("/auth/login", "POST", {email: val("le"), password: val("lp")}); S.token = r.token; sessionStorage.setItem("tok", r.token); S.user = r.user; S.view = null; if (r.user.lang !== lang) await loadLang(r.user.lang); } catch (x) { flash(x.message); } render(); };
+  } else {
+    if (!S.user) S.user = (await api("/auth/me")).user;
+    const tabs = TABS[S.user.role].filter(tabOk); if (!tabs.includes(S.view)) S.view = tabs[0];
+    let html; try { html = await views[S.view](); } catch (x) { html = `<div class="msg err">${esc(x.message)}</div>`; }
+    root.innerHTML = `<div class="app"><nav aria-label="Main"><div class="brand">${t("app")}</div>${tabs.map(v => `<button data-v="${v}" ${v === S.view ? 'aria-current="page"' : ""}>${esc(t(v))}</button>`).join("")}<div class="sp"></div><div class="lang"><button data-l="en">EN</button><button data-l="dv">ދިވެހި</button></div><button id="so">${t("signout")}</button></nav><main>${note()}${html}</main></div>`;
+    document.querySelectorAll("nav [data-v]").forEach(b => b.onclick = () => { S.view = b.dataset.v; render(); });
+    $("#so").onclick = signout;
+  }
+  document.querySelectorAll("[data-l]").forEach(b => b.onclick = async () => { await loadLang(b.dataset.l); if (S.token) api("/auth/language", "PATCH", {lang: b.dataset.l}).catch(() => {}); render(); });
+}
+window.addEventListener("DOMContentLoaded", () => loadLang(lang).then(() => api("/public/info").then(i => { S.info = i; }).catch(() => {})).then(render));
+</script>
+<script src="learning.js"></script>
+<script src="fees.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>
