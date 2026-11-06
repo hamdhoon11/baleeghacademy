@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled','held','cancelled')),
   topic TEXT,
   note TEXT,
+  meet_link TEXT,                      -- one-off link for this class only (Session 4); NULL = use the batch's link
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (batch_id, session_date, start_time)
@@ -176,6 +177,18 @@ CREATE INDEX IF NOT EXISTS idx_assign_batch ON assignments(batch_id);
 CREATE INDEX IF NOT EXISTS idx_sub_student ON submissions(student_id);
 CREATE INDEX IF NOT EXISTS idx_mat_batch ON materials(batch_id);
 
+-- Session 5: class recordings. A teacher adds a Google Drive link with a title and the class date, per batch. The video stays in Drive.
+CREATE TABLE IF NOT EXISTS recordings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL REFERENCES batches(id),
+  title TEXT NOT NULL,
+  url TEXT NOT NULL,
+  recorded_on TEXT NOT NULL,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_rec_batch ON recordings(batch_id, recorded_on);
+
 -- Phase 5 (started): tutorials library. Anyone signed in can read and post; each post can have written text, a file, a link, or any mix.
 -- Admins can delete any post; everyone else only their own. Every post and delete is written to audit_log.
 CREATE TABLE IF NOT EXISTS tutorials (
@@ -191,6 +204,21 @@ CREATE TABLE IF NOT EXISTS tutorials (
   CHECK (body IS NOT NULL OR file IS NOT NULL OR url IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS idx_tut_course ON tutorials(course_id);
+
+-- Session 2: only teachers and admins post tutorials (older student posts stay, read-only). Students send one answer per tutorial:
+-- written text, a file, or both. Sending again replaces the earlier answer.
+CREATE TABLE IF NOT EXISTS tutorial_submissions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tutorial_id INTEGER NOT NULL REFERENCES tutorials(id),
+  student_id INTEGER NOT NULL REFERENCES users(id),
+  text_answer TEXT,
+  file TEXT,
+  file_name TEXT,
+  submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (tutorial_id, student_id),
+  CHECK (text_answer IS NOT NULL OR file IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_tutsub_student ON tutorial_submissions(student_id);
 
 -- Phase 4: fees and payments. All money is whole MVR in INTEGER columns (never floats).
 -- Postgres: the only SQLite-specific part is AUTOINCREMENT (see the note at the top of this file); these tables get created_at from the app, so they have no datetime('now') defaults.

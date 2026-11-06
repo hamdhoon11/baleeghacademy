@@ -73,8 +73,9 @@ class P5(unittest.TestCase):
         return self.c.post("/api/tutorials", data=data, headers=who, content_type="multipart/form-data")
 
     def test_tutorial_text_file_link_and_mix(self):
-        for who in (self.t1, self.s1, self.a):
+        for who in (self.t1, self.a):
             self.assertEqual(self.post(who, title="Text only", text="Read this").status_code, 201)
+        self.assertEqual(self.post(self.s1, title="Student text", text="Read this").status_code, 403)   # students no longer post
         self.assertEqual(self.post(self.t1, title="File only", file=self.f()).status_code, 201)
         self.assertEqual(self.post(self.t1, title="Link only", url="https://example.com/x").status_code, 201)
         r = self.post(self.t1, title="All three", text="Notes", url="https://example.com/y", file=self.f(), course_id=str(self.cid))
@@ -93,10 +94,10 @@ class P5(unittest.TestCase):
         self.assertEqual(self.c.post("/api/tutorials", data={"title": "x", "text": "y"}).status_code, 401)
 
     def test_tutorial_delete_rules_and_audit(self):
-        tid = self.post(self.s1, title="Student post", text="hi", file=self.f()).get_json()["id"]
-        self.assertEqual(self.c.delete(f"/api/tutorials/{tid}", headers=self.s2).status_code, 403)
-        self.assertEqual(self.c.delete(f"/api/tutorials/{tid}", headers=self.t1).status_code, 403)
-        mine = [x for x in self.c.get("/api/tutorials", headers=self.s1).get_json() if x["id"] == tid][0]
+        tid = self.post(self.t1, title="Teacher post", text="hi", file=self.f()).get_json()["id"]
+        self.assertEqual(self.c.delete(f"/api/tutorials/{tid}", headers=self.s2).status_code, 403)   # students cannot delete
+        self.assertEqual(self.c.delete(f"/api/tutorials/{tid}", headers=self.t2).status_code, 403)   # another teacher
+        mine = [x for x in self.c.get("/api/tutorials", headers=self.t1).get_json() if x["id"] == tid][0]
         other = [x for x in self.c.get("/api/tutorials", headers=self.s2).get_json() if x["id"] == tid][0]
         adm = [x for x in self.c.get("/api/tutorials", headers=self.a).get_json() if x["id"] == tid][0]
         self.assertEqual((mine["can_delete"], other["can_delete"], adm["can_delete"]), (True, False, True))

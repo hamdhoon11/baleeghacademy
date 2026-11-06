@@ -248,8 +248,8 @@ class AppWithBucket(unittest.TestCase):
         self.assertEqual(self.c.get(f"/api/applications/{aid}/file/id", headers=self.a).status_code, 404)
 
     def test_tutorial_file_roundtrip_and_delete(self):
-        self.c.post("/api/users", json={"email": "st@h.test", "password": "Password123", "full_name": "Stu", "role": "student"}, headers=self.a)
-        stu = self.login("st@h.test", "Password123")
+        self.c.post("/api/users", json={"email": "st@h.test", "password": "Password123", "full_name": "Stu", "role": "teacher"}, headers=self.a)
+        stu = self.login("st@h.test", "Password123")   # a teacher: students can no longer post tutorials
         r = self.c.post("/api/tutorials", data={"title": "Alphabet", "file": (io.BytesIO(PDF), "alpha.pdf")}, headers=stu, content_type="multipart/form-data")
         self.assertEqual(r.status_code, 201, r.get_data(as_text=True)); tid = r.get_json()["id"]
         self.assertEqual(len(self.keys("learning")), 1)
@@ -274,7 +274,7 @@ class Migration(unittest.TestCase):
         tok = {"Authorization": "Bearer " + oc.post("/api/auth/login", json={"email": "admin@m.test", "password": "AdminPass123"}).get_json()["token"]}
         oc.post("/api/users", json={"email": "m@m.test", "password": "Password123", "full_name": "Mim", "role": "student"}, headers=tok)
         mt = {"Authorization": "Bearer " + oc.post("/api/auth/login", json={"email": "m@m.test", "password": "Password123"}).get_json()["token"]}
-        tid = oc.post("/api/tutorials", data={"title": "Old post", "file": (io.BytesIO(PDF), "old.pdf")}, headers=mt, content_type="multipart/form-data").get_json()["id"]
+        tid = oc.post("/api/tutorials", data={"title": "Old post", "file": (io.BytesIO(PDF), "old.pdf")}, headers=tok, content_type="multipart/form-data").get_json()["id"]
         before = {t: dbx_count(old_path, t) for t in ("users", "courses", "batches", "enrollments", "tutorials", "audit_log")}
 
         bucket = FakeS3()

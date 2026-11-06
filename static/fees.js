@@ -16,7 +16,7 @@ DO.fxTab = d => { S.fxt = d.v; S.fxmsg = null; };
 const fxHome = views.home;
 views.home = async () => {
   const h = await fxHome();
-  if (S.user.role !== "student") return h;
+  if (S.user.role !== "student" || !S.user.tabs.includes("fees")) return h;
   let s; try { s = await api("/my/fees/summary"); } catch (x) { return h; }
   if (!s.open_count) return h;
   const n = `<div class="msg ${s.overdue_count ? "err" : "ok"}" role="status"><b>${t("fx_due_notice")}</b> ${mvr(s.balance_due)} · ${t("fx_due_on")} ${ltr(s.next_due)}${s.overdue_count ? " · " + t("fx_st_overdue") : ""} <button class="btn sm alt" data-do="fxGo">${t("fx_view_fees")}</button></div>`;
@@ -178,5 +178,3 @@ async function fxAdmin() {
 }
 
 views.fees = async () => S.user.role === "admin" ? fxAdmin() : fxStudent();
-TABS.admin.splice(TABS.admin.indexOf("enrollments") + 1, 0, "fees");
-TABS.student.splice(TABS.student.indexOf("materials") + 1, 0, "fees");

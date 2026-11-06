@@ -4,12 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Apply to Baleegh Academy</title>
-<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:wght@600&family=Noto+Sans+Thaana:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:wght@600&display=swap" rel="stylesheet">
 <style>
 :root{--ink:#10262b;--lagoon:#0b4f5c;--mist:#eaf4f4;--line:#c9dcdc;--sun:#d9a21b;--coral:#b8432f;
---body:"Atkinson Hyperlegible","Noto Sans Thaana",system-ui,sans-serif;--head:"Fraunces",Georgia,serif}
+--body:"Atkinson Hyperlegible",system-ui,sans-serif;--head:"Fraunces",Georgia,serif}
 *{box-sizing:border-box}
-html[dir=rtl]{--body:"Noto Sans Thaana","Atkinson Hyperlegible",system-ui,sans-serif;--head:"Noto Sans Thaana",serif}
 body{margin:0;font:16px/1.5 var(--body);color:var(--ink);background:var(--mist)}
 main{max-width:620px;margin:0 auto;padding:1.2rem}
 h1,h2{font-family:var(--head);color:var(--lagoon);margin:0 0 .5rem}
@@ -28,7 +27,7 @@ input[type=file]{padding:.4rem}
 </head>
 <body>
 <main>
-<div class="top"><h1 id="title">Apply to Baleegh Academy</h1><span><button data-l="en">EN</button> <button data-l="dv">ދިވެހި</button></span></div>
+<div class="top"><h1 id="title">Apply to Baleegh Academy</h1></div>
 <div id="out"></div>
 <form id="f" class="panel" enctype="multipart/form-data" novalidate>
   <div class="hp" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
@@ -62,19 +61,15 @@ input[type=file]{padding:.4rem}
 <script>
 const API = window.PORTAL_API || "";
 const EN = {a_name:"Full name",a_dob:"Date of birth",a_grade:"Grade (if you are in school)",a_phone:"Phone number",a_email:"Email (your login will use this)",a_island:"Island",a_course:"Course",a_batch:"Preferred batch",a_id:"Copy of your ID card (PDF, JPG or PNG, up to 5 MB)",a_guardian:"Guardian details (required under 18)",a_gname:"Guardian full name",a_grel:"Relationship",a_gphone:"Guardian phone",a_gid:"Copy of guardian's ID card",a_privacy:"Your ID copies are stored privately and only academy admins can open them.",a_submit:"Submit application",a_check:"Check your application",a_ref:"Reference number",a_lookup:"Check status",a_wa:"Chat with us on WhatsApp",title:"Apply to Baleegh Academy",sent:"Application received. Your reference is",keep:"Keep this reference and your phone number to check your status.",any:"No preference",spots:"seats left",full:"full, waitlist",st_pending:"Under review",st_approved:"Approved. We will message you your login details.",st_rejected:"Not accepted",st_waitlist:"On the waiting list"};
-let T = {}, lang = localStorage.getItem("lang") || "en", wa = "";
-const t = k => T[k] || EN[k] || k;
+let wa = "";
+const t = k => EN[k] || k;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const show = (m, ok) => { $("#out").innerHTML = `<div class="msg ${ok ? "ok" : "err"}" role="status">${m}</div>`; window.scrollTo(0, 0); };
-async function setLang(l) {
-  lang = l; localStorage.setItem("lang", l);
-  T = l === "dv" ? await fetch(API + "/i18n/dv.json").then(r => r.json()).catch(() => ({})) : {};
-  document.documentElement.lang = l; document.documentElement.dir = l === "dv" ? "rtl" : "ltr";
+function applyText() {
   document.querySelectorAll("[data-t]").forEach(e => e.textContent = t(e.dataset.t));
   $("#title").textContent = t("title");
 }
-document.querySelectorAll("[data-l]").forEach(b => b.onclick = () => setLang(b.dataset.l));
 let batches = [], minorAge = 18;
 async function init() {
   const [courses, bs, info] = await Promise.all(["/public/courses", "/public/batches", "/public/info"].map(p => fetch(API + "/api" + p).then(r => r.json())));
@@ -83,7 +78,7 @@ async function init() {
   $("#wa").href = "https://wa.me/" + wa + "?text=" + encodeURIComponent("Assalaamu alaikum, I have a question about joining " + info.academy_name);
   const open = courses.filter(c => c.status === "open");
   $("#course").innerHTML = open.map(c => `<option value="${c.id}">${esc(c.name)} ${esc(c.level || "")} (MVR ${c.monthly_fee_mvr}/month)</option>`).join("");
-  fillBatches(); await setLang(lang);
+  fillBatches(); applyText();
 }
 function fillBatches() {
   const cid = +$("#course").value;

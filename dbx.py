@@ -13,6 +13,7 @@ import hashlib
 import os
 import re
 import sqlite3
+import time
 
 try:  # psycopg is only needed when DATABASE_URL is set
     import psycopg
@@ -140,7 +141,21 @@ class Conn:
             self.raw.row_factory = sqlite3.Row
             self.raw.execute("PRAGMA foreign_keys=ON")
 
+    q = 0      # queries run and milliseconds spent on them since the last reset_stats(); shown in the Server-Timing header
+    ms = 0.0
+
+    def reset_stats(self):
+        self.q, self.ms = 0, 0.0
+
     def execute(self, sql, args=()):
+        t0 = time.perf_counter()
+        try:
+            return self._execute(sql, args)
+        finally:
+            self.q += 1
+            self.ms += (time.perf_counter() - t0) * 1000
+
+    def _execute(self, sql, args=()):
         args = tuple(args)
         if not self.pg:
             return Cur(self.raw.execute(sql, tuple(_arg(a) for a in args)))
@@ -210,7 +225,28 @@ def init_schema(conn, base):
     # databases created before these columns existed: add them (CREATE TABLE IF NOT EXISTS does not)
     if "attachment" not in conn.columns("assignments"): conn.execute("ALTER TABLE assignments ADD COLUMN attachment TEXT")
     if "attachment_name" not in conn.columns("assignments"): conn.execute("ALTER TABLE assignments ADD COLUMN attachment_name TEXT")
+    if "meet_link" not in conn.columns("sessions"): conn.execute("ALTER TABLE sessions ADD COLUMN meet_link TEXT")   # Session 4: one-off class link
     if "permissions" not in conn.columns("users"): conn.execute("ALTER TABLE users ADD COLUMN permissions TEXT")   # NULL = full admin
+    # Session 2: people who were limited to some areas and could already open Tutorials keep what they could do before
+    # (teachers/admins: post; students: now send answers). People with no limit (permissions NULL) get the new areas automatically.
+    for u in conn.execute("SELECT id,role,permissions FROM users WHERE permissions IS NOT NULL").fetchall():
+        have = [x for x in (u["permissions"] or "").split(",") if x]
+        add = {"admin": "create_tutorials", "teacher": "create_tutorials", "student": "submit_tutorial_work"}.get(u["role"])
+        if add and "tutorials" in have and add not in have:
+            have = have + [add]
+            conn.execute("UPDATE users SET permissions=? WHERE id=?", (",".join(have), u["id"]))
+        # Session 4: a limited admin who could already edit batches could already set Meet links, so keeps doing so. Teachers could not, so they start without it.
+        if u["role"] == "admin" and "batches" in have and "class_links" not in have:
+            have = have + ["class_links"]
+            conn.execute("UPDATE users SET permissions=? WHERE id=?", (",".join(have), u["id"]))
+        # Session 5: a limited admin who could already use Classroom could already manage batch resources, so keeps adding recordings; a limited
+        # student who could open Materials also gets Recordings. Limited teachers start without it (the superadmin ticks it in People).
+        if u["role"] == "admin" and "classroom" in have and "add_recordings" not in have:
+            have = have + ["add_recordings"]
+            conn.execute("UPDATE users SET permissions=? WHERE id=?", (",".join(have), u["id"]))
+        if u["role"] == "student" and "materials" in have and "recordings" not in have:
+            have = have + ["recordings"]
+            conn.execute("UPDATE users SET permissions=? WHERE id=?", (",".join(have), u["id"]))
     if r:
         conn.execute("UPDATE schema_meta SET version=? WHERE id=1", (version,))
     else:

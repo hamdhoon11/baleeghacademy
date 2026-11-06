@@ -175,6 +175,15 @@ class P3(unittest.TestCase):
         other = [x for x in self.c.get("/api/assignments", headers=s1).get_json() if x["id"] == aid][0]["my"]
         self.assertEqual((other["grade"], other["submitted"], other["text_answer"]), (None, False, None))  # sees nothing of student 0
 
+    def test_08b_text_only_resubmit_keeps_the_file(self):
+        w = self.world(1); s0 = self.login(w["s_email"][0]); aid = self.mk_assign(w)
+        self.assertEqual(self.submit(aid, s0, text="first", file=(io.BytesIO(PDF), "work.pdf")).status_code, 201)
+        self.assertEqual(self.submit(aid, s0, text="edited words only").status_code, 201)
+        row = [x for x in self.c.get(f"/api/assignments/{aid}/submissions", headers=w["t"]).get_json()["students"] if x["student_id"] == w["stu"][0]][0]
+        self.assertEqual((row["text_answer"], row["has_file"], row["file_name"]), ("edited words only", True, "work.pdf"))
+        # the teacher can still open the kept file
+        self.assertEqual(self.c.get(f"/api/submissions/{row['submission_id']}/file", headers=w["t"]).data, PDF)
+
     def test_09_submission_validation_and_enrolment(self):
         w, x = self.world(1), self.world(1)
         s = self.login(w["s_email"][0]); aid = self.mk_assign(w)
@@ -200,7 +209,7 @@ class P3(unittest.TestCase):
         w = self.world(1); s = self.login(w["s_email"][0])
         a1 = self.mk_assign(w, max_points=100)
         t1 = self.mk_assign(w, title="Quiz", kind="test", max_points=50, due_date=None)
-        self.assertEqual(self.submit(t1, s, text="x").status_code, 400)  # tests have no submission
+        self.assertEqual(self.submit(t1, s, text="x").status_code, 201)  # a test can also take an answer; the teacher still enters the marks
         self.c.post(f"/api/assignments/{a1}/grades", json={"student_id": w["stu"][0], "grade": 85}, headers=w["t"])
         self.c.post(f"/api/assignments/{t1}/grades", json={"student_id": w["stu"][0], "grade": 40, "feedback": "Revise unit 2"}, headers=w["t"])
         g = self.c.get("/api/my/grades", headers=s).get_json()[0]
@@ -291,19 +300,18 @@ class P3(unittest.TestCase):
         acts = {r["action"] for r in self.c.get("/api/audit", headers=a).get_json()}
         self.assertIn("create_assignment", acts)
 
-    # ----- English / Dhivehi -----
+    # ----- English only -----
     def test_18_language_files(self):
         en = json.load(open(os.path.join(ROOT, "static/i18n/en.json"), encoding="utf-8"))
-        dv = json.load(open(os.path.join(ROOT, "static/i18n/dv.json"), encoding="utf-8"))
-        self.assertEqual([k for k in dv if k not in en and not k.startswith("_")], [], "dv.json has keys that en.json lacks")
         need = ["home", "classroom", "attendance", "assignments", "progress", "materials", "schedule", "gradebook", "present", "late", "absent", "excused",
                 "next_class", "join", "save_attendance", "submit", "grade", "feedback", "due_date"] + [f"day_{d}" for d in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")]
         self.assertEqual([k for k in need if k not in en], [])
-        for k in [f"day_{d}" for d in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")] + ["attendance", "assignments", "present", "absent"]:
-            self.assertTrue(any("\u0780" <= ch <= "\u07bf" for ch in dv.get(k, "")), f"{k} needs a Dhivehi (Thaana) translation")
-        self.assertEqual(self.c.get("/i18n/dv.json").status_code, 200)
+        self.assertEqual(self.c.get("/i18n/dv.json").status_code, 404)
+        for name in ("index.html", "apply.html"):
+            page = open(os.path.join(ROOT, "static", name), encoding="utf-8").read()
+            self.assertNotIn('data-l="dv"', page); self.assertNotIn("rtl", page); self.assertNotIn("Thaana", page)
         page = self.c.get("/").get_data(as_text=True)
-        self.assertIn('dir = l === "dv" ? "rtl" : "ltr"', page); self.assertIn("learning.js", page)
+        self.assertIn("learning.js", page)
         self.assertEqual(self.c.get("/learning.js").status_code, 200)
 
 

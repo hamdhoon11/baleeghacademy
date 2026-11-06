@@ -4,11 +4,10 @@
 | GET | /health | public | Health check |
 | GET | /public/courses | public | Open and upcoming courses for the website |
 | POST | /auth/login | public | `{email,password}` returns `{token,user}` (rate-limited) |
-| GET | /auth/me | any | Current user |
+| GET | /auth/me | any | Current user: `{id,email,full_name,role,must_change_password,permissions,tabs}`. `permissions` is `null` (everything the role has) or a list of areas; `tabs` is what the page may draw |
 | POST | /auth/change-password | any | `{current_password,new_password}` |
-| PATCH | /auth/language | any | `{lang:"en"or"dv"}` |
-| GET, POST | /users | admin | List (`?role=`), create admin/teacher/student |
-| PATCH | /users/:id | admin | Name, phone, active flag, password reset |
+| GET, POST | /users | admin | List (`?role=`), create admin/teacher/student. Create accepts optional `permissions` (full admin only) |
+| PATCH | /users/:id | admin | Name, phone, active flag, password reset, `permissions` (`"all"` or a list of areas for that role; full admin only) |
 | GET | /courses | any | List |
 | POST, PATCH | /courses, /courses/:id | admin | Create, update |
 | GET | /batches | any | Admin all, teacher own, student enrolled |
@@ -99,3 +98,46 @@ Invoice `status` is `unpaid`, `slip_submitted`, `paid`, `void` or `waived`. `ove
 | GET | /fees/report.csv | admin | Same month as a CSV file, one row per invoice (formula-injection safe) |
 | GET | /dashboard | admin | Now also `unpaid_invoices`, `overdue_invoices`, `slips_pending`, `month_collection_mvr` |
 | GET, PUT | /settings | admin | New keys: `invoice_due_day`, `first_invoice_mode`, `first_invoice_grace_days`, `receipt_prefix`, `reminder_template_en`, `reminder_template_dv` |
+
+## Tutorials (Session 2)
+Areas: `tutorials` (open the tab and read), `create_tutorials` (teacher/admin: post, see answers), `submit_tutorial_work` (student: send answers). Post and answer calls need `tutorials` as well.
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| GET | /tutorials | `tutorials` | List (`?q=&course_id=&limit=`). Each item adds `can_delete`, `accepts_answers` (false for older student posts), and for students `can_submit` and `my_submission` (`null` or `{submitted_at,has_file,has_text}`); for the poster teacher and admins `can_view_answers` and `answer_count` |
+| POST | /tutorials | teacher, admin with `create_tutorials` | Create (form or JSON: `title`, `text`, `url`, `file`, `course_id`). Students get 403 |
+| DELETE | /tutorials/:id | admin (any), teacher with `create_tutorials` (own) | Also removes answers and their files. Students get 403 |
+| POST | /tutorials/:id/submission | student with `submit_tutorial_work` | Multipart `text` and/or `file`. 201 first time, 200 when replacing. 409 on older student posts |
+| GET | /tutorials/:id/submission | student with `submit_tutorial_work` | My answer: `{submission: null or {id,text_answer,file_name,has_file,submitted_at}}` |
+| GET | /tutorials/:id/submissions | admin, or the teacher who posted it (`create_tutorials`) | `{tutorial, submissions:[{id,student_id,full_name,text_answer,file_name,has_file,submitted_at}]}` |
+| GET | /tutorial-submissions/:id/file | the student who sent it, the poster teacher, admin | Download the answer's file |
+
+## Class links (Session 4)
+Area `class_links` (teacher, admin) plus the usual `classroom` access to the batch (a teacher only for batches where they are the teacher).
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| PUT | /batches/:id/meet-link | admin (any batch), teacher with `class_links` (own batches) | `{meet_link}` an `https://` address up to 500 characters, or empty to remove. Returns `{ok,meet_link}` |
+| POST | /batches/:id/sessions | admin, teacher (own batches) | As before, plus optional `meet_link`: a one-off link for that date and time (empty removes it). Sending `meet_link` needs `class_links`; without it the request is 403 and nothing is saved |
+| GET | /timetable, /my/home | any | Each class now carries `meet_link` (its own link if it has one, else the batch link) and `own_link` (true when it has its own) |
+
+## Class recordings (Session 5)
+Areas `add_recordings` (teacher, admin; also needs `classroom`) and `recordings` (student). A teacher only reaches their own batches; a student only batches they are enrolled in.
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| POST | /batches/:id/recordings | admin (any batch), teacher with `add_recordings` (own batches) | JSON `{title (max 200), recorded_on (YYYY-MM-DD, not in the future), url}`; `url` must be an `https://drive.google.com/` or `https://docs.google.com/` link up to 500 characters. 201 `{id}` |
+| GET | /recordings | student with `recordings`; teacher, admin with `classroom` | Recordings of the caller's batches (`?batch_id=`), newest class first: `{id,batch_id,batch_code,course_name,title,url,recorded_on,added_by,download_url}`. `download_url` is null unless `url` is a single Drive file |
+| DELETE | /recordings/:id | admin, teacher with `add_recordings` (own batches) | Remove the recording (the Drive file is not touched) |
+
+## Student information (Session 6)
+Area `student_information` (admin only, read-only). Fee data is included only when the caller also has `fees`.
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| GET | /student-information | admin with `student_information` | Students only. `?q=` (name, email or phone), `?batch_id=`, `?status=active\|inactive`, `?limit=` (1-100, default 30). Returns `{total, fees_visible, students:[{id,full_name,email,phone,is_active,batches,balance_due}]}`; `balance_due` is null without `fees` |
+| GET | /student-information/:id | admin with `student_information` | `{profile, enrollments, progress, fees, fees_visible}`. `progress` has per batch attendance counts and percentage, recent classes, graded items and average. `fees` is null without `fees`. 404 if the id is not a student |
+
+## Teacher information (Session 7)
+Area `teacher_information` (admin only, read-only).
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| GET | /teacher-information | admin with `teacher_information` | Teachers only. `?q=` (name, email or phone), `?status=active\|inactive`, `?limit=` (1-100, default 30). Returns `{total, teachers:[{id,full_name,email,phone,is_active,batch_count,student_count,weekly_hours}]}` |
+| GET | /teacher-information/:id | admin with `teacher_information` | `{profile (with bio), batches, students, workload:{active_batches,students,weekly_classes,weekly_hours,classes_held_30d,to_grade}}`. 404 if the id is not a teacher |
+

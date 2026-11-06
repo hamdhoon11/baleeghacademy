@@ -93,10 +93,11 @@ class P1(unittest.TestCase):
         self.assertTrue(any(c["name"] == "Arabic" for c in self.c.get("/api/public/courses").get_json()))
         self.assertIn("students", self.c.get("/api/dashboard", headers=h).get_json())
 
-    def test_09_language_pref(self):
+    def test_09_no_language_switch(self):
+        # the portal is English only: the language endpoint and the Dhivehi file are gone
         h = self.stu()
-        self.assertEqual(self.c.patch("/api/auth/language", json={"lang": "dv"}, headers=h).status_code, 200)
-        self.assertEqual(self.c.patch("/api/auth/language", json={"lang": "xx"}, headers=h).status_code, 400)
+        self.assertIn(self.c.patch("/api/auth/language", json={"lang": "dv"}, headers=h).status_code, (404, 405))
+        self.assertEqual(self.c.get("/i18n/dv.json").status_code, 404)
 
 
 if __name__ == "__main__":

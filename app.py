@@ -41,16 +41,42 @@ def create_app(config=None):
     def connect():
         return dbx.Conn(app.config["DATABASE_URL"], app.config["DATABASE_PATH"], id_tables)
 
+    # A warm serverless instance keeps one PostgreSQL connection for the next request instead of opening a new one each time
+    # (a new secure connection costs several network round trips). The request that is using it owns it; it is handed back at the end.
+    # It is dropped if it is older than WARM_SECONDS idle or looks broken, and a connection that errored is never reused.
+    warm = {"conn": None, "at": 0.0}
+
+    def take_conn():
+        c, warm["conn"] = warm["conn"], None
+        if c is not None:
+            raw = c.raw
+            if time.time() - warm["at"] > app.config.get("WARM_SECONDS", 25) or raw.closed or raw.broken:
+                try: c.close()
+                except Exception: pass
+                c = None
+        return c or connect()
+
     def db():
         if "db" not in g:
-            g.db = connect()
+            g.db = take_conn() if app.config["USE_POSTGRES"] else connect()
+            g.db.reset_stats()
         return g.db
 
     @app.teardown_appcontext
-    def close_db(_):
+    def close_db(exc):
         c = g.pop("db", None)
-        if c:
-            c.close()
+        if not c:
+            return
+        if app.config["USE_POSTGRES"] and exc is None:
+            try:
+                c.rollback()   # ends the open read transaction; committed work is already safe
+                if warm["conn"] is None:
+                    warm["conn"], warm["at"] = c, time.time()
+                    return
+            except Exception:
+                pass
+        try: c.close()
+        except Exception: pass
 
     def init_db():
         c = connect()
@@ -75,10 +101,16 @@ def create_app(config=None):
     def err(msg, code=400):
         return jsonify(error=msg), code
 
+    def raw_setting(key):
+        """Saved value of a setting, or None if never saved. The whole settings table is read once per request (not once per lookup),
+        which matters on a hosted database where every query is a network round trip."""
+        if "settings_cache" not in g:
+            g.settings_cache = {r[0]: r[1] for r in db().execute("SELECT key,value FROM settings").fetchall()}
+        return g.settings_cache.get(key)
+
     def setting(key):
         """Admin-editable setting from the Settings screen; falls back to its default when empty or never saved."""
-        r = db().execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-        v = (r[0] if r else "") or ""
+        v = raw_setting(key) or ""
         return v.strip() or SS.default_of(key)
 
     def setting_int(key):
@@ -87,8 +119,8 @@ def create_app(config=None):
 
     def saved_int(key, fallback):
         """Setting the admin has actually saved, else the given fallback (lets an env var such as TOKEN_HOURS act as the starting value)."""
-        r = db().execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-        try: return int(r[0]) if r and str(r[0]).strip() else fallback
+        v = raw_setting(key)
+        try: return int(v) if v is not None and str(v).strip() else fallback
         except ValueError: return fallback
 
     def diff_detail(before, after_fields, d):
@@ -125,9 +157,17 @@ def create_app(config=None):
         pl = perm_list(u)
         return pl is None or area in pl
 
+    def public_user(u):
+        """What the page needs to know about the signed-in person. `tabs` is decided here, on the server; the page only draws these."""
+        pl = perm_list(u)
+        pub = {k: u[k] for k in ("id", "email", "full_name", "role", "must_change_password")}
+        pub["permissions"] = pl
+        pub["tabs"] = SS.tabs_for(u["role"], pl)
+        return pub
+
     def auth(*roles, perm=None):
-        """roles: who may call. perm: admin area (see settings_schema.AREAS); an admin whose permissions list lacks it gets 403.
-        Admins with permissions = NULL are full admins."""
+        """roles: who may call. perm: the area (see settings_schema.AREAS) this call belongs to, or {role: area} when the same call serves
+        several roles; anyone whose permissions list lacks it gets 403, whatever their role. permissions = NULL means everything the role has."""
         def deco(fn):
             @wraps(fn)
             def wrap(*a, **k):
@@ -138,14 +178,15 @@ def create_app(config=None):
                     p = jwt.decode(h[7:], app.config["SECRET_KEY"], algorithms=["HS256"])
                 except jwt.PyJWTError:
                     return err("Session expired. Sign in again.", 401)
-                u = one("SELECT id,email,full_name,role,lang,is_active,must_change_password,permissions FROM users WHERE id=?", (p["sub"],))
+                u = one("SELECT id,email,full_name,role,is_active,must_change_password,permissions FROM users WHERE id=?", (p["sub"],))
                 if not u or not u["is_active"]:
                     return err("Account disabled", 403)
                 g.user = u
                 if roles and u["role"] not in roles:
                     return err("You do not have access to this", 403)
-                if perm and u["role"] == "admin" and not has_perm(u, perm):
-                    return err("Your admin account does not have permission for this area", 403)
+                area = perm.get(u["role"]) if isinstance(perm, dict) else perm
+                if area and not has_perm(u, area):
+                    return err("Your account does not have permission for this area", 403)
                 return fn(*a, **k)
             return wrap
         return deco
@@ -156,8 +197,15 @@ def create_app(config=None):
 
     EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+    @app.before_request
+    def start_timer():
+        g.t0 = time.perf_counter()
+
     @app.after_request
     def headers(resp):
+        # Server-Timing shows in the browser's Network tab (Timing): total time here, and how many database queries took how long
+        c = g.get("db")
+        resp.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - g.get('t0', time.perf_counter())) * 1000:.0f}" + (f", db;dur={c.ms:.0f};desc=\"{c.q} queries\"" if c else "")
         origin = request.headers.get("Origin")
         if origin and origin in app.config["CORS_ORIGINS"]:
             resp.headers["Access-Control-Allow-Origin"] = origin
@@ -195,14 +243,12 @@ def create_app(config=None):
             return err("Wrong email or password", 401)
         g.user = u
         audit("login", "user", u["id"]); db().commit()
-        pub = {k: u[k] for k in ("id", "email", "full_name", "role", "lang", "must_change_password")}
-        pub["permissions"] = perm_list(u)
-        return jsonify(token=make_token(u), user=pub)
+        return jsonify(token=make_token(u), user=public_user(u))
 
     @app.get("/api/auth/me")
     @auth()
     def me():
-        return jsonify(user={**{k: v for k, v in g.user.items() if k != "permissions"}, "permissions": perm_list(g.user)})
+        return jsonify(user=public_user(g.user))
 
     @app.post("/api/auth/change-password")
     @auth()
@@ -217,15 +263,6 @@ def create_app(config=None):
         db().execute("UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?",
                      (generate_password_hash(new), g.user["id"]))
         audit("change_password", "user", g.user["id"]); db().commit()
-        return jsonify(ok=True)
-
-    @app.patch("/api/auth/language")
-    @auth()
-    def set_lang():
-        lang = (request.get_json(silent=True) or {}).get("lang")
-        if lang not in ("en", "dv"):
-            return err("lang must be en or dv")
-        db().execute("UPDATE users SET lang=? WHERE id=?", (lang, g.user["id"])); db().commit()
         return jsonify(ok=True)
 
     # ---------- users ----------
@@ -253,13 +290,14 @@ def create_app(config=None):
     @app.get("/api/users/<int:uid>")
     @auth("admin", perm="people")
     def users_get(uid):
-        u = one("SELECT id,email,full_name,role,phone,lang,is_active,must_change_password,created_at,permissions FROM users WHERE id=?", (uid,))
+        u = one("SELECT id,email,full_name,role,phone,is_active,must_change_password,created_at,permissions FROM users WHERE id=?", (uid,))
         if not u: return err("User not found", 404)
         u["permissions"] = None if u["permissions"] is None else [x for x in u["permissions"].split(",") if x]
         if u["role"] == "student":
             u.update(one("SELECT date_of_birth,grade,island,guardian_name,guardian_relationship,guardian_phone FROM students WHERE user_id=?", (uid,)) or {})
         if u["role"] == "teacher":
             u.update(one("SELECT bio FROM teachers WHERE user_id=?", (uid,)) or {})
+        u["areas"] = list(SS.ROLE_AREAS[u["role"]])
         u["enrollments"] = one("SELECT COUNT(*) n FROM enrollments WHERE student_id=?", (uid,))["n"]
         u["batches_taught"] = one("SELECT COUNT(*) n FROM batches WHERE teacher_id=?", (uid,))["n"]
         return jsonify(u)
@@ -277,8 +315,14 @@ def create_app(config=None):
             return err("Only a full admin can create another admin", 403)
         if len(d["password"]) < setting_int("min_password_length"): return err(f"Password must be at least {setting_int('min_password_length')} characters")
         if one("SELECT id FROM users WHERE email=?", (email,)): return err("That email is already registered", 409)
-        cur = db().execute("INSERT INTO users(email,password_hash,full_name,role,phone,must_change_password) VALUES(?,?,?,?,?,1)",
-                           (email, generate_password_hash(d["password"]), d["full_name"].strip(), d["role"], d.get("phone")))
+        perms = None
+        if d.get("permissions") not in (None, "all"):
+            if g.user["permissions"] is not None: return err("Only a full admin can set permissions", 403)
+            pv = d["permissions"]
+            if not isinstance(pv, list) or any(x not in SS.ROLE_AREAS[d["role"]] for x in pv): return err("Unknown permission area for this role")
+            perms = ",".join(a for a in SS.ROLE_AREAS[d["role"]] if a in pv)
+        cur = db().execute("INSERT INTO users(email,password_hash,full_name,role,phone,must_change_password,permissions) VALUES(?,?,?,?,?,1,?)",
+                           (email, generate_password_hash(d["password"]), d["full_name"].strip(), d["role"], d.get("phone"), perms))
         uid = cur.lastrowid
         if d["role"] == "student":
             db().execute("INSERT INTO students(user_id,date_of_birth,grade,island,guardian_name,guardian_relationship,guardian_phone) VALUES(?,?,?,?,?,?,?)",
@@ -319,21 +363,23 @@ def create_app(config=None):
             if one("SELECT 1 FROM enrollments WHERE student_id=?", (uid,)) or one("SELECT 1 FROM batches WHERE teacher_id=?", (uid,)):
                 return err("This person has enrollments or batches. Move them first, or create a new account for the new role.", 409)
             sets.append("role=?"); args.append(d["role"]); changed.append("role")
-            if d["role"] != "admin": sets.append("permissions=NULL")
+            sets.append("permissions=NULL")   # a new role starts with everything that role has; set permissions again if needed
         if "is_active" in d:
             if not d["is_active"] and is_full_admin(u) and not other_full_admins(uid): return err("This is the only full admin and cannot be disabled", 409)
             sets.append("is_active=?"); args.append(1 if d["is_active"] else 0); changed.append("is_active")
         if "permissions" in d:
-            if g.user["permissions"] is not None: return err("Only a full admin can change admin permissions", 403)
+            if g.user["permissions"] is not None: return err("Only a full admin can change permissions", 403)
             if mine: return err("You cannot change your own permissions")
-            if new_role != "admin": return err("Permissions apply to admin accounts only")
             pv = d["permissions"]
+            if "role" in d and d["role"] != u["role"] and pv not in (None, "all"):
+                return err("Change the role first, then set permissions")
             if pv in (None, "all"):
                 sets.append("permissions=NULL")
             else:
-                if not isinstance(pv, list) or any(x not in SS.AREAS for x in pv): return err("Unknown permission area")
+                allowed = SS.ROLE_AREAS[new_role]
+                if not isinstance(pv, list) or any(x not in allowed for x in pv): return err("Unknown permission area for this role")
                 if is_full_admin(u) and not other_full_admins(uid): return err("This is the only full admin; it cannot be restricted", 409)
-                sets.append("permissions=?"); args.append(",".join(a for a in SS.AREAS if a in pv))
+                sets.append("permissions=?"); args.append(",".join(a for a in allowed if a in pv))
             changed.append("permissions")
         if d.get("password"):
             if len(d["password"]) < setting_int("min_password_length"): return err(f"Password must be at least {setting_int('min_password_length')} characters")
@@ -898,17 +944,15 @@ def create_app(config=None):
     @app.get("/api/dashboard")
     @auth("admin")
     def dashboard():
-        c = lambda sql: one(sql)["n"]
         extra = app.extensions.get("fees", {}).get("dashboard")
-        return jsonify(**(extra() if extra else {}),
-            students=c("SELECT COUNT(*) n FROM users WHERE role='student' AND is_active=1"),
-            teachers=c("SELECT COUNT(*) n FROM users WHERE role='teacher' AND is_active=1"),
-            courses_open=c("SELECT COUNT(*) n FROM courses WHERE status='open'"),
-            batches_active=c("SELECT COUNT(*) n FROM batches WHERE status IN ('open','running')"),
-            active_enrollments=c("SELECT COUNT(*) n FROM enrollments WHERE status='active'"),
-            waitlisted=c("SELECT COUNT(*) n FROM enrollments WHERE status='waitlist'"),
-            pending_applications=c("SELECT COUNT(*) n FROM applications WHERE status='pending'"),
-        )
+        n = one("SELECT (SELECT COUNT(*) FROM users WHERE role='student' AND is_active=1) AS students,"
+                " (SELECT COUNT(*) FROM users WHERE role='teacher' AND is_active=1) AS teachers,"
+                " (SELECT COUNT(*) FROM courses WHERE status='open') AS courses_open,"
+                " (SELECT COUNT(*) FROM batches WHERE status IN ('open','running')) AS batches_active,"
+                " (SELECT COUNT(*) FROM enrollments WHERE status='active') AS active_enrollments,"
+                " (SELECT COUNT(*) FROM enrollments WHERE status='waitlist') AS waitlisted,"
+                " (SELECT COUNT(*) FROM applications WHERE status='pending') AS pending_applications")
+        return jsonify(**(extra() if extra else {}), **n)
 
     SETTING_KEYS = SS.SETTING_KEYS
 
@@ -943,18 +987,19 @@ def create_app(config=None):
                 v = "" if d[k] is None else str(d[k]).strip()
                 if s.get(k, "") != v: changed.append(k)
                 db().execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, v))
+        g.pop("settings_cache", None)
         audit("update_settings", "settings", None, ",".join(changed) or "no change"); db().commit()
         return jsonify(ok=True)
 
     @app.get("/api/audit")
     @auth("admin", perm="audit")
     def audit_list():
-        return jsonify(rows("SELECT a.*, u.full_name AS user_name FROM audit_log a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 200"))
+        return jsonify(rows("SELECT a.*, u.full_name AS user_name FROM audit_log a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 100"))
 
     # ---------- Phase 3: learning tools (timetable, attendance, assignments, grades, materials) ----------
     from types import SimpleNamespace
     import learning
-    ns = SimpleNamespace(db=db, rows=rows, one=one, audit=audit, err=err, auth=auth, need=need, UPLOADS=UPLOADS, store=store)
+    ns = SimpleNamespace(db=db, rows=rows, one=one, raw_setting=raw_setting, audit=audit, err=err, auth=auth, need=need, UPLOADS=UPLOADS, store=store)
     learning.register(app, ns)
 
     # ---------- Phase 4: fees and payments (invoices, slips, receipts, reminders, reports) ----------

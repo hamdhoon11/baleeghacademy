@@ -56,4 +56,35 @@ NOT TESTED (be aware)
   - Real phones, Safari/iOS, Firefox, screen readers; only Chromium at 390px
   - Several gunicorn workers at once (the slip rate limit is per process)
   - Thaana text on receipts (not supported by the built-in PDF fonts; prints "?")
-  - Dhivehi wording: machine drafts, needs a native speaker (marked in dv.json "_review")
+
+v0.8 (permissions for every user, English only)
+  tests/test_permissions.py: 12 tests (tabs per role, limited student/teacher/admin, refusals on every guarded call, Home hiding, validation, who may change permissions, role change resets, effect on the next request, audit, tab/view/label consistency)
+  tests/e2e_permissions.py: browser check of the People permission editor and a limited student on a phone
+  Full suite: 139 tests pass (python -m unittest tests.test_phase1 ... tests.test_hosted_storage tests.test_permissions); test_warm_connection passes when run on its own.
+  Known: tests/e2e_browser.py stops at the Settings step (it looks for #s_bank_name, the Settings screen now uses #set_bank_name inside the Fees group). This was already so in v0.7 and is not caused by v0.8.
+
+v0.8.1 (session 1: student submissions)
+  Tests can now take a student answer too (before, students only saw a note and no box). Resubmitting text only no longer deletes the earlier file. Student list shows "Submit work".
+  tests/e2e_submit.py: browser check (student writes + attaches, teacher side receives). Full suite 140 tests pass.
+
+v0.8.5 (session 5: class recordings)
+  tests/test_session5.py: 12 tests (teacher adds, student of the batch sees and opens, folder links have no download, newest first, students and teachers only see their own batches, only own batch / not students / 401 / 404 / admin any batch, link and date validation incl. look-alike hosts, delete rules, Add class recordings and Recordings permissions, student/teacher area separation, audit log, migration keeps older limits)
+  tests/e2e_recordings.py: browser check on a 390px phone (teacher adds, bad link refused, student sees Open and Download and cannot delete, other teacher sees nothing, teacher without the permission sees no form)
+  Two older tests listed the student tabs/areas and were updated for the new Recordings tab (test_permissions, e2e_permissions).
+  Full suite: 173 tests pass; test_warm_connection passes on its own.
+  NOT TESTED: a real Google Drive file (whether a given file downloads depends on its Drive sharing setting); PostgreSQL (same SQL style as the other tables).
+
+v0.8.6 (session 6: student information)
+  tests/test_session6.py: 10 tests (full view of one student, no leakage between students, student with no batches, search/filter/limit incl. % not a wildcard, inactive filter, only admins with the area (401/403 for teacher, student, other admins), fees hidden without Fees, 404 for non-students, tab and area visibility, read-only)
+  tests/e2e_student_info.py: browser check on a 390px phone (search, open, all sections, Back, no sideways scroll, limited admin sees fees hidden, teacher has no tab)
+  Found and fixed while testing: a helper name clashed with one in fees.js and stopped admin.js loading; one older test listed the admin tabs and was updated.
+  Full suite: 183 tests pass; test_warm_connection, e2e_permissions, e2e_recordings and e2e_links pass.
+  NOT TESTED: PostgreSQL (same SQL style as the rest, LOWER(...) LIKE for search); very large student lists (list is paged by "Load more", 30 at a time).
+
+v0.8.7 (session 7: teacher information)
+  tests/test_session7.py: 10 tests (full page for one teacher with batches, distinct students, closed batch ignored, hours and classes a week; to-grade count; teacher with no batches; 30-day window; search/filter/limit; only admins with the area incl. teachers refused on their own page; 404 for non-teachers; tab and area visibility; read-only)
+  tests/e2e_teacher_info.py: browser check on a 390px phone (search, open, all sections, Back, no sideways scroll, admin with only this area, limited admin and teacher have no tab)
+  Older test_permissions admin tab list updated for the new tab.
+  Full suite: 193 tests pass; test_warm_connection, e2e_permissions, e2e_recordings, e2e_links and e2e_student_info pass.
+  NOT TESTED: PostgreSQL (same SQL style as the rest); very large teacher lists (paged 30 at a time).
+

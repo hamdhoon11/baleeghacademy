@@ -1,6 +1,6 @@
 """Optional browser test (needs: pip install playwright && playwright install chromium).
 Runs the real app on a phone-sized screen: admin sets class days, teacher marks attendance / creates assignment / uploads material,
-student sees Join class, submits work, downloads files, sees grade; Phase 4 fees flow (bank details, invoices, slip upload, reject, verify, receipt); Dhivehi RTL; no sideways scrolling. Run: python tests/e2e_browser.py"""
+student sees Join class, submits work, downloads files, sees grade; Phase 4 fees flow (bank details, invoices, slip upload, reject, verify, receipt); no sideways scrolling. Run: python tests/e2e_browser.py"""
 import os, sys, time, subprocess, datetime as dt, tempfile, shutil
 from playwright.sync_api import sync_playwright
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -129,14 +129,9 @@ try:
         with a.expect_download() as cd: a.click("[data-do=fxCsv]")
         csv_text = open(cd.value.path(), encoding="utf-8").read()
         check(csv_text.startswith("invoice,period") and "Demo Student" in csv_text and ",350,0,350,0,350,0," in csv_text, "monthly report CSV downloads with the right numbers")
-        # ---- Dhivehi / RTL ----
-        s.click("nav [data-v=home]"); s.click("nav .lang button[data-l=dv]"); s.wait_for_function("document.documentElement.dir==='rtl'"); s.wait_for_timeout(800)
-        check(s.evaluate("document.documentElement.dir") == "rtl" and "ފުރަތަމަ" in s.inner_text("nav"), "Dhivehi switches to right-to-left with Dhivehi labels")
-        check(s.evaluate("(()=>{const e=document.querySelector('.bigtime bdi');return !!e && getComputedStyle(e).direction==='ltr'})()"), "class times stay left-to-right inside Dhivehi text"); check(s.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Dhivehi page does not scroll sideways on a phone"); s.screenshot(path=os.path.join(tempfile.gettempdir(), "baleegh-e2e-student-dv.png"))
+        # ---- fees tab on a phone ----
         s.click("nav [data-v=fees]"); s.wait_for_selector("text=BA-R-0001"); s.wait_for_timeout(300)
-        check(s.evaluate("(()=>{const e=[...document.querySelectorAll('main bdi')].filter(b=>b.textContent.startsWith('MVR'));return e.length>0 && e.every(b=>getComputedStyle(b).direction==='ltr')})()"), "Dhivehi Fees page keeps MVR amounts left-to-right")
-        check(s.evaluate("[...document.querySelectorAll('main bdi')].some(b=>/^INV-\\d{6}-\\d+$/.test(b.textContent) && getComputedStyle(b).direction==='ltr')"), "Dhivehi Fees page keeps invoice numbers left-to-right")
-        check("ފީ" in s.inner_text("nav") and s.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Dhivehi Fees tab has a Dhivehi label and does not scroll sideways"); s.screenshot(path=os.path.join(tempfile.gettempdir(), "baleegh-e2e-student-fees-dv.png"))
+        check(s.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Fees tab does not scroll sideways on a phone")
         # ---- admin classroom monitor ----
         a.click("nav [data-v=classroom]"); a.wait_for_selector("select[data-ch=batch]")
         check(a.locator("select[data-ch=batch] option").count() >= 2, "admin can open any batch in the classroom")

@@ -82,8 +82,7 @@ def register(app, c):
         return request.get_json(silent=True) or {}
 
     def setting(key, default=""):
-        r = one("SELECT value FROM settings WHERE key=?", (key,))
-        v = (r["value"] if r else "").strip()
+        v = (c.raw_setting(key) or "").strip()
         return v or SETTING_DEFAULTS.get(key, default) or default
 
     P = pay.Payments(c, now, setting)
@@ -496,12 +495,12 @@ def register(app, c):
         return {"balance_due": r["bal"], "open_count": r["n"], "overdue_count": od, "next_due": r["first_due"]}
 
     @app.get("/api/my/fees/summary")
-    @auth("student")
+    @auth("student", perm="fees")
     def my_fees_summary():
         return jsonify(open_totals(g.user["id"]))
 
     @app.get("/api/my/fees")
-    @auth("student")
+    @auth("student", perm="fees")
     def my_fees():
         uid, t = g.user["id"], today()
         invs = [shape(r, t) for r in rows(INV_SQL + " WHERE i.student_id=? AND i.status!='void' ORDER BY i.period DESC, i.id DESC", (uid,))]
@@ -522,7 +521,7 @@ def register(app, c):
 
     # ---------- slips: upload (student) ----------
     @app.post("/api/invoices/<int:iid>/slips")
-    @auth("student")
+    @auth("student", perm="fees")
     def slip_upload(iid):
         inv = get_invoice(iid)
         if not inv or inv["student_id"] != g.user["id"]: return err("Invoice not found", 404)
@@ -680,9 +679,8 @@ def register(app, c):
         return resp
 
     # ---------- overdue and reminders ----------
-    def template_for(lang):
-        en = setting("reminder_template_en") or DEFAULT_REMINDER_EN
-        return (setting("reminder_template_dv") or en) if lang == "dv" else en
+    def template_text():
+        return setting("reminder_template_en") or DEFAULT_REMINDER_EN
 
     def email_enabled():
         cf = app.config
@@ -690,10 +688,10 @@ def register(app, c):
 
     def reminder_info(i):
         """Message text and click-to-chat links for one overdue invoice (student, and guardian when under 18 and a number is on file)."""
-        st = one("SELECT u.lang, u.phone, s.guardian_name, s.guardian_phone FROM users u LEFT JOIN students s ON s.user_id=u.id WHERE u.id=?", (i["student_id"],)) or {}
+        st = one("SELECT u.phone, s.guardian_name, s.guardian_phone FROM users u LEFT JOIN students s ON s.user_id=u.id WHERE u.id=?", (i["student_id"],)) or {}
         vals = {"name": i["student_name"], "amount": i["balance"], "invoice": i["number"], "due_date": i["due_date"], "period": i["period"],
                 "academy": setting("academy_name", "Baleegh Academy"), "course": i["course_name"], "days_overdue": i["days_overdue"], "guardian": st.get("guardian_name") or ""}
-        text = fill(template_for(st.get("lang") or "en"), vals)
+        text = fill(template_text(), vals)
         links = {}
         for who, phone in (("student", st.get("phone") or i.get("student_phone")), ("guardian", st.get("guardian_phone"))):
             num = common.digits_intl(phone)
@@ -797,11 +795,12 @@ def register(app, c):
     def dashboard_extra():
         t = today()
         first = t.replace(day=1)
-        return {"unpaid_invoices": one("SELECT COUNT(*) n FROM invoices WHERE status IN ('unpaid','slip_submitted') AND amount_due_mvr-waived_mvr-paid_mvr>0")["n"],
-                "overdue_invoices": one("SELECT COUNT(*) n FROM invoices WHERE status IN ('unpaid','slip_submitted') AND amount_due_mvr-waived_mvr-paid_mvr>0 AND due_date<?", (t.isoformat(),))["n"],
-                "slips_pending": one("SELECT COUNT(*) n FROM payment_slips WHERE status='pending'")["n"],
-                "month_collection_mvr": one("SELECT COALESCE(SUM(amount_mvr),0) n FROM payments WHERE reversed_at IS NULL AND paid_on>=? AND paid_on<?",
-                                            (first.isoformat(), next_month_start(month_of(t)).isoformat()))["n"]}
+        r = one("SELECT (SELECT COUNT(*) FROM invoices WHERE status IN ('unpaid','slip_submitted') AND amount_due_mvr-waived_mvr-paid_mvr>0) AS unpaid_invoices,"
+                " (SELECT COUNT(*) FROM invoices WHERE status IN ('unpaid','slip_submitted') AND amount_due_mvr-waived_mvr-paid_mvr>0 AND due_date<?) AS overdue_invoices,"
+                " (SELECT COUNT(*) FROM payment_slips WHERE status='pending') AS slips_pending,"
+                " (SELECT COALESCE(SUM(amount_mvr),0) FROM payments WHERE reversed_at IS NULL AND paid_on>=? AND paid_on<?) AS month_collection_mvr",
+                (t.isoformat(), first.isoformat(), next_month_start(month_of(t)).isoformat()))
+        return {k: r[k] for k in ("unpaid_invoices", "overdue_invoices", "slips_pending", "month_collection_mvr")}
 
     app.extensions["fees"] = {"first_invoice": first_invoice, "on_transfer": on_transfer, "generate": generate, "dashboard": dashboard_extra,
                               "validate_setting": validate_setting, "today": today, "month_of": month_of, "parse_period": parse_period}

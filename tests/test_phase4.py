@@ -565,12 +565,6 @@ class P4(unittest.TestCase):
         m = {x["student_id"]: x for x in self.ok(self.J("get", "/api/fees/overdue"))["items"]}[sid]
         self.assertEqual(m["message"], f"Hi Mariyam Ali: 350 for {m['number']} due 2026-03-19 (13 days) {{unknown}}")   # unknown placeholders stay visible
         self.assertEqual(self.J("put", "/api/settings", json={"reminder_template_en": "x" * 1001}).status_code, 400)
-        # Dhivehi template for students whose language is Dhivehi; falls back to English when empty
-        sh = self.login("s%d@t.test" % (self.n - 1))
-        self.ok(self.J("patch", "/api/auth/language", sh, json={"lang": "dv"}))
-        m = {x["student_id"]: x for x in self.ok(self.J("get", "/api/fees/overdue"))["items"]}[sid]; self.assertTrue(m["message"].startswith("Hi Mariyam"))
-        self.ok(self.J("put", "/api/settings", json={"reminder_template_dv": "ކުރިއަށް {name} {amount}"}))
-        m = {x["student_id"]: x for x in self.ok(self.J("get", "/api/fees/overdue"))["items"]}[sid]; self.assertEqual(m["message"], "ކުރިއަށް Mariyam Ali 350")
 
     def test_33_reminder_sent_is_recorded(self):
         w = self.world(350, 1); i = self.inv_of(w["sid"][0])["id"]
@@ -758,9 +752,8 @@ class P4(unittest.TestCase):
         v = [r for r in rows if r["action"] == "slip_verify"][0]; self.assertEqual(v["user_name"], "Admin"); self.assertTrue(v["at"]); self.assertIn("BA-R-0001", v["detail"])
 
     def test_43_language_files(self):
-        en = json.load(open(os.path.join(ROOT, "static/i18n/en.json"))); dv = json.load(open(os.path.join(ROOT, "static/i18n/dv.json")))
-        self.assertIn("_review", dv)
-        self.assertEqual([k for k in dv if k not in en], ["_review"], "every Dhivehi key must also exist in en.json")
+        en = json.load(open(os.path.join(ROOT, "static/i18n/en.json")))
+        self.assertNotIn("reminder_template_dv", en)
         js = open(os.path.join(ROOT, "static/fees.js"), encoding="utf-8").read()
         used = set(re.findall(r"""\bt\(\s*["']([a-z0-9_]+)["']\s*\)""", js))
         for pre, opts in (("fx_st_", ("unpaid", "slip_submitted", "paid", "void", "waived", "overdue", "partial")), ("fx_m_", ("bank_transfer", "cash", "other")), ("fx_tab_", ("slips", "invoices", "record", "discounts", "overdue", "report"))):
@@ -770,17 +763,14 @@ class P4(unittest.TestCase):
         self.assertEqual(missing, [], "keys used in fees.js but missing from en.json")
         fx = {k for k in en if k.startswith("fx_")}
         self.assertEqual(sorted(fx - used), [], "unused fx_ keys in en.json")
-        for k in ("invoice_due_day", "first_invoice_mode", "first_invoice_grace_days", "receipt_prefix", "reminder_template_en", "reminder_template_dv"): self.assertIn(k, en, "setting label " + k)
-        thaana = sum(1 for k in dv if k.startswith("fx_") or k == "fees")
-        self.assertGreaterEqual(thaana, len(fx) * 0.9, "Dhivehi drafts should cover (nearly) every new string")
-        for k, v in dv.items():
-            if k.startswith("fx_"): self.assertTrue(re.search(r"[\u0780-\u07BF]", v), f"{k} has no Thaana text")
+        for k in ("invoice_due_day", "first_invoice_mode", "first_invoice_grace_days", "receipt_prefix", "reminder_template_en"): self.assertIn(k, en, "setting label " + k)
         self.assertEqual(self.c.get("/fees.js").status_code, 200)
         self.assertIn("fees.js", open(os.path.join(ROOT, "static/index.html"), encoding="utf-8").read())
 
     def test_44_settings_roundtrip_and_blank_means_default(self):
         s = self.ok(self.J("get", "/api/settings"))
-        for k in ("invoice_due_day", "first_invoice_mode", "first_invoice_grace_days", "receipt_prefix", "reminder_template_en", "reminder_template_dv"): self.assertIn(k, s)
+        for k in ("invoice_due_day", "first_invoice_mode", "first_invoice_grace_days", "receipt_prefix", "reminder_template_en"): self.assertIn(k, s)
+        self.assertNotIn("reminder_template_dv", s)
         self.ok(self.J("put", "/api/settings", json={k: "" for k in s}))   # the Settings screen saves every field, blanks included
         w = self.world(350, 1); self.gen("2026-04")
         self.assertEqual(self.inv_of(w["sid"][0], "2026-04")["due_date"], "2026-04-10")
