@@ -38,3 +38,13 @@ def save_private(f, store, area, max_bytes=None):
     store.put(area, name, data)
     shown = re.sub(r"[^\w.\- ]", "_", os.path.basename(f.filename))[:80]
     return name, hashlib.sha256(data).hexdigest(), shown
+
+
+def file_headers(resp, shown_name, attachment=False):
+    """Make a private file response safe and predictable: right Content-Type kept, name shown, never cached, never sniffed as HTML."""
+    safe = re.sub(r'[^\w.\- ]', "_", os.path.basename(shown_name or "file"))[:80] or "file"
+    resp.headers["Content-Disposition"] = f'{"attachment" if attachment else "inline"}; filename="{safe}"'
+    resp.headers["Cache-Control"] = "private, no-store"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Access-Control-Expose-Headers"] = "Content-Disposition, Content-Type"
+    return resp

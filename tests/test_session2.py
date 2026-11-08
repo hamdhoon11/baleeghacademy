@@ -108,7 +108,8 @@ class Session2(unittest.TestCase):
         self.assertEqual(self.c.get(url, headers=self.t1).data, PDF)
         self.assertEqual(self.c.get(f"/api/tutorials/{tid}/submission", headers=self.s2).get_json()["submission"], None)   # others' answers are not mine
         t = self.item(self.t1, tid); self.assertEqual((t["can_view_answers"], t["answer_count"]), (True, 1))
-        self.assertNotIn("can_view_answers", self.item(self.t2, tid)); self.assertNotIn("can_view_answers", self.item(self.s1, tid))
+        self.assertEqual([x for x in self.c.get("/api/tutorials", headers=self.t2).get_json() if x["id"] == tid], [])   # Session 18: a teacher sees only tutorials of their own batches
+        self.assertNotIn("can_view_answers", self.item(self.s1, tid))
         self.assertTrue(self.item(self.s1, tid)["my_submission"]["has_file"]); self.assertIsNone(self.item(self.s2, tid)["my_submission"])
 
     # ---- old student posts ----
@@ -120,7 +121,7 @@ class Session2(unittest.TestCase):
             conn = dbx.Conn(self.app.config["DATABASE_URL"], self.app.config["DATABASE_PATH"], ())
             tid = conn.execute("INSERT INTO tutorials(title,body,uploaded_by) VALUES(?,?,?)", ("Old student post", "from before", self.ids["s1"])).lastrowid
             conn.commit(); conn.close()
-        for who in (self.s1, self.s2, self.t1, self.a):
+        for who in (self.s1, self.s2, self.a):
             it = self.item(who, tid); self.assertEqual(it["text"], "from before")
             self.assertFalse(it["can_submit"]); self.assertFalse(it["accepts_answers"])
         self.assertFalse(self.item(self.s1, tid)["can_delete"])                                    # even the author cannot delete now

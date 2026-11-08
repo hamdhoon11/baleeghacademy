@@ -117,8 +117,8 @@ def register(app, c):
     def describe(course_name, level, code, period):
         return f"{course_name}{' ' + level if level else ''} · Batch {code} · {MONTHS[int(period[5:]) - 1]} {period[:4]}"
 
-    def audit_c(action, entity, entity_id, detail=None):
-        audit(action, entity, entity_id, detail)
+    def audit_c(action, entity, entity_id, detail=None, **kw):
+        audit(action, entity, entity_id, detail, **kw)
 
     def money_err(e):
         return jsonify(error=e.msg, **e.extra), e.code
@@ -181,7 +181,7 @@ def register(app, c):
         return cur.lastrowid
 
     ENR_SQL = ("SELECT e.id AS eid, e.student_id, e.enrolled_at, e.status AS estatus, b.id AS bid, b.code, c.id AS cid, c.name AS cname, c.level, "
-               "c.monthly_fee_mvr AS fee, u.is_active FROM enrollments e JOIN batches b ON b.id=e.batch_id JOIN courses c ON c.id=b.course_id "
+               "c.monthly_fee_mvr AS fee, c.is_active AS cactive, u.is_active, u.full_name AS sname FROM enrollments e JOIN batches b ON b.id=e.batch_id JOIN courses c ON c.id=b.course_id "
                "JOIN users u ON u.id=e.student_id")
 
     def enrolled_month(enrolled_at):
@@ -192,38 +192,84 @@ def register(app, c):
             return "0000-00"
         return month_of(d)
 
-    def first_invoice(eid, user_id=None):
-        """Called when an enrollment becomes active. Bills the current month in full (setting first_invoice_mode='skip' starts billing next month)."""
+    SKIP_MSG = {"course_inactive": "Course or tuition class is inactive (no new invoices)",
+                "fee_zero": "Course fee is 0 - set a monthly fee on the course",
+                "inactive_student": "Student account is deactivated",
+                "not_enrolled_yet": "Student enrolled after this billing month",
+                "first_month_skipped": "First month is not billed (setting first_invoice_mode = skip)",
+                "already_invoiced": "Invoice for this month already exists",
+                "not_active": "Enrolment is not active (waitlist or dropped); invoiced when it becomes active",
+                "not_found": "Enrolment not found"}
+
+    def registration_invoice(e, user_id):
+        """Session 31: the one-time registration fee, once per student and course (a transfer to another batch of the same course, or a later
+        re-enrolment, is not charged again). Not discounted (family concessions and discounts apply to the monthly fee only). Returns the invoice id or None."""
+        fee = int(one("SELECT registration_fee_mvr AS r FROM courses WHERE id=?", (e["cid"],))["r"] or 0)
+        if fee <= 0 or one("SELECT 1 x FROM invoices WHERE student_id=? AND course_id=? AND kind='registration'", (e["student_id"], e["cid"])): return None
+        try: grace = int(setting("first_invoice_grace_days", "7"))
+        except ValueError: grace = 7
+        cur = db().execute(
+            "INSERT INTO invoices(enrollment_id,student_id,course_id,batch_id,period,description,kind,amount_mvr,discount_mvr,amount_due_mvr,due_date,status,created_by,created_at) "
+            "VALUES(?,?,?,?,'REG-FEE',?,'registration',?,0,?,?,'unpaid',?,?) ON CONFLICT (enrollment_id, period) DO NOTHING",
+            (e["eid"], e["student_id"], e["cid"], e["bid"], f"Registration fee · {e['cname']}{' ' + e['level'] if e['level'] else ''} · Batch {e['code']}", fee, fee,
+             (today() + dt.timedelta(days=grace)).isoformat(), user_id, stamp()))
+        return cur.lastrowid if cur.rowcount else None
+
+    def first_invoice_result(eid, user_id=None):
+        """Bills the current month in full (first_invoice_mode='skip' starts next month). Returns {invoice_id, reason, message}; reason is None when an invoice was created."""
         e = one(ENR_SQL + " WHERE e.id=?", (eid,))
-        if not e or e["estatus"] != "active" or e["fee"] <= 0 or setting("first_invoice_mode", "full") == "skip": return None
-        period = month_of(today())
-        if user_id is None: user_id = (getattr(g, "user", None) or {}).get("id")
-        return make_invoice(e, period, True, user_id)
+        reason = ("not_found" if not e else "not_active" if e["estatus"] != "active" else "course_inactive" if not e["cactive"] else "fee_zero" if e["fee"] <= 0
+                  else "first_month_skipped" if setting("first_invoice_mode", "full") == "skip" else None)
+        iid = None
+        if e and e["estatus"] == "active" and e["cactive"]:
+            registration_invoice(e, user_id if user_id is not None else (getattr(g, "user", None) or {}).get("id"))
+        if not reason:
+            if user_id is None: user_id = (getattr(g, "user", None) or {}).get("id")
+            iid = make_invoice(e, month_of(today()), True, user_id)
+            if not iid: reason = "already_invoiced"
+        return {"invoice_id": iid, "reason": reason, "message": SKIP_MSG.get(reason)}
+
+    def first_invoice(eid, user_id=None):
+        return first_invoice_result(eid, user_id)["invoice_id"]
 
     def on_transfer(old_eid, new_eid):
         """Moved to another batch: open invoices for this month onward follow the student when the course is the same (no double billing)."""
         o, n = one(ENR_SQL + " WHERE e.id=?", (old_eid,)), one(ENR_SQL + " WHERE e.id=?", (new_eid,))
         if o and n and o["cid"] == n["cid"]:
-            for i in rows("SELECT * FROM invoices WHERE enrollment_id=? AND period>=? AND status!='void'", (old_eid, month_of(today()))):
+            for i in rows("SELECT * FROM invoices WHERE enrollment_id=? AND kind='monthly' AND period>=? AND status!='void'", (old_eid, month_of(today()))):
                 if not one("SELECT 1 x FROM invoices WHERE enrollment_id=? AND period=?", (new_eid, i["period"])):
                     db().execute("UPDATE invoices SET enrollment_id=?, batch_id=?, description=? WHERE id=?",
                                  (new_eid, n["bid"], describe(n["cname"], n["level"], n["code"], i["period"]), i["id"]))
         return first_invoice(new_eid)
 
     def generate(period, user_id):
-        out = {"period": period, "created": 0, "skipped": {}}
+        """Creates the missing invoices for a month. `skipped` counts each reason; `details` names every enrolment that got no new invoice and why (first 500)."""
+        out = {"period": period, "created": 0, "skipped": {}, "details": []}
         sk = out["skipped"]
-        bump = lambda k: sk.__setitem__(k, sk.get(k, 0) + 1)
+        def bump(k, e):
+            sk[k] = sk.get(k, 0) + 1
+            if len(out["details"]) < 500:
+                out["details"].append({"enrollment_id": e["eid"], "student": e["sname"], "course": e["cname"], "batch": e["code"], "reason": k, "message": SKIP_MSG[k]})
         for e in rows(ENR_SQL + " WHERE e.status='active' ORDER BY e.id"):
-            if e["fee"] <= 0: bump("fee_zero"); continue
-            if not e["is_active"]: bump("inactive_student"); continue
+            if not e["cactive"]: bump("course_inactive", e); continue   # Session 12: inactive courses get no new invoices (old ones stay in reports)
+            if e["fee"] <= 0: bump("fee_zero", e); continue
+            if not e["is_active"]: bump("inactive_student", e); continue
             em = enrolled_month(e["enrolled_at"])
-            if em > period: bump("not_enrolled_yet"); continue
-            if em == period and setting("first_invoice_mode", "full") == "skip": bump("first_month_skipped"); continue
+            if em > period: bump("not_enrolled_yet", e); continue
+            if em == period and setting("first_invoice_mode", "full") == "skip": bump("first_month_skipped", e); continue
             if make_invoice(e, period, False, user_id): out["created"] += 1
-            else: bump("already_invoiced")
+            else: bump("already_invoiced", e)
         out["skipped_total"] = sum(sk.values())
+        out["details_truncated"] = out["skipped_total"] > len(out["details"])
         return out
+
+    def catch_up(user_id=None, how="catch-up"):
+        """Creates whatever is missing for the current month. Safe to repeat (UNIQUE enrollment_id, period). Logged only when something was created."""
+        r = generate(month_of(today()), user_id)
+        if r["created"]:
+            audit_c("generate_invoices", "invoice", None, f"{r['period']}: created {r['created']}, skipped {r['skipped_total']} ({how})", **({"role": "system"} if user_id is None else {}))
+        db().commit()
+        return r
 
     # ---------- admin: generate, list, detail ----------
     @app.post("/api/invoices/generate")
@@ -234,6 +280,28 @@ def register(app, c):
         r = generate(period, g.user["id"])
         audit_c("generate_invoices", "invoice", None, f"{period}: created {r['created']}, skipped {r['skipped_total']}"); db().commit()
         return jsonify(r)
+
+    @app.post("/api/invoices/catch-up")
+    @auth("admin", perm="fees")
+    def inv_catch_up():
+        r = catch_up(g.user["id"], "catch-up on opening Fees")
+        return jsonify(period=r["period"], created=r["created"])
+
+    @app.get("/api/invoices/<int:iid>/invoice.pdf")
+    @auth("admin", perm="fees")
+    def invoice_pdf(iid):
+        i = get_invoice(iid)
+        if not i: return err("Invoice not found", 404)
+        c_ = one("SELECT level FROM courses WHERE id=?", (i["course_id"],))
+        data = receipts.build_invoice({"academy": setting("academy_name", "Baleegh Academy"), "phone": setting("contact_phone"), "invoice_no": i["number"],
+                                       "student_id": i["student_id"], "student": i["student_name"], "course": i["course_name"] + (" " + c_["level"] if c_ and c_["level"] else ""),
+                                       "batch": i["batch_code"], "period": i["period"], "due_date": i["due_date"], "amount": i["amount_mvr"], "discount": i["discount_mvr"],
+                                       "amount_due": i["amount_due_mvr"], "paid": i["paid_mvr"], "balance": i["balance"], "status": i["status"]})
+        audit_c("view_invoice_pdf", "invoice", iid, None); db().commit()
+        resp = Response(data, mimetype="application/pdf")
+        resp.headers["Content-Disposition"] = f'attachment; filename="{i["number"]}.pdf"'
+        resp.headers["Cache-Control"] = "private, no-store"
+        return resp
 
     @app.get("/api/invoices")
     @auth("admin", perm="fees")
@@ -369,7 +437,7 @@ def register(app, c):
         start = d.get("from_month") or month_of(today())
         if not PERIOD.match(str(start)): return err("From month must look like 2026-03")
         n = 0
-        for i in rows("SELECT id FROM invoices WHERE enrollment_id=? AND period>=? AND status='unpaid' AND paid_mvr=0", (eid, start)):
+        for i in rows("SELECT id FROM invoices WHERE enrollment_id=? AND kind='monthly' AND period>=? AND status='unpaid' AND paid_mvr=0", (eid, start)):
             db().execute("UPDATE invoices SET status='void', status_reason=? WHERE id=?", (reason, i["id"]))
             audit_c("invoice_void", "invoice", i["id"], "enrollment dropped: " + reason); n += 1
         db().commit()
@@ -544,7 +612,9 @@ def register(app, c):
             cur = db().execute("INSERT INTO payment_slips(invoice_id,student_id,file,file_name,file_hash,amount_mvr,transfer_date,reference,status,created_at) VALUES(?,?,?,?,?,?,?,?,'pending',?)",
                                (iid, g.user["id"], name, shown, digest, amount, tdate.isoformat(), (f.get("reference") or "").strip()[:80] or None, stamp()))
             P.recompute(iid)
-            audit_c("slip_upload", "invoice", iid, f"slip {cur.lastrowid}, claimed {amount} MVR"); db().commit()
+            audit_c("slip_upload", "invoice", iid, f"slip {cur.lastrowid}, claimed {amount} MVR")
+            c.notify(c.notify_admins_with("fees"), "slip_uploaded", "New payment slip", f"{g.user['full_name']} sent a slip for {amount} MVR.", "fees")   # Session 28
+            db().commit()
         except Exception:
             db().rollback()
             store.delete("slips", name)
@@ -557,9 +627,7 @@ def register(app, c):
         s = one("SELECT * FROM payment_slips WHERE id=?", (sid,))
         if not s or (g.user["role"] == "student" and s["student_id"] != g.user["id"]): return err("Slip not found", 404)
         audit_c("view_slip", "slip", sid, g.user["role"]); db().commit()
-        resp = store.send("slips", s["file"], s["file_name"] or s["file"], as_attachment=True)
-        resp.headers["Cache-Control"] = "private, no-store"
-        return resp
+        return common.file_headers(store.send("slips", s["file"], s["file_name"] or s["file"], as_attachment=True), s["file_name"] or s["file"], attachment=True)
 
     # ---------- slips: admin queue, verify, reject ----------
     def with_dupes(s):
@@ -605,7 +673,9 @@ def register(app, c):
         except pay.PayError as x:
             db().rollback()
             return money_err(x)
-        audit_c("slip_verify", "payment", p["id"], f"slip {sid}, invoice {s['invoice_id']}, {p['amount_mvr']} MVR, {p['receipt_no']}" + (", duplicate confirmed" if dup["duplicates"] else "")); db().commit()
+        audit_c("slip_verify", "payment", p["id"], f"slip {sid}, invoice {s['invoice_id']}, {p['amount_mvr']} MVR, {p['receipt_no']}" + (", duplicate confirmed" if dup["duplicates"] else ""))
+        c.notify([s["student_id"]], "slip_verified", "Payment received", f"We received {p['amount_mvr']} MVR. Receipt {p['receipt_no']}.", "fees")   # Session 28
+        db().commit()
         return jsonify(payment_id=p["id"], receipt_no=p["receipt_no"], invoice=get_invoice(s["invoice_id"]), warnings=[{"duplicate_of": dup["duplicates"]}] if dup["duplicates"] else [])
 
     @app.post("/api/slips/<int:sid>/reject")
@@ -618,7 +688,9 @@ def register(app, c):
             s = one("SELECT status FROM payment_slips WHERE id=?", (sid,))
             return err("Slip not found", 404) if not s else err(f"This slip was already {s['status']}", 409)
         P.recompute(one("SELECT invoice_id FROM payment_slips WHERE id=?", (sid,))["invoice_id"])
-        audit_c("slip_reject", "slip", sid, reason); db().commit()
+        audit_c("slip_reject", "slip", sid, reason)
+        c.notify([one("SELECT student_id FROM payment_slips WHERE id=?", (sid,))["student_id"]], "slip_rejected", "Payment slip not accepted", f"Reason: {reason}. Please send a new slip.", "fees")   # Session 28
+        db().commit()
         return jsonify(ok=True)
 
     # ---------- payments: manual, list, reverse, receipts ----------
@@ -802,5 +874,5 @@ def register(app, c):
                 (t.isoformat(), first.isoformat(), next_month_start(month_of(t)).isoformat()))
         return {k: r[k] for k in ("unpaid_invoices", "overdue_invoices", "slips_pending", "month_collection_mvr")}
 
-    app.extensions["fees"] = {"first_invoice": first_invoice, "on_transfer": on_transfer, "generate": generate, "dashboard": dashboard_extra,
+    app.extensions["fees"] = {"first_invoice": first_invoice, "first_invoice_result": first_invoice_result, "catch_up": catch_up, "on_transfer": on_transfer, "generate": generate, "dashboard": dashboard_extra,
                               "validate_setting": validate_setting, "today": today, "month_of": month_of, "parse_period": parse_period}

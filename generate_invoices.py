@@ -23,7 +23,7 @@ with app.app_context():
     from flask import g
     r = fx["generate"](period, None)
     # generate() writes through the app-context connection; log it and commit before the context closes
-    g.db.execute("INSERT INTO audit_log(user_id,action,entity,detail) VALUES(NULL,'generate_invoices','invoice',?)",
+    g.db.execute("INSERT INTO audit_log(user_id,action,entity,detail,user_role) VALUES(NULL,'generate_invoices','invoice',?,'system')",
                   (f"{period}: created {r['created']}, skipped {r['skipped_total']} (scheduled run)",))
     g.db.commit()
 print(f"{r['period']}: created {r['created']} invoice(s), skipped {r['skipped_total']} {r['skipped'] or ''}")

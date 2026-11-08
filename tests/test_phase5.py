@@ -81,9 +81,10 @@ class P5(unittest.TestCase):
         r = self.post(self.t1, title="All three", text="Notes", url="https://example.com/y", file=self.f(), course_id=str(self.cid))
         self.assertEqual(r.status_code, 201)
         tid = r.get_json()["id"]
-        item = [x for x in self.c.get("/api/tutorials", headers=self.s2).get_json() if x["id"] == tid][0]
+        self.assertEqual(self.c.get(f"/api/tutorials/{tid}", headers=self.s2).status_code, 403)   # Session 13: course tutorials need an ACTIVE enrolment in that course
+        item = [x for x in self.c.get("/api/tutorials", headers=self.s1).get_json() if x["id"] == tid][0]
         self.assertEqual((item["text"], item["has_file"], item["url"], item["course_name"], item["uploader"], item["uploader_role"]), ("Notes", True, "https://example.com/y", "Arabic5", "Teacher One", "teacher"))
-        self.assertEqual(self.c.get(f"/api/tutorials/{tid}/file", headers=self.s2).data, PDF)  # any signed-in user can download
+        self.assertEqual(self.c.get(f"/api/tutorials/{tid}/file", headers=self.s1).data, PDF)  # an enrolled student can download
 
     def test_tutorial_validation(self):
         self.assertEqual(self.post(self.t1, title="Empty").status_code, 400)

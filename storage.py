@@ -4,15 +4,15 @@
   * S3_BUCKET set: any S3-compatible bucket (Supabase Storage, Cloudflare R2, Backblaze B2, AWS S3, MinIO).
 
 Files are never public. Every download goes through the portal, which checks who is asking first.
-Areas keep file kinds apart: "ids" (admission ID copies), "learning" (assignments, submissions, materials, tutorials), "slips" (payment slips).
+Areas keep file kinds apart: "ids" (admission ID copies), "learning" (assignments, submissions, materials, tutorials), "slips" (payment slips), "receipts" (expense receipts, Session 23).
 """
 import io
 import mimetypes
 import os
 
-from flask import abort, send_file, send_from_directory
+from flask import send_file, send_from_directory
 
-AREAS = ("ids", "learning", "slips")
+AREAS = ("ids", "learning", "slips", "receipts")
 
 
 def _safe(name):
@@ -42,6 +42,7 @@ class LocalStorage:
         except FileNotFoundError: pass
 
     def send(self, area, name, download_name=None, as_attachment=False):
+        if not os.path.isfile(os.path.join(self._dir(area), _safe(name))): raise FileNotFoundError(name)
         kw = {"as_attachment": True, "download_name": download_name or name} if as_attachment else {}
         return send_from_directory(self._dir(area), _safe(name), **kw)
 
@@ -81,8 +82,7 @@ class S3Storage:
             if not _missing(x): raise
 
     def send(self, area, name, download_name=None, as_attachment=False):
-        try: data = self.read(area, name)
-        except FileNotFoundError: abort(404)
+        data = self.read(area, name)   # FileNotFoundError when the file is gone; the app answers with a JSON 404
         shown = download_name or name
         return send_file(io.BytesIO(data), mimetype=mimetypes.guess_type(shown)[0] or mimetypes.guess_type(name)[0] or "application/octet-stream",
                          as_attachment=as_attachment, download_name=shown)

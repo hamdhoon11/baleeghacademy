@@ -65,7 +65,7 @@ class Session5(unittest.TestCase):
         self.assertEqual(self.lst(self.s2).get_json(), [])               # s2 is in no batch
         self.assertEqual(self.lst(self.t1).get_json(), [])               # t1 does not teach B2
         self.assertEqual(len(self.lst(self.t2).get_json()), 1)
-        self.assertEqual(self.lst(self.s1, f"?batch_id={self.b2}").get_json(), [])   # asking for another batch by id gives nothing
+        self.assertEqual(self.lst(self.s1, f"?batch_id={self.b2}").status_code, 403)   # asking for another batch by id is refused (Session 14; it used to give an empty list)
 
     def test_only_own_batches_and_not_students(self):
         self.assertEqual(self.add(self.b1, self.t2).status_code, 403)    # another teacher's batch

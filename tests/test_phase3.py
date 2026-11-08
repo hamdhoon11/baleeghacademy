@@ -44,6 +44,7 @@ class P3(unittest.TestCase):
         bid = self.c.post("/api/batches", json={"course_id": cid, "code": "B1", "days": days, "start_time": "16:00", "teacher_id": tid,
                                                  "meet_link": "https://meet.google.com/aaa-bbbb-ccc", "capacity": 20}, headers=a).get_json()["id"]
         w = {"a": a, "cid": cid, "tid": tid, "bid": bid, "t_email": f"teach{k}@p3.test", "stu": [], "s_email": []}
+        self.c.patch(f"/api/users/{tid}", json={"permissions": ["classroom", "tutorials", "create_tutorials", "class_links", "add_recordings", "cancel_class"]}, headers=a)   # Session 18: cancelling is opt-in
         w["t"] = self.login(w["t_email"])
         for i in range(students):
             email = f"stu{k}_{i}@p3.test"

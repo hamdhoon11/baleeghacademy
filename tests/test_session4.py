@@ -111,7 +111,7 @@ class Session4(unittest.TestCase):
         self.assertEqual(len([o for o in self.tl(self.s1) if o["date"] == "2026-03-06"]), 1)
 
     def test_cancelled_class_cannot_be_joined_even_with_own_link(self):
-        self.sess(self.b1, self.t1, date="2026-03-09", meet_link=ONE_OFF); self.sess(self.b1, self.t1, date="2026-03-09", status="cancelled")
+        self.sess(self.b1, self.t1, date="2026-03-09", meet_link=ONE_OFF); self.sess(self.b1, self.a, date="2026-03-09", status="cancelled")
         self.clock[0] = dt.datetime(2026, 3, 9, 15, 50, tzinfo=MVT)
         o = [x for x in self.c.get("/api/timetable?from=2026-03-09&to=2026-03-09", headers=self.s1).get_json()][0]
         self.assertEqual((o["status"], o["can_join"], o["meet_link"]), ("cancelled", False, ONE_OFF))

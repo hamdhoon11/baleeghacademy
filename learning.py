@@ -8,8 +8,9 @@ Times are Maldives time (UTC+5, no daylight saving).
 """
 import os, re, uuid, datetime as dt
 from urllib.parse import urlparse
-import common
-from flask import jsonify, request, send_from_directory, g
+import common, substitutions
+import settings_schema as SS
+from flask import abort, jsonify, request, send_from_directory, g
 
 MVT = dt.timezone(dt.timedelta(hours=5))
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]  # index = python weekday()
@@ -75,47 +76,76 @@ def register(app, c):
         if name: store.delete("learning", name)
 
     def send_private(stored, shown):
-        resp = store.send("learning", stored, shown or stored, as_attachment=True)
-        resp.headers["Cache-Control"] = "private, no-store"
-        return resp
+        return common.file_headers(store.send("learning", stored, shown or stored, as_attachment=True), shown or stored, attachment=True)
 
     BQ = ("SELECT b.id,b.code,b.days,b.start_time,b.start_date,b.status,b.meet_link,b.teacher_id,b.course_id,"
           "c.name AS course_name,COALESCE(c.minutes_per_class,60) AS minutes,u.full_name AS teacher_name "
           "FROM batches b JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=b.teacher_id")
 
+    def teacher_batches(uid):
+        """THE one rule for which batches a teacher may use: a set of batch ids. Today: the batches where they are the teacher.
+        Every teacher check below and the batch list in app.py go through this, so substitutes (Session 22) plug in here only."""
+        return {r["id"] for r in rows("SELECT id FROM batches WHERE teacher_id=?", (uid,))}
+    app.extensions["teacher_batches"] = teacher_batches
+
+    # ---------- substitute teachers (Session 22) ----------
+    # teacher_batches() stays "my own batches": grades, assignments, materials, tutorials, information and cancelling use it, so a substitute gets none of that.
+    # Only the class-information routes (picker, timetable, class students and join link, attendance) use class_batches(), which adds the
+    # batches where the teacher is a substitute TODAY. Access ends by itself: it is a date comparison, not a stored flag.
+    def sub_windows(uid, day=None):
+        return substitutions.windows(rows, uid, (day or today()).isoformat())
+
+    def class_batches(uid):
+        return teacher_batches(uid) | set(sub_windows(uid))
+
+    def sub_day_error(bid, day):
+        """None for admins, the batch's own teacher, or a substitute inside their dates; else a 403 (a substitute may not read other dates)."""
+        if g.user["role"] != "teacher" or bid in teacher_batches(g.user["id"]): return None
+        if any(a <= day.isoformat() <= z for a, z in sub_windows(g.user["id"], day).get(bid, [])): return None
+        return err("You are a substitute for this batch only on the dates the admin set", 403)
+
     def batch(bid):
         return one(BQ + " WHERE b.id=?", (bid,))
 
-    def manage(bid):
-        """Admin, or the batch's own teacher. Returns (batch, None) or (None, error response)."""
+    def manage(bid, cls=False):
+        """Admin, or the batch's own teacher (cls=True: or today's substitute, for class-information routes only). Returns (batch, None) or (None, error response)."""
         b = batch(bid)
         if not b: return None, err("Batch not found", 404)
-        if g.user["role"] == "admin" or (g.user["role"] == "teacher" and b["teacher_id"] == g.user["id"]):
+        if g.user["role"] == "admin" or (g.user["role"] == "teacher" and bid in (class_batches(g.user["id"]) if cls else teacher_batches(g.user["id"]))):
             return b, None
         return None, err("This is not your batch", 403)
 
     def viewable(bid):
-        """manage() rights, or a student enrolled (active/completed) in the batch."""
+        """manage() rights, or a student with an ACTIVE enrolment in the batch (dropped, transferred, waitlisted and completed students get 403)."""
         b = batch(bid)
         if not b: return None, err("Batch not found", 404)
         u = g.user
-        if u["role"] == "admin" or (u["role"] == "teacher" and b["teacher_id"] == u["id"]): return b, None
-        if u["role"] == "student" and one("SELECT 1 x FROM enrollments WHERE student_id=? AND batch_id=? AND status IN ('active','completed')", (u["id"], bid)):
+        if u["role"] == "admin" or (u["role"] == "teacher" and bid in teacher_batches(u["id"])): return b, None
+        if u["role"] == "student" and one("SELECT 1 x FROM enrollments WHERE student_id=? AND batch_id=? AND status='active'", (u["id"], bid)):
             return b, None
         return None, err("You do not have access to this batch", 403)
 
-    def my_batches(batch_id=None):
+    def my_batches(batch_id=None, scope="own"):
+        """scope="class" also includes the batches where a teacher substitutes today (picker, timetable only); everything else stays "own"."""
         u, w, a = g.user, [], []
-        if u["role"] == "teacher": w.append("b.teacher_id=?"); a.append(u["id"])
+        if u["role"] == "teacher":
+            mine = sorted(class_batches(u["id"]) if scope == "class" else teacher_batches(u["id"]))
+            if batch_id and batch_id not in mine: abort(403, "This is not your batch")   # an unassigned batch: 403, not an empty list (Session 15)
+            if not mine: return []
+            w.append(f"b.id IN ({','.join('?' * len(mine))})"); a += mine
         if u["role"] == "student":
-            w.append("b.id IN (SELECT batch_id FROM enrollments WHERE student_id=? AND status IN ('active','completed'))"); a.append(u["id"])
-        if batch_id: w.append("b.id=?"); a.append(batch_id)
+            w.append("b.id IN (SELECT batch_id FROM enrollments WHERE student_id=? AND status='active')"); a.append(u["id"])
+        if batch_id:
+            w.append("b.id=?"); a.append(batch_id)
+            if u["role"] == "student" and not one("SELECT 1 x FROM enrollments WHERE student_id=? AND batch_id=? AND status='active'", (u["id"], batch_id)):
+                abort(403, "You do not have access to this batch")   # a batch the student is not actively in: 403, not an empty list (Session 14)
         return rows(BQ + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY b.id", a)
 
     # ---------- class links (Session 4) ----------
     def can(area):
         pl = g.user.get("permissions")
-        return pl is None or area in [x for x in pl.split(",") if x]
+        if pl is None: return area not in SS.OPT_IN.get(g.user["role"], ())   # opt-in areas (edit_grades) are not part of "everything"
+        return area in [x for x in pl.split(",") if x]
 
     def gate(*areas):
         """Error response unless the signed-in person has every one of these areas (permissions NULL = everything their role has)."""
@@ -138,7 +168,7 @@ def register(app, c):
         link, e = clean_link(body().get("meet_link"))
         if e: return e
         db().execute("UPDATE batches SET meet_link=? WHERE id=?", (link, bid))
-        audit("set_class_link", "batch", bid, f"{b['code']}: " + ("link set" if link else "link removed")); db().commit()
+        audit("set_class_link", "batch", bid, f"{b['code']}: " + ("link set" if link else "link removed"), batch_id=bid); db().commit()
         return jsonify(ok=True, meet_link=link)
 
     # ---------- timetable ----------
@@ -196,7 +226,11 @@ def register(app, c):
         d1 = pdate(request.args.get("to")) or d0 + dt.timedelta(days=13)
         if d1 < d0 or (d1 - d0).days > 62: return err("Choose a date range of up to 62 days")
         bid = request.args.get("batch_id", type=int)
-        return jsonify([clean(o) for o in occurrences(my_batches(bid), d0, d1)])
+        out = [clean(o) for o in occurrences(my_batches(bid, "class"), d0, d1)]
+        if g.user["role"] == "teacher":   # as a substitute: only the substituted dates of that batch
+            own = teacher_batches(g.user["id"]); win = sub_windows(g.user["id"])
+            out = [o for o in out if o["batch_id"] in own or any(a <= o["date"] <= z for a, z in win.get(o["batch_id"], []))]
+        return jsonify(out)
 
     @app.post("/api/batches/<int:bid>/sessions")
     @auth("admin", "teacher", perm="classroom")
@@ -210,6 +244,8 @@ def register(app, c):
         if not st or not TIME.match(str(st)): return err("Enter a start time (HH:MM)")
         status = d.get("status", "scheduled")
         if status not in ("scheduled", "cancelled"): return err("Status must be scheduled or cancelled")
+        if status == "cancelled" and g.user["role"] != "admin" and not can("cancel_class"):   # opt-in for teachers (Session 18)
+            return err("Your account does not have permission to cancel classes", 403)
         # a one-off link for this class only: needs the Class links permission; an empty value removes it
         has_link = "meet_link" in d
         link = None
@@ -228,8 +264,14 @@ def register(app, c):
         else:
             sid = db().execute("INSERT INTO sessions(batch_id,session_date,start_time,status,topic,note,meet_link,created_by) VALUES(?,?,?,?,?,?,?,?)",
                                (bid, day.isoformat(), st, status, d.get("topic"), d.get("note"), link, g.user["id"])).lastrowid
-        audit("session_" + status, "session", sid, f"batch {bid} {day} {st}")
-        if has_link: audit("set_class_link", "session", sid, f"batch {bid} {day} {st}: " + ("one-off link set" if link else "one-off link removed"))
+        audit("session_" + status, "session", sid, f"batch {bid} {day} {st}", batch_id=bid, old=ex["status"] if ex else None, new=new_status if ex else status)
+        if has_link: audit("set_class_link", "session", sid, f"batch {bid} {day} {st}: " + ("one-off link set" if link else "one-off link removed"), batch_id=bid)
+        was = ex["status"] if ex else "scheduled"   # Session 28: tell students (and the teacher, when someone else changed it) only when the state really changes
+        now_st = new_status if ex else status
+        if (was == "cancelled") != (now_st == "cancelled"):
+            who = c.notify_students_of(bid) + ([b["teacher_id"]] if b["teacher_id"] != g.user["id"] else [])
+            c.notify(who, "class_cancelled" if now_st == "cancelled" else "class_reinstated", "Class cancelled" if now_st == "cancelled" else "Class is back on",
+                     f"{day.strftime('%a %d %b')} at {st}" + (f": {d.get('note')}" if now_st == "cancelled" and d.get("note") else ""), "home")
         db().commit()
         return jsonify(id=sid), 201
 
@@ -286,9 +328,11 @@ def register(app, c):
     @app.get("/api/batches/<int:bid>/attendance")
     @auth("admin", "teacher", perm="classroom")
     def l_att_get(bid):
-        b, e = manage(bid)
+        b, e = manage(bid, cls=True)
         if e: return e
         day = pdate(request.args.get("date")) or today()
+        e = sub_day_error(bid, day)
+        if e: return e
         st = request.args.get("start_time") or b["start_time"]
         sess = one("SELECT * FROM sessions WHERE batch_id=? AND session_date=? AND start_time=?", (bid, day.isoformat(), st)) if st else None
         marks = {r["student_id"]: r for r in rows("SELECT student_id,status,note FROM attendance WHERE session_id=?", (sess["id"],))} if sess else {}
@@ -298,11 +342,14 @@ def register(app, c):
     @app.post("/api/batches/<int:bid>/attendance")
     @auth("admin", "teacher", perm="classroom")
     def l_att_save(bid):
-        b, e = manage(bid)
+        b, e = manage(bid, cls=True)
         if e: return e
         d = body()
         day = pdate(d.get("date"))
         if not day: return err("Enter a valid date")
+        e = sub_day_error(bid, day)
+        if e: return e
+        as_sub = g.user["role"] == "teacher" and bid not in teacher_batches(g.user["id"])
         if day > today(): return err("You cannot mark attendance for a class that has not happened yet")
         st = d.get("start_time") or b["start_time"]
         if not st or not TIME.match(str(st)): return err("Enter a start time (HH:MM)")
@@ -324,11 +371,14 @@ def register(app, c):
         else:
             sid_ = db().execute("INSERT INTO sessions(batch_id,session_date,start_time,status,topic,created_by) VALUES(?,?,?,'held',?,?)",
                                 (bid, day.isoformat(), st, d.get("topic"), g.user["id"])).lastrowid
+        prev = {r["student_id"]: r["status"] for r in rows("SELECT student_id,status FROM attendance WHERE session_id=?", (sid_,))}
+        was = [f"{s}:{prev[s]}" for s, st_, _ in clean_recs if s in prev and prev[s] != st_]
+        now = [f"{s}:{st_}" for s, st_, _ in clean_recs if prev.get(s) != st_]   # new marks and changed marks
         for sid, status, note in clean_recs:
             db().execute("INSERT INTO attendance(session_id,student_id,status,note,marked_by) VALUES(?,?,?,?,?) "
                          "ON CONFLICT(session_id,student_id) DO UPDATE SET status=excluded.status,note=excluded.note,marked_by=excluded.marked_by,marked_at=datetime('now')",
                          (sid_, sid, status, note, g.user["id"]))
-        audit("mark_attendance", "session", sid_, f"batch {bid} {day} ({len(clean_recs)} students)"); db().commit()
+        audit("mark_attendance", "session", sid_, f"batch {bid} {day} ({len(clean_recs)} students)" + (" as substitute" if as_sub else ""), batch_id=bid, old=",".join(was) or None, new=",".join(now) or "no change"); db().commit()
         return jsonify(session_id=sid_, saved=len(clean_recs))
 
     @app.get("/api/batches/<int:bid>/attendance/summary")
@@ -341,11 +391,22 @@ def register(app, c):
         return jsonify(threshold=threshold(), classes_held=held,
                        students=[{**s, **st.get(s["id"], stat(0, 0, 0, 0))} for s in roster(bid)])
 
+    @app.get("/api/my/batches")
+    @auth("student", "teacher")
+    def l_my_batches():
+        """The batches this person works in: a student's ACTIVE enrolments, or the teacher's own batches (teacher_batches). The choices of the picker."""
+        return jsonify([{"id": b["id"], "code": b["code"], "course_id": b["course_id"], "course_name": b["course_name"], "teacher_name": b["teacher_name"],
+                         "days": b["days"], "start_time": b["start_time"]} for b in my_batches(scope="class")] if g.user["role"] != "teacher" else
+                       [{"id": b["id"], "code": b["code"], "course_id": b["course_id"], "course_name": b["course_name"], "teacher_name": b["teacher_name"],
+                         "days": b["days"], "start_time": b["start_time"],
+                         **({"substitute_until": max(z for a, z in sub_windows(g.user["id"]).get(b["id"], [(0, "")]))} if b["id"] not in teacher_batches(g.user["id"]) else {})}
+                        for b in my_batches(scope="class")])
+
     @app.get("/api/my/attendance")
     @auth("student", perm="progress")
     def l_my_att():
         out = []
-        for b in my_batches():
+        for b in my_batches(request.args.get("batch_id", type=int)):
             recent = rows("SELECT s.session_date AS date,a.status FROM attendance a JOIN sessions s ON s.id=a.session_id "
                           "WHERE s.batch_id=? AND a.student_id=? ORDER BY s.session_date DESC LIMIT 20", (b["id"], g.user["id"]))
             out.append({"batch_id": b["id"], "course_name": b["course_name"], "batch_code": b["code"], **batch_att(b["id"], g.user["id"]), "recent": recent})
@@ -388,7 +449,9 @@ def register(app, c):
             except ValueError as x: return err(str(x))
         aid = db().execute("INSERT INTO assignments(batch_id,title,description,kind,due_date,max_points,attachment,attachment_name,created_by) VALUES(?,?,?,?,?,?,?,?,?)",
                            (bid, d["title"].strip(), (d.get("description") or "").strip() or None, kind, due, mx, stored, shown, g.user["id"])).lastrowid
-        audit("create_assignment", "assignment", aid, d["title"] + (" (with file)" if stored else "")); db().commit()
+        audit("create_assignment", "assignment", aid, d["title"] + (" (with file)" if stored else ""), batch_id=bid)
+        c.notify(c.notify_students_of(bid), "assignment_new", "New " + ("test" if kind == "test" else "assignment"), d["title"].strip() + (f" (due {due[:10]})" if due else ""), "assignments")   # Session 28
+        db().commit()
         return jsonify(id=aid), 201
 
     @app.get("/api/assignments/<int:aid>/attachment")
@@ -416,7 +479,7 @@ def register(app, c):
             if one("SELECT 1 x FROM submissions WHERE assignment_id=? AND grade > ?", (aid, mp)): return err("Some grades are higher than that. Change those first.", 409)
             d["max_points"] = mp
         db().execute(f"UPDATE assignments SET {','.join(k + '=?' for k in f)} WHERE id=?", (*[d[k] for k in f], aid))
-        audit("update_assignment", "assignment", aid, ",".join(f)); db().commit()
+        audit("update_assignment", "assignment", aid, ",".join(f), batch_id=a["batch_id"]); db().commit()
         return jsonify(ok=True)
 
     @app.delete("/api/assignments/<int:aid>")
@@ -428,8 +491,57 @@ def register(app, c):
         rm(a["attachment"])
         db().execute("DELETE FROM submissions WHERE assignment_id=?", (aid,))
         db().execute("DELETE FROM assignments WHERE id=?", (aid,))
-        audit("delete_assignment", "assignment", aid, a["title"]); db().commit()
+        audit("delete_assignment", "assignment", aid, a["title"], batch_id=a["batch_id"]); db().commit()
         return jsonify(ok=True)
+
+    # ONE definition of the assignment counts (Session 18). Only students who are ACTIVE in the batch count, each student once per assignment
+    # (COUNT DISTINCT), whatever the number of rows or resubmissions. "Pending grading" = handed in, no grade yet, kind 'assignment' (a test has no hand-in).
+    def assign_counts(aids):
+        """{assignment_id: {students, submitted, graded, pending}} for these assignments."""
+        if not aids: return {}
+        out = {r["id"]: {"students": r["n"], "submitted": r["sub"], "graded": r["gr"], "pending": r["pend"]} for r in rows(
+            "SELECT a.id,COUNT(DISTINCT e.student_id) n,"
+            "COUNT(DISTINCT CASE WHEN s.submitted_at IS NOT NULL THEN s.student_id END) sub,"
+            "COUNT(DISTINCT CASE WHEN s.grade IS NOT NULL THEN s.student_id END) gr,"
+            "COUNT(DISTINCT CASE WHEN s.submitted_at IS NOT NULL AND s.grade IS NULL AND a.kind='assignment' THEN s.student_id END) pend "
+            "FROM assignments a JOIN enrollments e ON e.batch_id=a.batch_id AND e.status='active' "
+            f"LEFT JOIN submissions s ON s.assignment_id=a.id AND s.student_id=e.student_id WHERE a.id IN ({marks(len(aids))}) GROUP BY a.id", list(aids))}
+        return {i: out.get(i, {"students": 0, "submitted": 0, "graded": 0, "pending": 0}) for i in aids}
+
+    def pending_grading(bids):
+        """Number of hand-ins waiting for a grade in these batches (sum of assign_counts' pending). Used by the teacher Home and Teacher information."""
+        if not bids: return 0
+        aids = [r["id"] for r in rows(f"SELECT id FROM assignments WHERE kind='assignment' AND batch_id IN ({marks(len(bids))})", list(bids))]
+        return sum(c["pending"] for c in assign_counts(aids).values())
+
+    def scope_counts(bids, d1=None, d2=None):
+        """Session 25: class and assignment numbers for a set of batches, used by the admin dashboard. d1/d2 are Maldives dates ('YYYY-MM-DD') or None.
+        Classes use the sessions table (held / cancelled by session_date) and occurrences() (upcoming); assignments, tests, hand-ins, graded and pending
+        all come from assign_counts() (Session 18), limited to assignments given (created) in the date range. Nothing is counted a second way."""
+        out = {"classes_held": 0, "classes_cancelled": 0, "classes_upcoming": 0, "assignments": 0, "tests": 0, "submissions": 0, "graded": 0, "pending_grading": 0}
+        if not bids: return out
+        m, t0 = marks(len(bids)), today()
+        w, a = "", []
+        if d1: w += " AND session_date>=?"; a.append(d1)
+        if d2: w += " AND session_date<=?"; a.append(d2)
+        for r in rows(f"SELECT status,COUNT(*) n FROM sessions WHERE batch_id IN ({m}){w} GROUP BY status", [*bids, *a]):
+            if r["status"] == "held": out["classes_held"] = r["n"]
+            elif r["status"] == "cancelled": out["classes_cancelled"] = r["n"]
+        start = max(t0, dt.date.fromisoformat(d1)) if d1 else t0
+        end = min(dt.date.fromisoformat(d2) if d2 else t0 + dt.timedelta(days=27), t0 + dt.timedelta(days=92))   # upcoming looks ahead 28 days unless a range ends sooner, never beyond 92
+        if end >= start:
+            bs = rows(BQ + f" WHERE b.id IN ({m}) ORDER BY b.id", list(bids))
+            out["classes_upcoming"] = sum(1 for o in occurrences(bs, start, end) if o["date"] >= t0.isoformat() and o["status"] not in ("cancelled", "held"))
+        import auditview
+        w2, a2 = "", []
+        if d1: w2 += " AND created_at>=?"; a2.append(auditview.utc_bounds(d1))
+        if d2: w2 += " AND created_at<?"; a2.append(auditview.utc_bounds(d2, end=True))
+        asg = rows(f"SELECT id,kind FROM assignments WHERE batch_id IN ({m}){w2}", [*bids, *a2])
+        cnt = assign_counts([x["id"] for x in asg])
+        out.update(assignments=sum(1 for x in asg if x["kind"] == "assignment"), tests=sum(1 for x in asg if x["kind"] == "test"),
+                   submissions=sum(c["submitted"] for c in cnt.values()), graded=sum(c["graded"] for c in cnt.values()), pending_grading=sum(c["pending"] for c in cnt.values()))
+        return out
+    app.extensions["scope_counts"] = scope_counts
 
     @app.get("/api/assignments")
     @auth(perm=A_PERM)
@@ -446,8 +558,7 @@ def register(app, c):
         if aids and u["role"] == "student":
             subs = {r["assignment_id"]: r for r in rows(f"SELECT assignment_id,id,submitted_at,is_late,grade,feedback,graded_at,text_answer,file_name,(file IS NOT NULL) AS has_file FROM submissions WHERE student_id=? AND assignment_id IN ({marks(len(aids))})", [u["id"], *aids])}
         elif aids:
-            cnt = {r["assignment_id"]: r for r in rows(f"SELECT assignment_id,SUM(CASE WHEN submitted_at IS NOT NULL THEN 1 ELSE 0 END) sub,SUM(CASE WHEN grade IS NOT NULL THEN 1 ELSE 0 END) gr FROM submissions WHERE assignment_id IN ({marks(len(aids))}) GROUP BY assignment_id", aids)}
-            size = {r["batch_id"]: r["n"] for r in rows(f"SELECT batch_id,COUNT(*) n FROM enrollments WHERE status='active' AND batch_id IN ({q}) GROUP BY batch_id", ids)}
+            cnt = assign_counts(aids)
         for a in items:
             if u["role"] == "student":
                 s = subs.get(a["id"])
@@ -455,9 +566,8 @@ def register(app, c):
                            "feedback": s["feedback"] if s else None, "text_answer": s["text_answer"] if s else None,
                            "file_name": s["file_name"] if s else None, "has_file": bool(s and s["has_file"])}
             else:
-                n = cnt.get(a["id"])
-                a["submitted_count"], a["graded_count"] = (n["sub"] or 0, n["gr"] or 0) if n else (0, 0)
-                a["student_count"] = size.get(a["batch_id"], 0)
+                n = cnt[a["id"]]
+                a["submitted_count"], a["graded_count"], a["student_count"], a["pending_count"] = n["submitted"], n["graded"], n["students"], n["pending"]
         return jsonify(items)
 
     @app.post("/api/assignments/<int:aid>/submit")
@@ -486,7 +596,7 @@ def register(app, c):
         else:
             sid = db().execute("INSERT INTO submissions(assignment_id,student_id,text_answer,file,file_name,submitted_at,is_late) VALUES(?,?,?,?,?,datetime('now'),?)",
                                (aid, g.user["id"], text or None, stored, shown, late)).lastrowid
-        audit("submit_assignment", "submission", sid, a["title"]); db().commit()
+        audit("submit_assignment", "submission", sid, a["title"], batch_id=a["batch_id"], old="resubmitted" if old else None, new="submitted"); db().commit()
         return jsonify(id=sid, is_late=bool(late)), 201
 
     @app.get("/api/assignments/<int:aid>/submissions")
@@ -502,7 +612,7 @@ def register(app, c):
                         "submitted": bool(s and s["submitted_at"]), "is_late": bool(s and s["is_late"]), "text_answer": s["text_answer"] if s else None,
                         "file_name": s["file_name"] if s else None, "has_file": bool(s and s["has_file"]), "submitted_at": s["submitted_at"] if s else None,
                         "grade": s["grade"] if s else None, "feedback": s["feedback"] if s else None})
-        return jsonify(assignment={k: a[k] for k in ("id", "title", "kind", "due_date", "max_points", "description")}, students=out)
+        return jsonify(can_edit_grades=g.user["role"] == "admin" or can("edit_grades"), assignment={k: a[k] for k in ("id", "title", "kind", "due_date", "max_points", "description")}, students=out)
 
     @app.get("/api/submissions/<int:sid>/file")
     @auth(perm=A_PERM)
@@ -510,7 +620,7 @@ def register(app, c):
         s = one("SELECT s.*,a.batch_id,b.teacher_id FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN batches b ON b.id=a.batch_id WHERE s.id=?", (sid,))
         if not s or not s["file"]: return err("File not found", 404)
         u = g.user
-        if not (u["role"] == "admin" or (u["role"] == "teacher" and s["teacher_id"] == u["id"]) or (u["role"] == "student" and s["student_id"] == u["id"])):
+        if not (u["role"] == "admin" or (u["role"] == "teacher" and s["batch_id"] in teacher_batches(u["id"])) or (u["role"] == "student" and s["student_id"] == u["id"] and one("SELECT 1 x FROM enrollments WHERE student_id=? AND batch_id=? AND status='active'", (u["id"], s["batch_id"])))):
             return err("You do not have access to this file", 403)
         return send_private(s["file"], s["file_name"])
 
@@ -527,13 +637,36 @@ def register(app, c):
         gr = points(d.get("grade"), a["max_points"])
         if gr is None: return err(f"Grade must be a number from 0 to {a['max_points']}")
         fb = (d.get("feedback") or "").strip()[:2000] or None
-        ex = one("SELECT id FROM submissions WHERE assignment_id=? AND student_id=?", (aid, sid))
-        if ex:
-            db().execute("UPDATE submissions SET grade=?,feedback=?,graded_by=?,graded_at=datetime('now') WHERE id=?", (gr, fb, g.user["id"], ex["id"]))
+        ex = one("SELECT id,grade,feedback FROM submissions WHERE assignment_id=? AND student_id=?", (aid, sid))
+        if ex and ex["grade"] is not None:
+            # A saved grade: only an admin, or a teacher who was given "edit_grades", may change it (Session 17). The same value again is a no-op.
+            if gr == ex["grade"] and fb == ex["feedback"]: return jsonify(ok=True, grade=gr, changed=False)
+            if g.user["role"] != "admin" and not can("edit_grades"):
+                return err("This grade is already saved. Only an admin, or a teacher with permission to change grades, can edit it.", 403)
+            db().execute("UPDATE submissions SET grade=?,feedback=?,graded_at=datetime('now') WHERE id=?", (gr, fb, ex["id"]))   # graded_by stays the first grader; the log has every change
+            c.notify([sid], "grade", "Grade updated", f"{a['title']}: {gr} / {a['max_points']}", "assignments")   # Session 28
+            audit("grade_change", "assignment", aid, f"student {sid}: grade {ex['grade']} -> {gr} (max {a['max_points']}); feedback {'changed' if fb != ex['feedback'] else 'unchanged'}"
+                  + (f": {ex['feedback'] or ''} -> {fb or ''}" if fb != ex["feedback"] else ""), batch_id=a["batch_id"], old=ex["grade"], new=gr)
         else:
-            db().execute("INSERT INTO submissions(assignment_id,student_id,grade,feedback,graded_by,graded_at) VALUES(?,?,?,?,?,datetime('now'))", (aid, sid, gr, fb, g.user["id"]))
-        audit("grade", "assignment", aid, f"student {sid}: {gr}/{a['max_points']}"); db().commit()
-        return jsonify(ok=True, grade=gr)
+            if ex: db().execute("UPDATE submissions SET grade=?,feedback=?,graded_by=?,graded_at=datetime('now') WHERE id=?", (gr, fb, g.user["id"], ex["id"]))
+            else: db().execute("INSERT INTO submissions(assignment_id,student_id,grade,feedback,graded_by,graded_at) VALUES(?,?,?,?,?,datetime('now'))", (aid, sid, gr, fb, g.user["id"]))
+            c.notify([sid], "grade", "Assignment graded", f"{a['title']}: {gr} / {a['max_points']}", "assignments")   # Session 28
+            audit("grade", "assignment", aid, f"student {sid}: grade none -> {gr} (max {a['max_points']})" + (f"; feedback: {fb}" if fb else ""), batch_id=a["batch_id"], new=gr)
+        db().commit()
+        return jsonify(ok=True, grade=gr, changed=True)
+
+    @app.get("/api/my/given-grades")
+    @auth("teacher", perm="classroom")
+    def l_given_grades():
+        """Grades this teacher gave, in the batches they may use now (newest first)."""
+        ids = sorted(teacher_batches(g.user["id"]))
+        bid = request.args.get("batch_id", type=int)
+        if bid and bid not in ids: return err("This is not your batch", 403)
+        if bid: ids = [bid]
+        out = rows("SELECT s.id AS submission_id,a.id AS assignment_id,a.title,a.max_points,a.batch_id,b.code AS batch_code,u.id AS student_id,u.full_name,s.grade,s.feedback,s.graded_at "
+                   "FROM submissions s JOIN assignments a ON a.id=s.assignment_id JOIN batches b ON b.id=a.batch_id JOIN users u ON u.id=s.student_id "
+                   f"WHERE s.graded_by=? AND s.grade IS NOT NULL AND a.batch_id IN ({marks(len(ids))}) ORDER BY s.graded_at DESC,s.id DESC LIMIT 200", [g.user["id"], *ids]) if ids else []
+        return jsonify(can_edit_grades=can("edit_grades"), grades=out)
 
     GRADE_SQL = ("SELECT s.student_id,SUM(s.grade) g,SUM(a.max_points) m,COUNT(*) n FROM submissions s JOIN assignments a ON a.id=s.assignment_id "
                  "WHERE a.batch_id=? AND s.grade IS NOT NULL ")
@@ -560,6 +693,7 @@ def register(app, c):
         for r in rows("SELECT a.batch_id,a.id,a.title,a.kind,a.max_points,a.due_date,s.grade,s.feedback,s.is_late,(s.submitted_at IS NOT NULL) AS submitted "
                       f"FROM assignments a LEFT JOIN submissions s ON s.assignment_id=a.id AND s.student_id=? WHERE a.batch_id IN ({marks(len(bids))}) "
                       "ORDER BY COALESCE(a.due_date,'9999-12-31'),a.id", [uid, *bids]):
+            r["status"] = "graded" if r["grade"] is not None else "submitted" if r["submitted"] else "pending"   # one definition of the student-facing status
             items[r.pop("batch_id")].append(r)
         tot = {r["batch_id"]: r for r in rows("SELECT a.batch_id,SUM(s.grade) g,SUM(a.max_points) m,COUNT(*) n FROM submissions s JOIN assignments a ON a.id=s.assignment_id "
                                               f"WHERE a.batch_id IN ({marks(len(bids))}) AND s.grade IS NOT NULL AND s.student_id=? GROUP BY a.batch_id", [*bids, uid])}
@@ -570,7 +704,7 @@ def register(app, c):
     @app.get("/api/my/grades")
     @auth("student", perm="progress")
     def l_my_grades():
-        return jsonify(grades_for(g.user["id"], my_batches()))
+        return jsonify(grades_for(g.user["id"], my_batches(request.args.get("batch_id", type=int))))
 
     # ---------- student information (Session 6) ----------
     # A directory for admins with the "student_information" area: find a student, then see profile, batches, attendance, grades and fees together.
@@ -616,7 +750,8 @@ def register(app, c):
         p.update(one("SELECT date_of_birth,grade,island,guardian_name,guardian_relationship,guardian_phone FROM students WHERE user_id=?", (uid,)) or {})
         enr = rows("SELECT e.id,e.status,e.enrolled_at,b.id AS batch_id,b.code,c.name AS course_name,u.full_name AS teacher_name FROM enrollments e JOIN batches b ON b.id=e.batch_id "
                    "JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=b.teacher_id WHERE e.student_id=? ORDER BY e.id", (uid,))
-        live = [e["batch_id"] for e in enr if e["status"] in ("active", "completed")]
+        live = [e["batch_id"] for e in enr if e["status"] in ("active", "completed", "dropped")]   # dropped = transferred or withdrawn: admin keeps the history (Session 13)
+        est = {e["batch_id"]: e["status"] for e in enr}
         progress = []
         if live:
             bs = rows(BQ + f" WHERE b.id IN ({marks(len(live))}) ORDER BY b.id", live)
@@ -626,7 +761,7 @@ def register(app, c):
                           "ORDER BY s.session_date DESC LIMIT 200", [uid, *live]):
                 if len(recent[r["batch_id"]]) < 10: recent[r["batch_id"]].append({"date": r["date"], "status": r["status"]})
             for gr in grades_for(uid, bs):
-                progress.append({**gr, "attendance": att[gr["batch_id"]].get(uid, stat(0, 0, 0, 0)), "recent": recent[gr["batch_id"]]})
+                progress.append({**gr, "enrollment_status": est[gr["batch_id"]], "attendance": att[gr["batch_id"]].get(uid, stat(0, 0, 0, 0)), "recent": recent[gr["batch_id"]]})
         fees = None
         if can("fees"):
             t = today().isoformat()
@@ -692,12 +827,33 @@ def register(app, c):
                 if b["status"] != "closed": studs.setdefault(r["sid"], {"id": r["sid"], "full_name": r["full_name"], "batches": []})["batches"].append(f"{b['course_name']} · {b['code']}")
             since = (today() - dt.timedelta(days=30)).isoformat()
             held = one(f"SELECT COUNT(*) n FROM sessions WHERE status='held' AND session_date>=? AND batch_id IN ({q})", [since, *bids])["n"]
-            to_grade = one(f"SELECT COUNT(*) n FROM submissions s JOIN assignments a ON a.id=s.assignment_id WHERE s.submitted_at IS NOT NULL AND s.grade IS NULL AND a.batch_id IN ({q})", bids)["n"]
+            to_grade = pending_grading(bids)
         wk, hrs = workload_of(bs)
         out_b = [{**{k: b[k] for k in ("id", "code", "course_name", "days", "start_time", "status", "capacity", "minutes")}, "students": counts.get(b["id"], 0)} for b in bs]
         return jsonify(profile=p, batches=out_b, students=list(studs.values()),
                        workload={"active_batches": sum(1 for b in bs if b["status"] != "closed"), "students": len(studs), "weekly_classes": wk, "weekly_hours": hrs,
                                  "classes_held_30d": held, "to_grade": to_grade})
+
+    # ---------- my information (Session 16) ----------
+    # Read-only page for the signed-in student or teacher. The person is always g.user: there is no id in the URL, so nobody can ask for someone else.
+    # No fees, no internal notes, no password data. Academy-managed details are changed only by an admin (PATCH /api/users/<id> needs the "people" area).
+    @app.get("/api/my/information")
+    @auth("student", "teacher")
+    def l_my_info():
+        uid, role = g.user["id"], g.user["role"]
+        p = one("SELECT id,login_id,email,full_name,phone,created_at FROM users WHERE id=?", (uid,))
+        if role == "student":
+            p.update(one("SELECT student_code,date_of_birth,grade,island,guardian_name,guardian_relationship,guardian_phone FROM students WHERE user_id=?", (uid,)) or {})
+            bs = rows("SELECT e.enrol_code,e.enrolled_at,b.id,b.code,b.days,b.start_time,c.name AS course_name,c.kind AS course_kind,u.full_name AS teacher_name FROM enrollments e "
+                      "JOIN batches b ON b.id=e.batch_id JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=b.teacher_id WHERE e.student_id=? AND e.status='active' ORDER BY e.id", (uid,))
+        else:
+            p["teacher_code"] = (one("SELECT teacher_code FROM teachers WHERE user_id=?", (uid,)) or {}).get("teacher_code")
+            p["bio"] = (one("SELECT bio FROM teachers WHERE user_id=?", (uid,)) or {}).get("bio")
+            ids = sorted(teacher_batches(uid))
+            bs = rows("SELECT b.id,b.code,b.days,b.start_time,b.status,c.name AS course_name,c.kind AS course_kind FROM batches b JOIN courses c ON c.id=b.course_id "
+                      f"WHERE b.id IN ({marks(len(ids))}) ORDER BY b.id", ids) if ids else []
+        return jsonify(role=role, profile=p, batches=bs,
+                       locked=["login_id", "student_code", "teacher_code", "full_name", "email", "phone", "date_of_birth", "grade", "island", "guardian_name", "guardian_relationship", "guardian_phone", "bio"])
 
     # ---------- materials ----------
     @app.post("/api/batches/<int:bid>/materials")
@@ -720,7 +876,7 @@ def register(app, c):
             except ValueError as x: return err(str(x))
         mid = db().execute("INSERT INTO materials(batch_id,title,description,kind,file,file_name,url,uploaded_by) VALUES(?,?,?,?,?,?,?,?)",
                            (bid, f["title"].strip(), f.get("description"), kind, stored, shown, url or None, g.user["id"])).lastrowid
-        audit("add_material", "material", mid, f["title"]); db().commit()
+        audit("add_material", "material", mid, f["title"], batch_id=bid); db().commit()
         return jsonify(id=mid), 201
 
     @app.get("/api/materials")
@@ -751,7 +907,7 @@ def register(app, c):
         if e: return e
         rm(m["file"])
         db().execute("DELETE FROM materials WHERE id=?", (mid,))
-        audit("delete_material", "material", mid, m["title"]); db().commit()
+        audit("delete_material", "material", mid, m["title"], batch_id=m["batch_id"]); db().commit()
         return jsonify(ok=True)
 
     # ---------- class recordings (Session 5) ----------
@@ -794,7 +950,7 @@ def register(app, c):
         if e: return e
         rid = db().execute("INSERT INTO recordings(batch_id,title,url,recorded_on,created_by) VALUES(?,?,?,?,?)",
                            (bid, title, url, day.isoformat(), g.user["id"])).lastrowid
-        audit("add_recording", "recording", rid, f"{b['code']}: {title}"); db().commit()
+        audit("add_recording", "recording", rid, f"{b['code']}: {title}", batch_id=bid); db().commit()
         return jsonify(id=rid), 201
 
     @app.get("/api/recordings")
@@ -820,7 +976,7 @@ def register(app, c):
         e = gate("classroom")
         if e: return e
         db().execute("DELETE FROM recordings WHERE id=?", (rid,))
-        audit("delete_recording", "recording", rid, f"{b['code']}: {r['title']}"); db().commit()
+        audit("delete_recording", "recording", rid, f"{b['code']}: {r['title']}", batch_id=r["batch_id"]); db().commit()
         return jsonify(ok=True)
 
     # ---------- tutorials library ----------
@@ -829,6 +985,24 @@ def register(app, c):
     def staff_of(t):
         """Admin, or the teacher/admin who posted this tutorial: the people who may see its answers."""
         return g.user["role"] == "admin" or (g.user["role"] == "teacher" and t["uploaded_by"] == g.user["id"])
+
+    STU_TUT = "(t.course_id IS NULL OR t.course_id IN (SELECT b2.course_id FROM enrollments e2 JOIN batches b2 ON b2.id=e2.batch_id WHERE e2.student_id=? AND e2.status='active'))"
+
+    def teacher_tut_sql():
+        """Teacher scope (Session 18): tutorials they posted, or of a course one of THEIR batches belongs to. (sql, args)"""
+        ids = sorted(teacher_batches(g.user["id"]))
+        sub = f" OR t.course_id IN (SELECT course_id FROM batches WHERE id IN ({marks(len(ids))}))" if ids else ""
+        return f"(t.uploaded_by=?{sub})", [g.user["id"], *ids]
+
+    def tut_blocked(tid):
+        """A student may open a tutorial only if it is general (no course) or belongs to a course they are ACTIVELY enrolled in. Returns an error response or None."""
+        if g.user["role"] == "teacher" and one("SELECT 1 x FROM tutorials WHERE id=?", (tid,)):
+            sql, a = teacher_tut_sql()
+            if not one(f"SELECT 1 x FROM tutorials t WHERE t.id=? AND {sql}", (tid, *a)): return err("You do not have access to this tutorial", 403)
+            return None
+        if g.user["role"] != "student" or not one("SELECT 1 x FROM tutorials WHERE id=?", (tid,)): return None   # missing tutorial: the route answers 404
+        if not one(f"SELECT 1 x FROM tutorials t WHERE t.id=? AND {STU_TUT}", (tid, g.user["id"])):
+            return err("You do not have access to this tutorial", 403)
 
     @app.post("/api/tutorials")
     @auth("admin", "teacher", perm="create_tutorials")
@@ -849,13 +1023,15 @@ def register(app, c):
             try: cid = int(cid)
             except ValueError: return err("Choose a course from the list")
             if not one("SELECT 1 x FROM courses WHERE id=?", (cid,)): return err("Course not found", 404)
+            if g.user["role"] == "teacher" and not one(f"SELECT 1 x FROM batches WHERE course_id=? AND id IN ({marks(len(teacher_batches(g.user['id'])) or 1)})", [cid, *(sorted(teacher_batches(g.user["id"])) or [0])]):
+                return err("You can only post tutorials for courses you teach", 403)
         stored = shown = None
         if has_file:
             try: stored, shown = save_file(up, ALLOWED_MATERIAL)
             except ValueError as x: return err(str(x))
         tid = db().execute("INSERT INTO tutorials(title,body,course_id,file,file_name,url,uploaded_by) VALUES(?,?,?,?,?,?,?)",
                            (f["title"].strip(), text or None, cid, stored, shown, url or None, g.user["id"])).lastrowid
-        audit("add_tutorial", "tutorial", tid, f["title"]); db().commit()
+        audit("add_tutorial", "tutorial", tid, f["title"], course_id=cid); db().commit()
         return jsonify(id=tid), 201
 
     PREVIEW = 300   # characters of a tutorial's text sent in the list; the full text is fetched when the reader opens the post
@@ -868,6 +1044,17 @@ def register(app, c):
         w, a = [], []
         if cid: w.append("t.course_id=?"); a.append(cid)
         if q: w.append("(t.title LIKE ? OR t.body LIKE ?)"); a += [f"%{q}%"] * 2
+        if g.user["role"] == "teacher":
+            sql, ta = teacher_tut_sql(); w.append(sql); a += ta
+            tb = request.args.get("batch_id", type=int)
+            if tb:   # the picker's batch: tutorials of its course, plus the teacher's own general posts (403 if not their batch)
+                if tb not in teacher_batches(g.user["id"]): return err("This is not your batch", 403)
+                w.append("(t.course_id=(SELECT course_id FROM batches WHERE id=?) OR (t.course_id IS NULL AND t.uploaded_by=?))"); a += [tb, g.user["id"]]
+        if g.user["role"] == "student":
+            w.append(STU_TUT); a.append(g.user["id"])
+            sb = request.args.get("batch_id", type=int)
+            if sb:   # the picker's batch: its course's tutorials plus general ones (403 if the student is not actively in it)
+                w.append("(t.course_id IS NULL OR t.course_id=?)"); a.append(my_batches(sb)[0]["course_id"])
         items = rows(f"SELECT t.id,t.title,SUBSTR(t.body,1,{PREVIEW + 1}) AS text,t.course_id,t.file_name,(t.file IS NOT NULL) AS has_file,t.url,t.created_at,t.uploaded_by,c.name AS course_name,u.full_name AS uploader,u.role AS uploader_role "
                      "FROM tutorials t LEFT JOIN courses c ON c.id=t.course_id JOIN users u ON u.id=t.uploaded_by "
                      + ("WHERE " + " AND ".join(w) + " " if w else "") + "ORDER BY t.id DESC LIMIT ?", [*a, limit])
@@ -901,12 +1088,16 @@ def register(app, c):
     @app.get("/api/tutorials/<int:tid>")
     @auth(perm="tutorials")
     def l_tut_one(tid):
+        e = tut_blocked(tid)
+        if e: return e
         t = one("SELECT id,body AS text FROM tutorials WHERE id=?", (tid,))
         return jsonify(t) if t else err("Tutorial not found", 404)
 
     @app.get("/api/tutorials/<int:tid>/file")
     @auth(perm="tutorials")
     def l_tut_file(tid):
+        e = tut_blocked(tid)
+        if e: return e
         t = one("SELECT file,file_name FROM tutorials WHERE id=?", (tid,))
         if not t or not t["file"]: return err("File not found", 404)
         return send_private(t["file"], t["file_name"])
@@ -924,13 +1115,13 @@ def register(app, c):
         db().execute("DELETE FROM tutorial_submissions WHERE tutorial_id=?", (tid,))
         rm(t["file"])
         db().execute("DELETE FROM tutorials WHERE id=?", (tid,))
-        audit("delete_tutorial", "tutorial", tid, t["title"]); db().commit()
+        audit("delete_tutorial", "tutorial", tid, t["title"], course_id=t["course_id"]); db().commit()
         return jsonify(ok=True)
 
     # ---- student answers to a tutorial ----
     def tut_for_answer(tid):
         """The tutorial a student may answer: it must exist and have been posted by a teacher or admin."""
-        t = one("SELECT t.id,t.title,t.uploaded_by,u.role AS uploader_role FROM tutorials t JOIN users u ON u.id=t.uploaded_by WHERE t.id=?", (tid,))
+        t = one("SELECT t.id,t.title,t.course_id,t.uploaded_by,u.role AS uploader_role FROM tutorials t JOIN users u ON u.id=t.uploaded_by WHERE t.id=?", (tid,))
         if not t: return None, err("Tutorial not found", 404)
         if t["uploader_role"] not in ("admin", "teacher"): return None, err("This older post is read-only and does not take answers", 409)
         return t, None
@@ -940,6 +1131,8 @@ def register(app, c):
     def l_tut_submit(tid):
         """Send or replace my answer: written text, a file, or both. Sending only new text keeps the earlier file."""
         e = gate("tutorials")
+        if e: return e
+        e = tut_blocked(tid)
         if e: return e
         t, e = tut_for_answer(tid)
         if e: return e
@@ -962,7 +1155,7 @@ def register(app, c):
             sid = db().execute("INSERT INTO tutorial_submissions(tutorial_id,student_id,text_answer,file,file_name) VALUES(?,?,?,?,?)",
                                (tid, g.user["id"], text or None, stored, shown)).lastrowid
             code = 201
-        audit("submit_tutorial_work", "tutorial_submission", sid, t["title"]); db().commit()
+        audit("submit_tutorial_work", "tutorial_submission", sid, t["title"], course_id=t["course_id"]); db().commit()
         return jsonify(id=sid), code
 
     @app.get("/api/tutorials/<int:tid>/submission")
@@ -971,6 +1164,8 @@ def register(app, c):
         e = gate("tutorials")
         if e: return e
         if not one("SELECT 1 x FROM tutorials WHERE id=?", (tid,)): return err("Tutorial not found", 404)
+        e = tut_blocked(tid)
+        if e: return e
         s = one("SELECT id,text_answer,file_name,(file IS NOT NULL) AS has_file,submitted_at FROM tutorial_submissions WHERE tutorial_id=? AND student_id=?", (tid, g.user["id"]))
         if s: s["has_file"] = bool(s["has_file"])
         return jsonify(submission=s)
@@ -1000,12 +1195,60 @@ def register(app, c):
         return send_private(s["file"], s["file_name"])
 
     # ---------- home (student + teacher) ----------
+    # ---------- teacher dashboard (Session 19) ----------
+    # One endpoint for the selected batch (?batch_id=) or all of the teacher's batches. Every assignment number comes from assign_counts() /
+    # pending_grading() (Session 18); attendance from att_multi() over the ACTIVE roster; nothing is counted a second way here.
+    @app.get("/api/teacher/dashboard")
+    @auth("teacher", perm="classroom")
+    def l_teacher_dash():
+        u, t0 = g.user, today()
+        bs = my_batches(request.args.get("batch_id", type=int))     # 403 for a batch that is not theirs
+        ids = [b["id"] for b in bs]
+        ros, att = roster_multi(ids), att_multi(ids)
+        batches = [{"id": b["id"], "code": b["code"], "course_name": b["course_name"], "status": b["status"], "days": b["days"], "start_time": b["start_time"],
+                    "students": len(ros[b["id"]])} for b in bs]
+        out = {"scope": "batch" if request.args.get("batch_id", type=int) else "all", "batches": batches,
+               "courses": sorted({b["course_name"] for b in bs}), "students": len({s["id"] for b in bs for s in ros[b["id"]]})}
+        # classes: held (attendance taken), upcoming (next 28 days, not cancelled, not yet held), cancelled
+        cl = {"held": 0, "held_30d": 0, "cancelled": 0}
+        if ids:
+            since = (t0 - dt.timedelta(days=30)).isoformat()
+            for r in rows(f"SELECT status,COUNT(*) n,SUM(CASE WHEN session_date>=? THEN 1 ELSE 0 END) recent FROM sessions WHERE batch_id IN ({marks(len(ids))}) GROUP BY status", [since, *ids]):
+                if r["status"] == "held": cl["held"], cl["held_30d"] = r["n"], r["recent"] or 0
+                elif r["status"] == "cancelled": cl["cancelled"] = r["n"]
+        occ = [o for o in occurrences(bs, t0, t0 + dt.timedelta(days=27)) if o["date"] >= t0.isoformat() and o["status"] not in ("cancelled", "held")]
+        cl["upcoming"] = len(occ); cl["next"] = [clean(o) for o in occ[:5]]
+        out["classes"] = cl
+        # assignments, tests, hand-ins, grading: the Session 18 definitions
+        asg = rows(f"SELECT id,kind FROM assignments WHERE batch_id IN ({marks(len(ids))})", ids) if ids else []
+        cnt = assign_counts([a["id"] for a in asg])
+        out["assignments"] = {"given": sum(1 for a in asg if a["kind"] == "assignment"), "tests": sum(1 for a in asg if a["kind"] == "test"),
+                              "submissions": sum(c["submitted"] for c in cnt.values()), "graded": sum(c["graded"] for c in cnt.values()), "pending_grading": pending_grading(ids)}
+        # tutorials the teacher posted for these batches' courses (or general), and the answers of students who are active here
+        tut = {"given": 0, "answers": 0}
+        if ids:
+            cids = sorted({b["course_id"] for b in bs})
+            w = f"t.uploaded_by=? AND (t.course_id IS NULL OR t.course_id IN ({marks(len(cids))}))"
+            tut["given"] = one(f"SELECT COUNT(*) n FROM tutorials t WHERE {w}", [u["id"], *cids])["n"]
+            tut["answers"] = one(f"SELECT COUNT(*) n FROM tutorial_submissions ts JOIN tutorials t ON t.id=ts.tutorial_id WHERE {w} AND EXISTS (SELECT 1 FROM enrollments e JOIN batches b ON b.id=e.batch_id "
+                                 f"WHERE e.student_id=ts.student_id AND e.status='active' AND b.id IN ({marks(len(ids))}) AND (t.course_id IS NULL OR b.course_id=t.course_id))", [u["id"], *cids, *ids])["n"]
+        out["tutorials"] = tut
+        # attendance of the active students (excused not counted, as everywhere else)
+        P = L = AB = EX = low = 0
+        for b in ids:
+            for s in ros[b]:
+                x = att[b].get(s["id"])
+                if x: P += x["present"]; L += x["late"]; AB += x["absent"]; EX += x["excused"]; low += 1 if x["low"] else 0
+        out["attendance"] = {**stat(P, L, AB, EX), "low_students": low}
+        out["recent_activity"] = rows("SELECT action,entity,entity_id,detail,at FROM audit_log WHERE user_id=? AND action NOT IN ('login','logout') ORDER BY id DESC LIMIT 10", (u["id"],))   # the teacher's own latest work (sign-ins left out)
+        return jsonify(out)
+
     @app.get("/api/my/home")
     @auth("student", "teacher")
     def l_home():
         u = g.user
         t0 = today()
-        bs = my_batches()
+        bs = my_batches(request.args.get("batch_id", type=int))
         occ = occurrences(bs, t0, t0 + dt.timedelta(days=27))
         nxt = next_class(occ)
         out = {"today": [clean(o) for o in occ if o["date"] == t0.isoformat()],
@@ -1032,7 +1275,7 @@ def register(app, c):
             low = []
             if ids:
                 q = ",".join("?" * len(ids))
-                n = one(f"SELECT COUNT(*) n FROM submissions s JOIN assignments a ON a.id=s.assignment_id WHERE a.batch_id IN ({q}) AND s.submitted_at IS NOT NULL AND s.grade IS NULL", ids)["n"]
+                n = pending_grading(ids)
             att, ros = att_multi(ids), roster_multi(ids)
             for b in (bs if ids else []):
                 st = att[b["id"]]

@@ -213,7 +213,7 @@ def connect(config, base, script=None):
 def init_schema(conn, base):
     """Create missing tables and add columns that older databases lack. Safe to run on every start; skipped when nothing changed."""
     script = read_schema(base)
-    version = hashlib.sha1((script + "|v2-columns").encode()).hexdigest()[:16]
+    version = hashlib.sha1((script + "|v5-audit-lock").encode()).hexdigest()[:16]
     if conn.pg:   # the lock lasts until the commit below, so two cold starts never migrate at the same moment
         conn.raw.cursor().execute("SELECT pg_advisory_xact_lock(%s)", (_LOCK_KEY,))
     conn.execute("CREATE TABLE IF NOT EXISTS schema_meta (id INTEGER PRIMARY KEY, version TEXT NOT NULL)")
@@ -227,6 +227,24 @@ def init_schema(conn, base):
     if "attachment_name" not in conn.columns("assignments"): conn.execute("ALTER TABLE assignments ADD COLUMN attachment_name TEXT")
     if "meet_link" not in conn.columns("sessions"): conn.execute("ALTER TABLE sessions ADD COLUMN meet_link TEXT")   # Session 4: one-off class link
     if "permissions" not in conn.columns("users"): conn.execute("ALTER TABLE users ADD COLUMN permissions TEXT")   # NULL = full admin
+    # Session 10: course type, ID codes. Nullable or defaulted, so existing rows are untouched; idcodes.fill_missing() / migrate_session10.py fill the codes.
+    for tbl, col, decl in (("courses", "kind", "TEXT NOT NULL DEFAULT 'course' CHECK (kind IN ('course','tuition'))"), ("courses", "code", "TEXT"),
+                           ("courses", "is_active", "INTEGER NOT NULL DEFAULT 1"), ("students", "student_code", "TEXT"),
+                           ("teachers", "teacher_code", "TEXT"), ("enrollments", "enrol_code", "TEXT")):
+        if col not in conn.columns(tbl): conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
+    # Session 31: one-time registration fee on a course; invoice kind. Defaults keep every existing row exactly as it was (fee 0, monthly).
+    if "registration_fee_mvr" not in conn.columns("courses"): conn.execute("ALTER TABLE courses ADD COLUMN registration_fee_mvr INTEGER NOT NULL DEFAULT 0 CHECK (registration_fee_mvr >= 0)")
+    if "kind" not in conn.columns("invoices"): conn.execute("ALTER TABLE invoices ADD COLUMN kind TEXT NOT NULL DEFAULT 'monthly'")
+    if "login_id" not in conn.columns("users"): conn.execute("ALTER TABLE users ADD COLUMN login_id TEXT")   # Session 11: what people type to sign in; idcodes.fill_missing() fills it
+    # Session 20: activity log v2. Old rows keep working (all new columns are nullable); auditlog.backfill() fills what can be worked out.
+    for col in ("user_role", "login_id", "course_id", "batch_id", "old_value", "new_value", "ip"):
+        if col not in conn.columns("audit_log"): conn.execute(f"ALTER TABLE audit_log ADD COLUMN {col} {'INTEGER' if col.endswith('_id') and col != 'login_id' else 'TEXT'}")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_batch ON audit_log(batch_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id)")
+    import auditlog; auditlog.install_triggers(conn)   # Session 21: the log can be added to but never changed or deleted
+    for name, tbl, col in (("ux_users_login_id", "users", "login_id"), ("ux_courses_code", "courses", "code"), ("ux_students_code", "students", "student_code"),
+                           ("ux_teachers_code", "teachers", "teacher_code"), ("ux_enrol_code", "enrollments", "enrol_code")):
+        conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON {tbl}({col})")   # NULLs are allowed more than once on both engines
     # Session 2: people who were limited to some areas and could already open Tutorials keep what they could do before
     # (teachers/admins: post; students: now send answers). People with no limit (permissions NULL) get the new areas automatically.
     for u in conn.execute("SELECT id,role,permissions FROM users WHERE permissions IS NOT NULL").fetchall():

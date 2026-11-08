@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   lang TEXT NOT NULL DEFAULT 'en' CHECK (lang IN ('en','dv')),
   is_active INTEGER NOT NULL DEFAULT 1,
   must_change_password INTEGER NOT NULL DEFAULT 0,
+  login_id TEXT,               -- Session 11: ID used to sign in (student/teacher code, admins BAL/A/NNN); unique index made in dbx.init_schema
   permissions TEXT,            -- admins only: NULL = full admin, else comma list of allowed areas
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -22,11 +23,13 @@ CREATE TABLE IF NOT EXISTS students (
   island TEXT,
   guardian_name TEXT,
   guardian_relationship TEXT,
-  guardian_phone TEXT
+  guardian_phone TEXT,
+  student_code TEXT            -- permanent ID, BAL/<COURSE CODE>/<NNN> (Session 10); unique index made in dbx.init_schema
 );
 CREATE TABLE IF NOT EXISTS teachers (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  bio TEXT
+  bio TEXT,
+  teacher_code TEXT            -- BAL/T/<NNN>
 );
 CREATE TABLE IF NOT EXISTS courses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,10 +38,14 @@ CREATE TABLE IF NOT EXISTS courses (
   description TEXT,
   textbook TEXT,
   monthly_fee_mvr INTEGER NOT NULL DEFAULT 0 CHECK (monthly_fee_mvr >= 0),
+  registration_fee_mvr INTEGER NOT NULL DEFAULT 0 CHECK (registration_fee_mvr >= 0),   -- Session 31: one-time, charged at first enrolment in the course
   days_per_week INTEGER,
   minutes_per_class INTEGER,
   status TEXT NOT NULL DEFAULT 'upcoming' CHECK (status IN ('open','upcoming','closed')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  kind TEXT NOT NULL DEFAULT 'course' CHECK (kind IN ('course','tuition')),   -- Session 10
+  code TEXT,                                                                   -- e.g. AL1, G8M; unique
+  is_active INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS batches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,6 +66,7 @@ CREATE TABLE IF NOT EXISTS enrollments (
   batch_id INTEGER NOT NULL REFERENCES batches(id),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','waitlist','dropped','completed')),
   enrolled_at TEXT NOT NULL DEFAULT (datetime('now')),
+  enrol_code TEXT,             -- BAL/<COURSE CODE>/E<NNN> (Session 10)
   UNIQUE (student_id, batch_id)
 );
 CREATE TABLE IF NOT EXISTS settings (
@@ -72,8 +80,35 @@ CREATE TABLE IF NOT EXISTS audit_log (
   entity TEXT,
   entity_id INTEGER,
   detail TEXT,
-  at TEXT NOT NULL DEFAULT (datetime('now'))
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  user_role TEXT,
+  login_id TEXT,
+  course_id INTEGER,
+  batch_id INTEGER,
+  old_value TEXT,
+  new_value TEXT,
+  ip TEXT
 );
+-- Session 21: empty except for the moment the one-off backfill runs; the audit_log triggers read it
+CREATE TABLE IF NOT EXISTS audit_unlock (flag INTEGER NOT NULL);
+-- Session 22: a substitute teacher for one class or a date range. batches.teacher_id never changes.
+-- Access runs from class_date to COALESCE(ends_on, class_date), both inclusive (Maldives dates); removed_at ends it early.
+CREATE TABLE IF NOT EXISTS substitutions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL REFERENCES batches(id),
+  class_date TEXT NOT NULL,
+  session_id INTEGER REFERENCES sessions(id),
+  original_teacher_id INTEGER REFERENCES users(id),
+  substitute_teacher_id INTEGER NOT NULL REFERENCES users(id),
+  reason TEXT,
+  created_by INTEGER REFERENCES users(id),
+  ends_on TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  removed_at TEXT,
+  removed_by INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_subs_teacher ON substitutions(substitute_teacher_id);
+CREATE INDEX IF NOT EXISTS idx_subs_batch ON substitutions(batch_id);
 CREATE INDEX IF NOT EXISTS idx_batches_teacher ON batches(teacher_id);
 CREATE INDEX IF NOT EXISTS idx_enroll_student ON enrollments(student_id);
 CREATE INDEX IF NOT EXISTS idx_enroll_batch ON enrollments(batch_id);
@@ -244,6 +279,7 @@ CREATE TABLE IF NOT EXISTS invoices (
   batch_id INTEGER NOT NULL REFERENCES batches(id),
   period TEXT NOT NULL CHECK (length(period) = 7),             -- 'YYYY-MM'
   description TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'monthly',                         -- Session 31: monthly or registration (period is then 'REG-FEE'; never part of teacher earnings)
   amount_mvr INTEGER NOT NULL CHECK (amount_mvr >= 0),         -- course fee at generation time
   discount_mvr INTEGER NOT NULL DEFAULT 0 CHECK (discount_mvr >= 0),
   amount_due_mvr INTEGER NOT NULL CHECK (amount_due_mvr >= 0),
@@ -333,3 +369,107 @@ CREATE INDEX IF NOT EXISTS idx_slip_invoice ON payment_slips(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_slip_hash ON payment_slips(file_hash);
 CREATE INDEX IF NOT EXISTS idx_rem_invoice ON reminders(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_disc_enroll ON discounts(enrollment_id);
+
+-- Session 13: one row for every transfer between batches and every withdrawal (enrolment set to 'dropped').
+-- History only: attendance, submissions and grades are never touched. Nothing in the app updates or deletes these rows.
+CREATE TABLE IF NOT EXISTS enrollment_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  student_id INTEGER NOT NULL REFERENCES users(id),
+  from_batch_id INTEGER REFERENCES batches(id),
+  to_batch_id INTEGER REFERENCES batches(id),
+  kind TEXT NOT NULL CHECK (kind IN ('transfer','withdrawal')),
+  effective_date TEXT,          -- YYYY-MM-DD; NULL only for old rows whose date is unknown
+  reason TEXT,
+  by_user INTEGER REFERENCES users(id),
+  at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_enrol_events_student ON enrollment_events(student_id);
+CREATE INDEX IF NOT EXISTS idx_enrol_events_date ON enrollment_events(effective_date);
+
+-- Session 23: expenses. Whole MVR amounts (same as payments). Receipt files live in the private "receipts" storage area.
+CREATE TABLE IF NOT EXISTS expense_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS expenses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  expense_date TEXT NOT NULL,
+  amount_mvr INTEGER NOT NULL CHECK (amount_mvr > 0),
+  category_id INTEGER NOT NULL REFERENCES expense_categories(id),
+  description TEXT,
+  receipt_file TEXT,
+  receipt_name TEXT,
+  entered_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_by INTEGER REFERENCES users(id),
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_cat ON expenses(category_id);
+
+-- Session 28: in-app notifications. One row per person per message. dedupe_key (optional) makes a scheduled reminder fire once:
+-- the unique index ignores the second insert for the same person and key. Rows with no key (events) are never deduplicated.
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  link TEXT,
+  dedupe_key TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  read_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_notif_dedupe ON notifications(user_id, dedupe_key);
+
+-- Session 29: WhatsApp click-to-chat log. One row each time an admin opened a prepared message for a person (so nobody is messaged twice by accident).
+CREATE TABLE IF NOT EXISTS wa_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  to_kind TEXT NOT NULL,          -- student, teacher or guardian
+  phone TEXT,
+  preview TEXT,                   -- first 80 characters of the message
+  sent_by INTEGER REFERENCES users(id),
+  sent_at TEXT NOT NULL           -- Maldives time, ISO
+);
+CREATE INDEX IF NOT EXISTS idx_wa_log_user ON wa_log(user_id, sent_at);
+
+-- Session 30: teacher earnings, one row per batch and month, worked out from real payments (never from invoices).
+-- status 'draft' can be recalculated; 'approved' (Session 31) is locked and never touched by a re-run.
+CREATE TABLE IF NOT EXISTS teacher_earnings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  teacher_id INTEGER REFERENCES users(id),     -- the batch's teacher when it was calculated (NULL = batch had no teacher)
+  batch_id INTEGER NOT NULL REFERENCES batches(id),
+  period TEXT NOT NULL,                         -- YYYY-MM
+  collected_mvr INTEGER NOT NULL DEFAULT 0,     -- paid in the month minus payments reversed in the month (can be negative)
+  share_percent INTEGER NOT NULL DEFAULT 50,    -- teacher's percent used for this row
+  teacher_share_mvr INTEGER NOT NULL DEFAULT 0,
+  academy_share_mvr INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'draft',         -- draft | approved
+  calculated_at TEXT,
+  calculated_by INTEGER REFERENCES users(id),
+  approved_at TEXT,
+  approved_by INTEGER REFERENCES users(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_earn_batch_period ON teacher_earnings(batch_id, period);
+CREATE INDEX IF NOT EXISTS idx_earn_teacher ON teacher_earnings(teacher_id, period);
+
+-- Session 31: payments made to teachers out of approved earnings.
+CREATE TABLE IF NOT EXISTS teacher_payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  teacher_id INTEGER NOT NULL REFERENCES users(id),
+  amount_mvr INTEGER NOT NULL CHECK (amount_mvr > 0),
+  paid_on TEXT NOT NULL,
+  method TEXT NOT NULL,
+  reference TEXT,
+  note TEXT,
+  recorded_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  voided_at TEXT,
+  voided_by INTEGER REFERENCES users(id),
+  void_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tpay_teacher ON teacher_payments(teacher_id, paid_on);

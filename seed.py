@@ -1,7 +1,7 @@
 """Seed demo data. Run: python seed.py   (set ADMIN_EMAIL / ADMIN_PASSWORD to choose your own admin login)."""
 import os
 from werkzeug.security import generate_password_hash
-import dbx
+import dbx, idcodes
 from app import create_app
 
 app = create_app()
@@ -35,6 +35,7 @@ if not db.execute("SELECT 1 FROM courses").fetchone():
     if s: db.execute("INSERT INTO enrollments(student_id,batch_id) VALUES(?,1)", (s,))
 for k, v in {"academy_name": "Baleegh Academy", "contact_phone": "725-0901"}.items():
     db.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (k, v))
+idcodes.fill_missing(db)   # Session 10: course, student, teacher and enrolment codes
 db.commit()
 db.reset_sequences()
 print("Seeded. Admin:", admin_email, "| Demo accounts:", "created, CHANGE THEIR PASSWORDS before going live" if DEMO else "not created")

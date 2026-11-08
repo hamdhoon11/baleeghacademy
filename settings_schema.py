@@ -45,6 +45,16 @@ GROUPS = [
         S("receipt_prefix", "text", "BA-R-", "Receipt number prefix", "Up to 12 letters, digits, - _ or /"),
         S("reminder_template_en", "longtext", "", "Overdue reminder (English)"),
     ]),
+    ("notifications", "Notifications and reminders", "In-app messages for students, teachers and admins. A daily run (07:30 Maldives time) sends the fee and assignment reminders; 0 turns a reminder off.", [
+        S("notify_enabled", "bool", "1", "Notifications on", "Turn off to stop creating any new notification (existing ones stay visible)."),
+        S("remind_fee_days_before", "number", "3", "Fee due soon: remind students this many days before the due date", min=0, max=14),
+        S("remind_overdue_every_days", "number", "7", "Overdue fee: remind students every this many days", "The first reminder is sent the day after the due date.", min=0, max=60),
+        S("remind_assignment_days_before", "number", "1", "Assignment due: remind students this many days before", "Only students who have not handed in yet are reminded.", min=0, max=14),
+    ]),
+    ("earnings", "Teacher earnings", "How each month's collected fees are split between the teacher and the academy (Finance, Teacher earnings).", [
+        S("revenue_share_percent", "number", "50", "Teacher's share of fees collected (percent)", "50 means half of what a batch collected in the month goes to its teacher. A month that is already approved is never changed.", min=0, max=100),
+        S("teachers_see_earnings", "bool", "1", "Teachers can see their own approved earnings", "Only approved months are shown, and only to that teacher. Registration fees are never part of teacher earnings."),
+    ]),
 ]
 
 SETTINGS = {s["key"]: s for _, _, _, items in GROUPS for s in items}
@@ -54,10 +64,10 @@ SETTING_KEYS = tuple(SETTINGS)
 # permissions = NULL on a user means "everything their role has" (a full admin for admins). A list means only those areas.
 # The server uses this list to decide which tabs a person sees AND to refuse every request outside it.
 AREAS = ("admissions", "courses", "batches", "classroom", "people", "enrollments", "fees", "settings", "audit", "tutorials",
-         "assignments", "progress", "materials", "create_tutorials", "submit_tutorial_work", "class_links", "recordings", "add_recordings", "student_information", "teacher_information")
+         "assignments", "progress", "materials", "create_tutorials", "submit_tutorial_work", "class_links", "recordings", "add_recordings", "student_information", "teacher_information", "edit_grades", "cancel_class", "finance")
 ROLE_AREAS = {
-    "admin": ("admissions", "courses", "batches", "classroom", "people", "enrollments", "fees", "settings", "audit", "tutorials", "create_tutorials", "class_links", "add_recordings", "student_information", "teacher_information"),
-    "teacher": ("classroom", "tutorials", "create_tutorials", "class_links", "add_recordings"),
+    "admin": ("admissions", "courses", "batches", "classroom", "people", "enrollments", "fees", "settings", "audit", "tutorials", "create_tutorials", "class_links", "add_recordings", "student_information", "teacher_information", "finance"),
+    "teacher": ("classroom", "tutorials", "create_tutorials", "class_links", "add_recordings", "edit_grades", "cancel_class"),
     "student": ("assignments", "progress", "materials", "recordings", "fees", "tutorials", "submit_tutorial_work"),
 }
 # "tutorials" lets a person open the Tutorials tab and read. "create_tutorials" (teachers, admins) lets them post tutorials and see the
@@ -68,11 +78,17 @@ ROLE_AREAS = {
 # "student_information" (admins) opens the Student information directory: one student's profile, batches, attendance, grades and fees together.
 # The fees part is shown only to an admin who also has "fees". Nobody has it until a full admin ticks it (no automatic grant).
 # "teacher_information" (admins) opens the Teacher information directory: one teacher's profile, batches taught, students and workload. Not granted automatically.
-# Tabs in the order they are shown. Home and Dashboard need no permission.
+# "edit_grades" (teachers) lets a teacher CHANGE a grade that is already saved. Giving a first grade needs only "classroom". It is opt-in:
+# a teacher with "everything a teacher has" (permissions NULL) does NOT get it; an admin must tick it for that teacher. Admins can always change grades.
+# "cancel_class" (teachers) lets a teacher mark a class of their batch as cancelled. Opt-in in the same way; reinstating a class needs only "classroom".
+# "finance" (admins) opens the Finance tab: expenses, categories and receipts (Session 23; later revenue and the financial dashboard).
+# It is part of a full admin's "everything" (otherwise nobody could ever grant it); a limited admin has it only when ticked.
+OPT_IN = {"teacher": ("edit_grades", "cancel_class")}
+# Tabs in the order they are shown. Home, Dashboard and my_information (Session 16, read-only, own data only) need no permission.
 ROLE_TABS = {
-    "admin": ("dashboard", "admissions", "courses", "batches", "classroom", "tutorials", "people", "student_information", "teacher_information", "enrollments", "fees", "settings", "audit"),
-    "teacher": ("home", "classroom", "tutorials"),
-    "student": ("home", "assignments", "progress", "materials", "recordings", "fees", "tutorials"),
+    "admin": ("dashboard", "admissions", "courses", "batches", "classroom", "tutorials", "people", "student_information", "teacher_information", "enrollments", "fees", "finance", "settings", "audit"),
+    "teacher": ("home", "classroom", "tutorials", "my_earnings", "my_information"),
+    "student": ("home", "assignments", "progress", "materials", "recordings", "fees", "tutorials", "my_information"),
 }
 TAB_AREA = {a: a for a in AREAS}   # every tab that is not home/dashboard is guarded by the area of the same name
 

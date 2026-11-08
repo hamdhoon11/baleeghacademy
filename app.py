@@ -5,7 +5,8 @@ import jwt
 from flask import Flask, g, jsonify, request, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 import settings_schema as SS
-import common, dbx, storage
+import idcodes
+import common, dbx, storage, transfers
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 ON_VERCEL = bool(os.environ.get("VERCEL"))
@@ -28,6 +29,8 @@ def create_app(config=None):
         JOIN_EARLY_MIN=int(os.environ.get("JOIN_EARLY_MIN", "15")),      # Join class button appears this many minutes before start
         LEARNING_MAX_MB=int(os.environ.get("LEARNING_MAX_MB", "20")),    # max size of submissions and materials
         MAX_CONTENT_LENGTH=25 * 1024 * 1024,
+        SKIP_FORCED_CHANGE=os.environ.get("PORTAL_SKIP_FORCED_CHANGE") == "1",   # TESTS ONLY: never set this on a real server
+        ALLOW_EMAIL_LOGIN=os.environ.get("ALLOW_EMAIL_LOGIN", "1") != "0",   # Session 11: set to 0 once everyone has confirmed they can sign in by ID
     )
     if config:
         app.config.update(config)
@@ -35,6 +38,7 @@ def create_app(config=None):
     if not app.config["USE_POSTGRES"]:
         os.makedirs(os.path.dirname(app.config["DATABASE_PATH"]), exist_ok=True)
     id_tables = dbx.id_tables_of(dbx.read_schema(BASE))
+    DUMMY_HASH = generate_password_hash("not-a-real-password")
     fails = {}  # ip -> [timestamps]; simple in-memory login rate limit
 
     # ---------- db ----------
@@ -93,10 +97,18 @@ def create_app(config=None):
         r = db().execute(sql, args).fetchone()
         return dict(r) if r else None
 
-    def audit(action, entity=None, entity_id=None, detail=None):
-        uid = getattr(g, "user", {}).get("id")
-        db().execute("INSERT INTO audit_log(user_id,action,entity,entity_id,detail) VALUES(?,?,?,?,?)",
-                     (uid, action, entity, entity_id, detail))
+    def audit(action, entity=None, entity_id=None, detail=None, *, course_id=None, batch_id=None, old=None, new=None, role=None, login_id=None):
+        """Write one activity-log row. The first four arguments are the old signature; the rest are optional (Session 20).
+        Who (user, role, login ID) and where from (IP) are filled in automatically. Passwords are never passed in here."""
+        u = getattr(g, "user", None) or {}
+        if batch_id is not None and course_id is None:
+            b = one("SELECT course_id FROM batches WHERE id=?", (batch_id,))
+            course_id = b["course_id"] if b else None
+        try: ip = request.remote_addr
+        except RuntimeError: ip = None   # scheduled runs have no request
+        val = lambda x: None if x is None else str(int(x) if isinstance(x, float) and x.is_integer() else x)[:300]   # 6.0 is stored as 6
+        db().execute("INSERT INTO audit_log(user_id,action,entity,entity_id,detail,user_role,login_id,course_id,batch_id,old_value,new_value,ip) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (u.get("id"), action, entity, entity_id, detail, role or u.get("role"), login_id or u.get("login_id"), course_id, batch_id, val(old), val(new), ip))
 
     def err(msg, code=400):
         return jsonify(error=msg), code
@@ -139,6 +151,10 @@ def create_app(config=None):
         n = fn() if fn else dt.datetime.now(MVT)
         return n.astimezone(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
+    def fill_codes():
+        """Session 10: give any new student, teacher, enrolment or course its ID code. Call before the commit that stores the row."""
+        return idcodes.fill_missing(db(), unenrolled_students=False)
+
     def fees_hook(name, *a):
         """Phase 4 hooks (invoices start/move when an enrollment becomes active). No-op until fees.register() has run."""
         fn = app.extensions.get("fees", {}).get(name)
@@ -155,12 +171,18 @@ def create_app(config=None):
 
     def has_perm(u, area):
         pl = perm_list(u)
-        return pl is None or area in pl
+        if pl is None: return area not in SS.OPT_IN.get(u["role"], ())   # opt-in areas (edit_grades) are never part of "everything"
+        return area in pl
+
+    PICKER_AREAS = ("people", "batches", "enrollments", "fees", "classroom", "settings")   # admin screens that need to pick a person or an enrolment
+
+    def can_any(u, *areas):
+        return any(has_perm(u, a) for a in areas)
 
     def public_user(u):
         """What the page needs to know about the signed-in person. `tabs` is decided here, on the server; the page only draws these."""
         pl = perm_list(u)
-        pub = {k: u[k] for k in ("id", "email", "full_name", "role", "must_change_password")}
+        pub = {k: u[k] for k in ("id", "login_id", "email", "full_name", "role", "must_change_password")}
         pub["permissions"] = pl
         pub["tabs"] = SS.tabs_for(u["role"], pl)
         return pub
@@ -178,16 +200,20 @@ def create_app(config=None):
                     p = jwt.decode(h[7:], app.config["SECRET_KEY"], algorithms=["HS256"])
                 except jwt.PyJWTError:
                     return err("Session expired. Sign in again.", 401)
-                u = one("SELECT id,email,full_name,role,is_active,must_change_password,permissions FROM users WHERE id=?", (p["sub"],))
+                u = one("SELECT id,login_id,email,full_name,role,is_active,must_change_password,permissions FROM users WHERE id=?", (p["sub"],))
                 if not u or not u["is_active"]:
                     return err("Account disabled", 403)
                 g.user = u
+                # Session 11: until the temporary password is replaced, nothing works except changing it (and asking who I am). Enforced here, not in the page.
+                if u["must_change_password"] and not app.config["SKIP_FORCED_CHANGE"] and request.path not in ("/api/auth/change-password", "/api/auth/me"):
+                    return jsonify(error="You must change your temporary password first", code="password_change_required"), 403
                 if roles and u["role"] not in roles:
                     return err("You do not have access to this", 403)
                 area = perm.get(u["role"]) if isinstance(perm, dict) else perm
                 if area and not has_perm(u, area):
                     return err("Your account does not have permission for this area", 403)
                 return fn(*a, **k)
+            wrap.auth_roles, wrap.auth_perm = roles, perm   # Session 32: lets the permissions-matrix test read every route's rule
             return wrap
         return deco
 
@@ -195,6 +221,7 @@ def create_app(config=None):
         miss = [f for f in fields if not str(data.get(f, "")).strip()]
         return ("Missing: " + ", ".join(miss)) if miss else None
 
+    LOGIN_ID = re.compile(r"^[A-Z0-9][A-Z0-9/._-]{2,39}$")
     EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
     @app.before_request
@@ -229,21 +256,44 @@ def create_app(config=None):
     def health():
         return jsonify(ok=True)
 
+    def norm_login(v):
+        return re.sub(r"\s+", "", str(v or "")).upper()
+
+    def temp_password():
+        return secrets.token_urlsafe(9)
+
     @app.post("/api/auth/login")
     def login():
         ip = request.remote_addr or "?"
         now = time.time()
-        fails[ip] = [t for t in fails.get(ip, []) if now - t < 300]
-        if len(fails[ip]) >= 8:
-            return err("Too many attempts. Try again in a few minutes.", 429)
         d = request.get_json(silent=True) or {}
-        u = one("SELECT * FROM users WHERE email=?", (str(d.get("email", "")).strip().lower(),))
-        if not u or not u["is_active"] or not check_password_hash(u["password_hash"], str(d.get("password", ""))):
-            fails[ip].append(now)
-            return err("Wrong email or password", 401)
+        who = str(d.get("login") or d.get("login_id") or d.get("email") or "").strip()
+        key = "acct:" + who.lower()   # guessing one account's password is limited too, because IDs follow a pattern anyone can guess
+        for k in (ip, key):
+            fails[k] = [t for t in fails.get(k, []) if now - t < 300]
+        if len(fails[ip]) >= 8 or len(fails[key]) >= 8:
+            return err("Too many attempts. Try again in a few minutes.", 429)
+        if "@" in who:
+            u = one("SELECT * FROM users WHERE email=?", (who.lower(),)) if app.config["ALLOW_EMAIL_LOGIN"] else None   # old way, switch off with ALLOW_EMAIL_LOGIN=0
+        else:
+            u = one("SELECT * FROM users WHERE login_id=?", (norm_login(who),))
+        # the password is always checked (against a dummy hash if nobody matched) so the answer time does not reveal whether the ID exists
+        ok = check_password_hash(u["password_hash"] if u else DUMMY_HASH, str(d.get("password", "")))
+        if not u or not ok or not u["is_active"]:
+            fails[ip].append(now); fails[key].append(now)
+            audit("failed_login", "user", u["id"] if u else None, "account disabled" if u and ok else ("wrong password" if u else "unknown ID"),
+                  role="anonymous", login_id=who[:60] or None); db().commit()   # what was typed as the ID is kept; the password never is
+            return err("Wrong ID or password", 401)
         g.user = u
         audit("login", "user", u["id"]); db().commit()
         return jsonify(token=make_token(u), user=public_user(u))
+
+    @app.post("/api/auth/logout")
+    @auth()
+    def logout():
+        """Tokens are stateless, so this only writes the log row; the browser forgets the token itself."""
+        audit("logout", "user", g.user["id"]); db().commit()
+        return jsonify(ok=True)
 
     @app.get("/api/auth/me")
     @auth()
@@ -277,20 +327,25 @@ def create_app(config=None):
     @app.get("/api/users")
     @auth("admin")
     def users_list():
+        # Session 32: contact details, login IDs and permission lists need the People area. An admin who only needs to pick a teacher or student
+        # (batches, enrolments, fees...) gets names only; an admin with none of those areas gets nothing.
+        full = has_perm(g.user, "people")
+        if not full and not can_any(g.user, *PICKER_AREAS): return err("Your account does not have permission for this area", 403)
         role = request.args.get("role")
-        sql = "SELECT id,email,full_name,role,phone,is_active,created_at,permissions FROM users"
+        sql = ("SELECT id,login_id,email,full_name,role,phone,is_active,created_at,permissions FROM users" if full
+               else "SELECT id,full_name,role,is_active FROM users")
         args = ()
         if role in ("admin", "teacher", "student"):
             sql += " WHERE role=?"; args = (role,)
         out = rows(sql + " ORDER BY id", args)
-        for r in out:
+        for r in out if full else ():
             r["permissions"] = None if r["permissions"] is None else [x for x in r["permissions"].split(",") if x]
         return jsonify(out)
 
     @app.get("/api/users/<int:uid>")
     @auth("admin", perm="people")
     def users_get(uid):
-        u = one("SELECT id,email,full_name,role,phone,is_active,must_change_password,created_at,permissions FROM users WHERE id=?", (uid,))
+        u = one("SELECT id,login_id,email,full_name,role,phone,is_active,must_change_password,created_at,permissions FROM users WHERE id=?", (uid,))
         if not u: return err("User not found", 404)
         u["permissions"] = None if u["permissions"] is None else [x for x in u["permissions"].split(",") if x]
         if u["role"] == "student":
@@ -306,14 +361,16 @@ def create_app(config=None):
     @auth("admin", perm="people")
     def users_create():
         d = request.get_json(silent=True) or {}
-        m = need(d, "email", "password", "full_name", "role")
+        m = need(d, "email", "full_name", "role")
         if m: return err(m)
         email = d["email"].strip().lower()
         if not EMAIL.match(email): return err("Enter a valid email")
         if d["role"] not in ("admin", "teacher", "student"): return err("Invalid role")
         if d["role"] == "admin" and g.user["permissions"] is not None:
             return err("Only a full admin can create another admin", 403)
-        if len(d["password"]) < setting_int("min_password_length"): return err(f"Password must be at least {setting_int('min_password_length')} characters")
+        generated = not d.get("password")   # no password typed = make a random one and show it once
+        pw = temp_password() if generated else str(d["password"])
+        if len(pw) < setting_int("min_password_length"): return err(f"Password must be at least {setting_int('min_password_length')} characters")
         if one("SELECT id FROM users WHERE email=?", (email,)): return err("That email is already registered", 409)
         perms = None
         if d.get("permissions") not in (None, "all"):
@@ -322,7 +379,7 @@ def create_app(config=None):
             if not isinstance(pv, list) or any(x not in SS.ROLE_AREAS[d["role"]] for x in pv): return err("Unknown permission area for this role")
             perms = ",".join(a for a in SS.ROLE_AREAS[d["role"]] if a in pv)
         cur = db().execute("INSERT INTO users(email,password_hash,full_name,role,phone,must_change_password,permissions) VALUES(?,?,?,?,?,1,?)",
-                           (email, generate_password_hash(d["password"]), d["full_name"].strip(), d["role"], d.get("phone"), perms))
+                           (email, generate_password_hash(pw), d["full_name"].strip(), d["role"], d.get("phone"), perms))
         uid = cur.lastrowid
         if d["role"] == "student":
             db().execute("INSERT INTO students(user_id,date_of_birth,grade,island,guardian_name,guardian_relationship,guardian_phone) VALUES(?,?,?,?,?,?,?)",
@@ -330,8 +387,14 @@ def create_app(config=None):
                           d.get("guardian_relationship"), d.get("guardian_phone")))
         elif d["role"] == "teacher":
             db().execute("INSERT INTO teachers(user_id,bio) VALUES(?,?)", (uid, d.get("bio")))
-        audit("create_user", "user", uid, d["role"]); db().commit()
-        return jsonify(id=uid), 201
+        fill_codes()
+        if d["role"] == "student" and d.get("course_id"): idcodes.assign_student_code(db(), uid, d["course_id"])   # ID right away, from this course
+        login_id = idcodes.give_login_id(db(), uid)
+        audit("create_user", "user", uid, f"{d['role']} {login_id}"); db().commit()
+        out = {"id": uid, "login_id": login_id}
+        if generated: out["temporary_password"] = pw   # shown once; only the hash is stored
+        resp = jsonify(**out); resp.status_code = 201; resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     @app.patch("/api/users/<int:uid>")
     @auth("admin", perm="people")
@@ -348,6 +411,11 @@ def create_app(config=None):
             if not str(d["full_name"] or "").strip(): return err("Name cannot be empty")
             sets.append("full_name=?"); args.append(d["full_name"].strip()); changed.append("full_name")
         if "phone" in d: sets.append("phone=?"); args.append(d["phone"] or None); changed.append("phone")
+        if "login_id" in d and norm_login(d["login_id"]) != (u["login_id"] or ""):
+            nl = norm_login(d["login_id"])
+            if not LOGIN_ID.match(nl): return err("Login ID: 3 to 40 letters, digits or / . _ -")
+            if one("SELECT id FROM users WHERE login_id=? AND id<>?", (nl, uid)): return err("That login ID is already used", 409)
+            sets.append("login_id=?"); args.append(nl); changed.append("login_id")
         if "email" in d:
             email = str(d["email"] or "").strip().lower()
             if not EMAIL.match(email): return err("Enter a valid email")
@@ -392,7 +460,7 @@ def create_app(config=None):
         if not sets and not prof: return err("Nothing to update")
         if sets:
             try: db().execute(f"UPDATE users SET {','.join(sets)} WHERE id=?", (*args, uid))
-            except dbx.IntegrityError: return err("That email is already registered", 409)
+            except dbx.IntegrityError: return err("That email or login ID is already registered", 409)
         if "role" in d and d["role"] != u["role"]:
             if u["role"] == "student": db().execute("DELETE FROM students WHERE user_id=?", (uid,))
             if u["role"] == "teacher": db().execute("DELETE FROM teachers WHERE user_id=?", (uid,))
@@ -403,9 +471,26 @@ def create_app(config=None):
             db().execute(f"INSERT OR IGNORE INTO {tbl}(user_id) VALUES(?)", (uid,))
             db().execute(f"UPDATE {tbl} SET {','.join(k + '=?' for k in prof)} WHERE user_id=?", (*prof.values(), uid))
             changed += list(prof)
-        audit("update_user", "user", uid, diff_detail(u, changed, {**d, "role": d.get("role", u["role"])}) if "password" not in changed else ",".join(changed))
+        fill_codes()
+        if "permissions" in changed:
+            audit("permission_change", "user", uid, u["login_id"] or u["email"], old=u["permissions"] or "all", new=one("SELECT permissions FROM users WHERE id=?", (uid,))["permissions"] or "all")
+        audit("update_user", "user", uid, diff_detail(u, changed, {**d, "role": d.get("role", u["role"]), **({"login_id": norm_login(d["login_id"])} if "login_id" in d else {})}) if "password" not in changed else ",".join(changed))
         db().commit()
         return jsonify(ok=True)
+
+    @app.post("/api/users/<int:uid>/reset-password")
+    @auth("admin", perm="people")
+    def users_reset_password(uid):
+        """New random temporary password, shown once. The old password stops working and the person must choose their own at next sign-in."""
+        u = one("SELECT id,role,login_id FROM users WHERE id=?", (uid,))
+        if not u: return err("User not found", 404)
+        if uid == g.user["id"]: return err("Use Change password for your own account")
+        if u["role"] == "admin" and g.user["permissions"] is not None: return err("Only a full admin can reset an admin's password", 403)
+        pw = temp_password()
+        db().execute("UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?", (generate_password_hash(pw), uid))
+        audit("reset_password", "user", uid, u["login_id"] or ""); db().commit()
+        resp = jsonify(login_id=u["login_id"], temporary_password=pw); resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     @app.delete("/api/users/<int:uid>")
     @auth("admin", perm="people")
@@ -428,16 +513,18 @@ def create_app(config=None):
         return jsonify(ok=True)
 
     # ---------- courses ----------
-    COURSE_FIELDS = ("name", "level", "description", "textbook", "monthly_fee_mvr", "days_per_week", "minutes_per_class", "status")
+    COURSE_FIELDS = ("name", "level", "description", "textbook", "monthly_fee_mvr", "registration_fee_mvr", "days_per_week", "minutes_per_class", "status", "kind", "code", "is_active")
 
     @app.get("/api/public/courses")
     def public_courses():  # no login; for the public website
         return jsonify(rows("SELECT id,name,level,description,textbook,monthly_fee_mvr,days_per_week,minutes_per_class,status "
-                            "FROM courses WHERE status IN ('open','upcoming') ORDER BY id"))
+                            "FROM courses WHERE status IN ('open','upcoming') AND is_active=1 ORDER BY id"))
 
     @app.get("/api/courses")
     @auth()
     def courses_list():
+        """?active=1 leaves out inactive courses (dropdowns for new enrolments, batches, applications). Without it everything is listed, so reports and the admin list keep them."""
+        if request.args.get("active") == "1": return jsonify(rows("SELECT * FROM courses WHERE is_active=1 ORDER BY id"))
         return jsonify(rows("SELECT * FROM courses ORDER BY id"))
 
     def course_problem(d, creating=False):
@@ -445,10 +532,21 @@ def create_app(config=None):
         if "name" in d and not str(d["name"] or "").strip(): return "Course name cannot be empty"
         if "name" in d: d["name"] = d["name"].strip()
         if "status" in d and d["status"] not in ("open", "upcoming", "closed"): return "Invalid status"
+        if "kind" in d and d["kind"] not in idcodes.KINDS: return "Type must be course or tuition"
+        if "code" in d:
+            if d["code"] in (None, ""): d.pop("code")
+            else:
+                d["code"] = idcodes.norm_course_code(d["code"])
+                if not d["code"]: return "Code must be 2 to 8 letters or digits, for example AL1 or G8M"
+        if "is_active" in d: d["is_active"] = 1 if d["is_active"] in (True, 1, "1", "true") else 0
         if "monthly_fee_mvr" in d or creating:
             try: d["monthly_fee_mvr"] = int(d.get("monthly_fee_mvr") or 0)
             except (ValueError, TypeError): return "Fee must be a whole number"
             if d["monthly_fee_mvr"] < 0: return "Fee cannot be negative"
+        if "registration_fee_mvr" in d or creating:
+            try: d["registration_fee_mvr"] = int(d.get("registration_fee_mvr") or 0)
+            except (ValueError, TypeError): return "Registration fee must be a whole number"
+            if d["registration_fee_mvr"] < 0: return "Registration fee cannot be negative"
         for k in ("days_per_week", "minutes_per_class"):
             if k in d:
                 if d[k] in (None, ""): d[k] = None
@@ -466,11 +564,18 @@ def create_app(config=None):
         if m: return err(m)
         m = course_problem(d, True)
         if m: return err(m)
-        cur = db().execute("INSERT INTO courses(name,level,description,textbook,monthly_fee_mvr,days_per_week,minutes_per_class,status) VALUES(?,?,?,?,?,?,?,?)",
-                           (d["name"], d.get("level"), d.get("description"), d.get("textbook"), d["monthly_fee_mvr"],
-                            d.get("days_per_week"), d.get("minutes_per_class"), d.get("status", "upcoming")))
-        audit("create_course", "course", cur.lastrowid, d["name"]); db().commit()
-        return jsonify(id=cur.lastrowid), 201
+        code = d.get("code") or idcodes.course_code_for(db(), d["name"], d.get("level"))
+        try:
+            cur = db().execute("INSERT INTO courses(name,level,description,textbook,monthly_fee_mvr,registration_fee_mvr,days_per_week,minutes_per_class,status,kind,code,is_active) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                               (d["name"], d.get("level"), d.get("description"), d.get("textbook"), d["monthly_fee_mvr"], d["registration_fee_mvr"],
+                                d.get("days_per_week"), d.get("minutes_per_class"), d.get("status", "upcoming"), d.get("kind", "course"), code,
+                                d.get("is_active", 0 if d.get("status") == "closed" else 1)))
+        except dbx.IntegrityError:
+            db().rollback()
+            return err("That course code is already used", 409)
+        audit("create_course", "course", cur.lastrowid, d["name"], course_id=cur.lastrowid); db().commit()
+        warn = {"warning": "fee_zero", "message": "Monthly fee is 0, so students enrolled in this course will not be invoiced. Set a fee on the course."} if d["monthly_fee_mvr"] <= 0 else {}
+        return jsonify(id=cur.lastrowid, **warn), 201
 
     @app.patch("/api/courses/<int:cid>")
     @auth("admin", perm="courses")
@@ -482,9 +587,19 @@ def create_app(config=None):
         if not old: return err("Course not found", 404)
         m = course_problem(d)
         if m: return err(m)
-        db().execute(f"UPDATE courses SET {','.join(k + '=?' for k in f)} WHERE id=?", (*[d[k] for k in f], cid))
-        audit("update_course", "course", cid, diff_detail(old, f, d)); db().commit()
-        return jsonify(ok=True)
+        f = [k for k in f if k in d]   # an empty code was dropped by course_problem
+        if not f: return err("Nothing to update")
+        try: db().execute(f"UPDATE courses SET {','.join(k + '=?' for k in f)} WHERE id=?", (*[d[k] for k in f], cid))
+        except dbx.IntegrityError:
+            db().rollback()
+            return err("That course code is already used", 409)
+        audit("update_course", "course", cid, diff_detail(old, f, d), course_id=cid)
+        billed = None
+        if "monthly_fee_mvr" in d and old["monthly_fee_mvr"] <= 0 < d["monthly_fee_mvr"]:   # fee just set: bill the enrolments that were skipped while it was 0
+            r = fees_hook("catch_up", (g.user or {}).get("id"), "course fee set")
+            billed = r["created"] if r else None
+        db().commit()
+        return jsonify(ok=True, **({"invoices_created": billed} if billed is not None else {}))
 
     @app.delete("/api/courses/<int:cid>")
     @auth("admin", perm="courses")
@@ -493,14 +608,14 @@ def create_app(config=None):
         if not c: return err("Course not found", 404)
         try:
             db().execute("DELETE FROM courses WHERE id=?", (cid,))
-            audit("delete_course", "course", cid, c["name"]); db().commit()
+            audit("delete_course", "course", cid, c["name"], course_id=cid); db().commit()
         except dbx.IntegrityError:
             db().rollback()
             return err("This course has batches, applications or other records. Set its status to Closed instead.", 409)
         return jsonify(ok=True)
 
     # ---------- batches ----------
-    BATCH_SQL = ("SELECT b.*, c.name AS course_name, u.full_name AS teacher_name, "
+    BATCH_SQL = ("SELECT b.*, c.name AS course_name, c.kind AS course_kind, c.is_active AS course_active, u.full_name AS teacher_name, "
                  "(SELECT COUNT(*) FROM enrollments e WHERE e.batch_id=b.id AND e.status='active') AS enrolled "
                  "FROM batches b JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=b.teacher_id")
 
@@ -511,7 +626,8 @@ def create_app(config=None):
         if u["role"] == "admin":
             return jsonify(rows(BATCH_SQL + " ORDER BY b.id"))
         if u["role"] == "teacher":
-            return jsonify(rows(BATCH_SQL + " WHERE b.teacher_id=? ORDER BY b.id", (u["id"],)))
+            ids = sorted(app.extensions["teacher_batches"](u["id"]))   # the one "batches this teacher may use" rule, in learning.py
+            return jsonify(rows(BATCH_SQL + f" WHERE b.id IN ({','.join('?' * len(ids))}) ORDER BY b.id", ids) if ids else [])
         return jsonify(rows(BATCH_SQL + " WHERE b.id IN (SELECT batch_id FROM enrollments WHERE student_id=? AND status IN ('active','waitlist')) ORDER BY b.id", (u["id"],)))
 
     DAYNAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -557,21 +673,25 @@ def create_app(config=None):
         if not d.get("capacity"): d["capacity"] = setting_int("default_capacity")
         m = batch_problem(d) or batch_fields_problem(d)
         if m: return err(m)
-        if not one("SELECT id FROM courses WHERE id=?", (d["course_id"],)): return err("Course not found", 404)
+        co = one("SELECT is_active FROM courses WHERE id=?", (d["course_id"],))
+        if not co: return err("Course not found", 404)
+        if not co["is_active"]: return err("This course or tuition class is inactive. Make it active before adding a batch.", 409)
         try:
             cur = db().execute("INSERT INTO batches(course_id,code,days,start_time,start_date,capacity,teacher_id,meet_link,status) VALUES(?,?,?,?,?,?,?,?,?)",
                                (d["course_id"], d["code"], d.get("days"), d.get("start_time"), d.get("start_date"),
                                 d["capacity"], d.get("teacher_id"), d.get("meet_link"), d.get("status", "open")))
         except dbx.IntegrityError:
             return err("That batch code already exists for this course", 409)
-        audit("create_batch", "batch", cur.lastrowid, d["code"]); db().commit()
+        audit("create_batch", "batch", cur.lastrowid, d["code"], batch_id=cur.lastrowid)
+        if d.get("teacher_id"): audit("assign_teacher", "batch", cur.lastrowid, d["code"], batch_id=cur.lastrowid, new=d["teacher_id"])
+        db().commit()
         return jsonify(id=cur.lastrowid), 201
 
     @app.patch("/api/batches/<int:bid>")
     @auth("admin", perm="batches")
     def batches_update(bid):
         d = request.get_json(silent=True) or {}
-        f = [k for k in ("course_id", "code", "days", "start_time", "start_date", "capacity", "teacher_id", "meet_link", "status") if k in d]
+        f = [k for k in ("course_id", "code", "days", "start_time", "start_date", "capacity", "teacher_id", "meet_link", "status") if k in d]   # the Batches screen no longer sends meet_link (Session 12); the API still accepts it
         if not f: return err("Nothing to update")
         old = one("SELECT * FROM batches WHERE id=?", (bid,))
         if not old: return err("Batch not found", 404)
@@ -585,7 +705,9 @@ def create_app(config=None):
             db().execute(f"UPDATE batches SET {','.join(k + '=?' for k in f)} WHERE id=?", (*[d[k] for k in f], bid))
         except dbx.IntegrityError:
             return err("That batch code already exists for this course", 409)
-        audit("update_batch", "batch", bid, diff_detail(old, f, d)); db().commit()
+        audit("update_batch", "batch", bid, diff_detail(old, f, d), batch_id=bid)
+        if "teacher_id" in d and str(old["teacher_id"]) != str(d["teacher_id"]): audit("assign_teacher", "batch", bid, old["code"], batch_id=bid, old=old["teacher_id"], new=d["teacher_id"])
+        db().commit()
         return jsonify(ok=True)
 
     @app.delete("/api/batches/<int:bid>")
@@ -595,7 +717,7 @@ def create_app(config=None):
         if not b: return err("Batch not found", 404)
         try:
             db().execute("DELETE FROM batches WHERE id=?", (bid,))
-            audit("delete_batch", "batch", bid, b["code"]); db().commit()
+            audit("delete_batch", "batch", bid, b["code"], batch_id=bid); db().commit()
         except dbx.IntegrityError:
             db().rollback()
             return err("This batch has students, classes, assignments or applications. Set its status to Closed instead.", 409)
@@ -608,7 +730,8 @@ def create_app(config=None):
         if not b: return err("Batch not found", 404)
         if g.user["role"] == "teacher" and b["teacher_id"] != g.user["id"]:
             return err("This is not your batch", 403)
-        return jsonify(rows("SELECT u.id,u.full_name,u.phone,e.status FROM enrollments e JOIN users u ON u.id=e.student_id "
+        if g.user["role"] == "admin" and not can_any(g.user, *PICKER_AREAS): return err("Your account does not have permission for this area", 403)   # Session 32
+        return jsonify(rows("SELECT u.id,u.full_name,u.phone,e.status,e.id AS enrollment_id FROM enrollments e JOIN users u ON u.id=e.student_id "
                             "WHERE e.batch_id=? AND e.status IN ('active','waitlist') ORDER BY u.full_name", (bid,)))
 
     # ---------- enrollments ----------
@@ -618,6 +741,7 @@ def create_app(config=None):
         sql = ("SELECT e.*, u.full_name AS student_name, c.name AS course_name, b.code AS batch_code FROM enrollments e "
                "JOIN users u ON u.id=e.student_id JOIN batches b ON b.id=e.batch_id JOIN courses c ON c.id=b.course_id")
         if g.user["role"] == "admin":
+            if not can_any(g.user, *PICKER_AREAS): return err("Your account does not have permission for this area", 403)   # Session 32
             return jsonify(rows(sql + " ORDER BY e.id DESC"))
         if g.user["role"] == "student":
             return jsonify(rows(sql + " WHERE e.student_id=? ORDER BY e.id DESC", (g.user["id"],)))
@@ -630,8 +754,9 @@ def create_app(config=None):
         m = need(d, "student_id", "batch_id")
         if m: return err(m)
         if not one("SELECT id FROM users WHERE id=? AND role='student'", (d["student_id"],)): return err("Student not found", 404)
-        b = one("SELECT id,capacity FROM batches WHERE id=?", (d["batch_id"],))
+        b = one("SELECT b.id,b.capacity,c.is_active FROM batches b JOIN courses c ON c.id=b.course_id WHERE b.id=?", (d["batch_id"],))
         if not b: return err("Batch not found", 404)
+        if not b["is_active"]: return err("This course or tuition class is inactive, so no new students can be enrolled.", 409)
         ex = one("SELECT id,status FROM enrollments WHERE student_id=? AND batch_id=?", (d["student_id"], d["batch_id"]))
         if ex and ex["status"] in ("active", "waitlist"): return err("Student is already in this batch", 409)
         n = one("SELECT COUNT(*) n FROM enrollments WHERE batch_id=? AND status='active'", (b["id"],))["n"]
@@ -640,10 +765,11 @@ def create_app(config=None):
             db().execute("UPDATE enrollments SET status=?, enrolled_at=? WHERE id=?", (status, utc_stamp(), ex["id"])); eid = ex["id"]
         else:
             eid = db().execute("INSERT INTO enrollments(student_id,batch_id,status,enrolled_at) VALUES(?,?,?,?)", (d["student_id"], b["id"], status, utc_stamp())).lastrowid
-        audit("enroll", "enrollment", eid, status)
-        if status == "active": fees_hook("first_invoice", eid)
+        fill_codes()
+        audit("enroll", "enrollment", eid, status, batch_id=b["id"], old=ex["status"] if ex else None, new=status)
+        res = fees_hook("first_invoice_result", eid) or {}
         db().commit()
-        return jsonify(id=eid, status=status), 201
+        return jsonify(id=eid, status=status, invoice_id=res.get("invoice_id"), invoice_skipped=res.get("reason"), invoice_message=res.get("message")), 201
 
     @app.patch("/api/enrollments/<int:eid>")
     @auth("admin", perm="enrollments")
@@ -651,9 +777,12 @@ def create_app(config=None):
         d = request.get_json(silent=True) or {}
         e = one("SELECT * FROM enrollments WHERE id=?", (eid,))
         if not e: return err("Enrollment not found", 404)
+        try: eff = transfers.clean_date(d.get("effective_date"), utc_stamp()[:10])
+        except ValueError as x: return err(str(x))
         if d.get("transfer_to_batch_id"):  # move student to another batch
-            nb = one("SELECT id,capacity FROM batches WHERE id=?", (d["transfer_to_batch_id"],))
+            nb = one("SELECT b.id,b.capacity,c.is_active FROM batches b JOIN courses c ON c.id=b.course_id WHERE b.id=?", (d["transfer_to_batch_id"],))
             if not nb: return err("Target batch not found", 404)
+            if not nb["is_active"]: return err("The target course or tuition class is inactive", 409)
             if one("SELECT id FROM enrollments WHERE student_id=? AND batch_id=? AND status IN ('active','waitlist')", (e["student_id"], nb["id"])):
                 return err("Student is already in that batch", 409)
             n = one("SELECT COUNT(*) n FROM enrollments WHERE batch_id=? AND status='active'", (nb["id"],))["n"]
@@ -665,13 +794,17 @@ def create_app(config=None):
                 db().execute("UPDATE enrollments SET status='active', enrolled_at=? WHERE id=?", (utc_stamp(), back["id"])); new = back["id"]
             else:
                 new = db().execute("INSERT INTO enrollments(student_id,batch_id,status,enrolled_at) VALUES(?,?,'active',?)", (e["student_id"], nb["id"], utc_stamp())).lastrowid
-            audit("transfer", "enrollment", eid, f"to batch {nb['id']}")
+            fill_codes()
+            audit("transfer", "enrollment", eid, f"to batch {nb['id']}", batch_id=e["batch_id"], old=e["batch_id"], new=nb["id"])
+            transfers.record_event(db(), e["student_id"], e["batch_id"], nb["id"], "transfer", eff, d.get("reason"), g.user["id"], utc_stamp())
             fees_hook("on_transfer", eid, new)
             db().commit()
             return jsonify(id=new)
         if d.get("status") not in ("active", "waitlist", "dropped", "completed"): return err("Invalid status")
         db().execute("UPDATE enrollments SET status=? WHERE id=?", (d["status"], eid))
-        audit("enrollment_status", "enrollment", eid, d["status"])
+        audit("enrollment_status", "enrollment", eid, d["status"], batch_id=e["batch_id"], old=e["status"], new=d["status"])
+        if d["status"] == "dropped" and e["status"] != "dropped":   # a withdrawal: history kept, content access ends at once
+            transfers.record_event(db(), e["student_id"], e["batch_id"], None, "withdrawal", eff, d.get("reason"), g.user["id"], utc_stamp())
         if d["status"] == "active" and e["status"] != "active": fees_hook("first_invoice", eid)
         db().commit()
         return jsonify(ok=True)
@@ -812,9 +945,9 @@ def create_app(config=None):
         a = one("SELECT id_file,guardian_id_file FROM applications WHERE id=?", (aid,))
         if not col or not a or not a[col]: return err("File not found", 404)
         audit("view_id_file", "application", aid, which); db().commit()
-        resp = store.send("ids", a[col])
-        resp.headers["Cache-Control"] = "private, no-store"
-        return resp
+        ext = os.path.splitext(a[col])[1] or ""
+        want_download = request.args.get("download") == "1"
+        return common.file_headers(store.send("ids", a[col]), f"{which.replace('_', '-')}-copy-{aid}{ext}", attachment=want_download)
 
     def decide(aid, status, reason=None, student=None):
         db().execute("UPDATE applications SET status=?,reject_reason=?,student_user_id=COALESCE(?,student_user_id),decided_by=?,decided_at=datetime('now') WHERE id=?",
@@ -840,6 +973,8 @@ def create_app(config=None):
         n = one("SELECT COUNT(*) n FROM enrollments WHERE batch_id=? AND status='active'", (b["id"],))["n"]
         est = "active" if n < b["capacity"] else "waitlist"
         eid = db().execute("INSERT INTO enrollments(student_id,batch_id,status,enrolled_at) VALUES(?,?,?,?)", (uid, b["id"], est, utc_stamp())).lastrowid
+        fill_codes()
+        login_id = idcodes.give_login_id(db(), uid)
         decide(aid, "approved", None, uid)
         if est == "active": fees_hook("first_invoice", eid)
         if d.get("delete_files"):
@@ -851,11 +986,11 @@ def create_app(config=None):
         tpl = setting("welcome_message_template")
         academy = s.get("academy_name") or "Baleegh Academy"
         if tpl:
-            vals = {"name": a["full_name"], "ref": a["ref"], "academy": academy, "email": a["email"], "password": temp}
+            vals = {"name": a["full_name"], "ref": a["ref"], "academy": academy, "email": a["email"], "login_id": login_id, "password": temp}
             msg = re.sub(r"\{(\w+)\}", lambda m_: str(vals.get(m_.group(1), m_.group(0))), tpl)
         else:
             msg = (f"Assalaamu alaikum {a['full_name']}, your application to {academy} (ref {a['ref']}) is approved. "
-                   f"Login email: {a['email']} | Temporary password: {temp} (you will be asked to change it).")
+                   f"Login ID: {login_id} | Temporary password: {temp} (you will be asked to change it).")
         if est == "waitlist": msg += " You are on the batch waitlist and we will confirm your seat."
         from urllib.parse import quote
         return jsonify(user_id=uid, email=a["email"], temp_password=temp, enrollment_status=est, message=msg,
@@ -899,7 +1034,7 @@ def create_app(config=None):
         if not e: return err("Enrollment not found", 404)
         try:
             db().execute("DELETE FROM enrollments WHERE id=?", (eid,))
-            audit("delete_enrollment", "enrollment", eid, f"student {e['student_id']} batch {e['batch_id']}"); db().commit()
+            audit("delete_enrollment", "enrollment", eid, f"student {e['student_id']} batch {e['batch_id']}", batch_id=e["batch_id"], old=e["status"]); db().commit()
         except dbx.IntegrityError:
             db().rollback()
             return err("This enrollment already has invoices or payments. Set it to Dropped instead so the history is kept.", 409)
@@ -952,7 +1087,7 @@ def create_app(config=None):
                 " (SELECT COUNT(*) FROM enrollments WHERE status='active') AS active_enrollments,"
                 " (SELECT COUNT(*) FROM enrollments WHERE status='waitlist') AS waitlisted,"
                 " (SELECT COUNT(*) FROM applications WHERE status='pending') AS pending_applications")
-        return jsonify(**(extra() if extra else {}), **n)
+        return jsonify(**(extra() if extra and has_perm(g.user, "fees") else {}), **n)   # Session 32: money figures only for admins who have the Fees area
 
     SETTING_KEYS = SS.SETTING_KEYS
 
@@ -991,20 +1126,72 @@ def create_app(config=None):
         audit("update_settings", "settings", None, ",".join(changed) or "no change"); db().commit()
         return jsonify(ok=True)
 
-    @app.get("/api/audit")
-    @auth("admin", perm="audit")
-    def audit_list():
-        return jsonify(rows("SELECT a.*, u.full_name AS user_name FROM audit_log a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 100"))
-
     # ---------- Phase 3: learning tools (timetable, attendance, assignments, grades, materials) ----------
     from types import SimpleNamespace
     import learning
-    ns = SimpleNamespace(db=db, rows=rows, one=one, raw_setting=raw_setting, audit=audit, err=err, auth=auth, need=need, UPLOADS=UPLOADS, store=store)
+    ns = SimpleNamespace(db=db, rows=rows, one=one, raw_setting=raw_setting, audit=audit, err=err, auth=auth, need=need, UPLOADS=UPLOADS, store=store, has_perm=has_perm)
+    import notify
+    notify.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 28: notifications (must come first: the modules below call ns.notify)
     learning.register(app, ns)
+    import whatsapp
+    whatsapp.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 29: WhatsApp click-to-chat by phone number
+
+    # ---------- scheduler (not role-based: it is called by Vercel Cron with the CRON_SECRET) ----------
+    @app.route("/api/cron/generate-invoices", methods=["GET", "POST"])
+    def cron_generate_invoices():
+        """Vercel Cron sends 'Authorization: Bearer <CRON_SECRET>'. The secret is never accepted in the URL. Without CRON_SECRET the endpoint is closed
+        (always 401, which does not reveal whether a secret is set)."""
+        import hmac
+        secret = app.config.get("CRON_SECRET") or os.environ.get("CRON_SECRET") or ""
+        got = request.headers.get("Authorization") or ""
+        if not secret or not got.startswith("Bearer ") or not hmac.compare_digest(got[7:].encode(), secret.encode()):
+            return err("Not allowed", 401)
+        r = fees_hook("catch_up", None, "scheduled run")
+        return jsonify(period=r["period"], created=r["created"], skipped_total=r["skipped_total"], skipped=r["skipped"])
 
     # ---------- Phase 4: fees and payments (invoices, slips, receipts, reminders, reports) ----------
     import fees
     fees.register(app, ns)
+    transfers.register(app, ns)   # Session 13: transfer / withdrawal report
+    import substitutions
+    substitutions.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date(), utc_stamp)   # Session 22
+    import finance, earnings
+    earnings.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # Session 30: teacher earnings
+    finance.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # Session 23: expenses
+    import admindash
+    admindash.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # Session 25: admin dashboard
+    import payreports
+    payreports.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # Session 26: payment reports
+    import portio
+    portio.register(app, ns)   # Session 27: exports and imports
+    import auditview
+    auditview.register(app, ns)   # Session 21: activity log viewer (the old /api/audit route lives there now)
+
+    # ---------- errors: the API always answers in JSON ----------
+    # Without this, Flask answers 404 / 405 / 413 / 500 with an HTML page and the browser fails with "Unexpected token < ... is not valid JSON".
+    from werkzeug.exceptions import HTTPException
+
+    def api_error(msg, code):
+        return jsonify(error=msg), code
+
+    @app.errorhandler(FileNotFoundError)
+    def _file_missing(e):
+        return api_error("The file could not be found. It may have been removed.", 404)
+
+    @app.errorhandler(HTTPException)
+    def _http_error(e):
+        if not request.path.startswith("/api/"): return e
+        if e.code == 413:
+            mb = common.VERCEL_MAX_MB if ON_VERCEL else int(app.config.get("MAX_CONTENT_LENGTH") or 0) // (1024 * 1024)
+            return api_error(f"The upload is too large ({mb} MB max). Choose a smaller file." if mb else "The upload is too large.", 413)
+        msgs = {404: "Not found", 405: "Method not allowed", 400: "Bad request"}
+        return api_error(msgs.get(e.code) or e.description or "Request failed", e.code or 500)
+
+    @app.errorhandler(Exception)
+    def _server_error(e):
+        if not request.path.startswith("/api/"): raise e
+        app.logger.exception("Unhandled error on %s", request.path)
+        return api_error("Something went wrong on the server. Please try again.", 500)
 
     return app
 

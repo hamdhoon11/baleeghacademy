@@ -88,3 +88,10 @@ v0.8.7 (session 7: teacher information)
   Full suite: 193 tests pass; test_warm_connection, e2e_permissions, e2e_recordings, e2e_links and e2e_student_info pass.
   NOT TESTED: PostgreSQL (same SQL style as the rest); very large teacher lists (paged 30 at a time).
 
+
+v0.8.8 (session 8: file and download errors)
+  tests.test_session8: 9 tests passed (ID copy PDF/JPG/PNG inline and download, view logged, missing file JSON 404, access 401/403,
+  JSON 404/405/413, static pages unchanged, front end uses fetchFile). Full suite: 202 of 203; the one failure is
+  tests.test_warm_connection when run after other modules (pre-existing, passes alone).
+
+  tests.test_session32: 13 tests passed (policy vs @auth rules, 401 without token, 9-caller matrix over every route, limited admin, other student/teacher, withdrawn student, substitute dates, no hash/password/file key in responses, cron secrets, disabled token, forged tokens). Full suite: 414 of 415; the one failure is tests.test_warm_connection when run last (known, passes alone).

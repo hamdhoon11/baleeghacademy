@@ -58,6 +58,7 @@ textarea{font:inherit;padding:.5rem;border:1px solid var(--line);border-radius:6
 .seg input:checked+span{background:var(--lagoon);color:#fff;border-color:var(--lagoon)}
 .seg input:checked+span::before{content:"\2713\00a0"}
 .seg input:focus-visible+span{outline:3px solid var(--sun);outline-offset:2px}
+.kv{width:100%;border-collapse:collapse}.kv th{text-align:left;font-weight:600;width:40%;padding:.4rem .6rem .4rem 0;vertical-align:top}.kv td{padding:.4rem 0;overflow-wrap:anywhere}
 .subtabs{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.8rem}
 .subtabs button{background:#fff;border:1px solid var(--line);border-radius:6px;padding:.5rem .9rem;min-height:44px;cursor:pointer}
 .subtabs button[aria-current=true]{background:var(--lagoon);color:#fff;border-color:var(--lagoon)}
@@ -82,16 +83,59 @@ const t = k => EN[k] || k;
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const $ = s => document.querySelector(s);
 
+// Session 14/15: a student with several active enrolments, or a teacher with several batches, works in ONE selected batch (S.sb). Every batch-scoped read gets its batch_id here; the server checks it again (403 for a batch the student is not actively in).
+const SB_PATH = /^\/(my\/(home|grades|attendance)|assignments|materials|recordings|tutorials|timetable)(\?|$)/;
+const withBatch = (path, method) => (method === "GET" && S.user && (S.user.role === "student" || S.user.role === "teacher") && S.sb && SB_PATH.test(path) && !/[?&]batch_id=/.test(path)) ? path + (path.includes("?") ? "&" : "?") + "batch_id=" + S.sb : path;
 async function api(path, method = "GET", body) {
+  path = withBatch(path, method);
   const r = await fetch(API + "/api" + path, {method, headers: {"Content-Type": "application/json", ...(S.token ? {Authorization: "Bearer " + S.token} : {})}, body: body ? JSON.stringify(body) : undefined});
   const j = await r.json().catch(() => ({}));
+  if (!r.ok && !j.error && r.status === 413) j.error = t("file_too_large_server");
+  if (r.status === 403 && j.code === "password_change_required" && S.user) { S.user.must_change_password = 1; render(); }   // the server will not serve anything else until it is changed
   if (r.status === 401 && S.token) { signout(); throw new Error(j.error); }
   if (r.status === 403 && /permission/i.test(j.error || "") && S.user) S.user = null;   // permissions changed: fetch the tab list again on the next draw
   if (!r.ok) throw new Error(j.error || "Something went wrong");
   return j;
 }
+// ---- files: one helper for every document the portal serves (ID copies, slips, submissions, materials, tutorials, receipts, CSV) ----
+// Never assume an error body is JSON: a proxy, Vercel or Flask can answer with HTML or plain text.
+async function readError(r) {
+  const txt = await r.text().catch(() => "");
+  try { const j = JSON.parse(txt); if (j && j.error) return j.error; } catch (_) {}
+  if (r.status === 413) return t("file_too_large_server");
+  if (r.status === 404) return t("file_missing");
+  if (r.status === 403) return t("file_forbidden");
+  return t("download_failed");
+}
+const PREVIEW_TYPE = /^(application\/pdf|image\/(png|jpe?g|gif|webp))$/;
+function nameFromHeader(r, fallback) {
+  const m = /filename="?([^";]+)"?/i.exec(r.headers.get("Content-Disposition") || "");
+  return fallback || (m && m[1]) || "file";
+}
+// opts.preview: open PDFs and images in a new tab, download anything else. Without it the file is always saved.
+async function fetchFile(path, opts = {}) {
+  const win = opts.preview ? window.open("", "_blank") : null;   // opened right at the click so the browser does not block it
+  const done = () => { if (win && !win.closed) win.close(); };
+  try {
+    const r = await fetch(API + "/api" + path, {headers: {Authorization: "Bearer " + S.token}});
+    if (r.status === 401) { done(); signout(); throw new Error(await readError(r)); }
+    if (!r.ok) throw new Error(await readError(r));
+    const type = (r.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+    if (type === "text/html" || type === "application/json") throw new Error(t("file_open_failed"));   // an error page with a 200 status, not a document
+    const blob = await r.blob();
+    const typed = blob.type === type || !type ? blob : new Blob([blob], {type});
+    const url = URL.createObjectURL(typed);
+    if (win && PREVIEW_TYPE.test(type)) { win.location = url; setTimeout(() => URL.revokeObjectURL(url), 120000); return; }
+    done();
+    const a = document.createElement("a");
+    a.href = url; a.download = nameFromHeader(r, opts.name);
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  } catch (x) { done(); throw x; }
+}
 async function loadText() { EN = await (await fetch(API + "/i18n/en.json")).json(); }
-function signout() { sessionStorage.removeItem("tok"); S = {token: null, user: null, view: null, info: S.info}; render(); }
+function signout() { if (S.token) fetch("/api/auth/logout", {method: "POST", headers: {Authorization: "Bearer " + S.token}, keepalive: true}).catch(() => {});   // writes the log row only; sign-out works even if this fails
+  sessionStorage.removeItem("tok"); sessionStorage.removeItem("sb"); S = {token: null, user: null, view: null, info: S.info}; render(); }
 const flash = (m, ok) => { S.note = {m, ok}; };
 const note = () => { const n = S.note; S.note = null; return n ? `<div class="msg ${n.ok ? "ok" : "err"}" role="status">${esc(n.m)}</div>` : ""; };
 
@@ -115,7 +159,7 @@ const views = {
       $("#af").onchange = e => { S.filter = e.target.value; S.sel = null; S.result = null; render(); };
       document.querySelectorAll("[data-rev]").forEach(b => b.onclick = () => { S.sel = +b.dataset.rev; S.result = null; render(); });
       const act = (id, fn) => { const el = $("#" + id); if (el) el.onclick = async () => { try { await fn(); } catch (x) { flash(x.message); } render(); }; };
-      const open = which => async () => { const w = window.open("", "_blank"); try { const r = await fetch(API + "/api/applications/" + a.id + "/file/" + which, {headers: {Authorization: "Bearer " + S.token}}); if (!r.ok) throw new Error((await r.json()).error); w.location = URL.createObjectURL(await r.blob()); } catch (x) { w.close(); flash(x.message); render(); } };
+      const open = which => async () => { try { await fetchFile("/applications/" + a.id + "/file/" + which, {preview: true}); } catch (x) { flash(x.message); render(); } };
       if (a) {
         $("#vi") && ($("#vi").onclick = open("id")); $("#vg") && ($("#vg").onclick = open("guardian_id"));
         act("ap", async () => { S.result = await api("/applications/" + a.id + "/approve", "POST", {batch_id: val("ab"), delete_files: $("#adel").checked}); S.filter = "approved"; });
@@ -160,15 +204,39 @@ const views = {
 async function render() {
   const root = $("#root");
   if (!S.token) {
-    root.innerHTML = `<div class="login"><div class="panel"><h1>${esc((S.info && S.info.academy_name) || t("app"))}</h1>${S.info && S.info.tagline ? `<p class="hint">${esc(S.info.tagline)}</p>` : ""}${S.info && S.info.banner ? `<div class="banner" role="note">${esc(S.info.banner)}</div>` : ""}${note()}<form id="fl"><label>${t("email")}<input id="le" type="email" autocomplete="username" required></label><br><label>${t("password")}<input id="lp" type="password" autocomplete="current-password" required></label><br><button class="btn">${t("signin")}</button></form></div></div>`;
-    $("#fl").onsubmit = async e => { e.preventDefault(); try { const r = await api("/auth/login", "POST", {email: val("le"), password: val("lp")}); S.token = r.token; sessionStorage.setItem("tok", r.token); S.user = r.user; S.view = null; } catch (x) { flash(x.message); } render(); };
+    root.innerHTML = `<div class="login"><div class="panel"><h1>${esc((S.info && S.info.academy_name) || t("app"))}</h1>${S.info && S.info.tagline ? `<p class="hint">${esc(S.info.tagline)}</p>` : ""}${S.info && S.info.banner ? `<div class="banner" role="note">${esc(S.info.banner)}</div>` : ""}${note()}<form id="fl"><label>${t("Login ID")}<input id="le" type="text" autocomplete="username" autocapitalize="characters" spellcheck="false" placeholder="BAL/AL1/001" required></label><br><label>${t("password")}<input id="lp" type="password" autocomplete="current-password" required></label><br><button class="btn">${t("signin")}</button></form></div></div>`;
+    $("#fl").onsubmit = async e => { e.preventDefault(); try { const r = await api("/auth/login", "POST", {login: val("le"), password: val("lp")}); S.token = r.token; sessionStorage.setItem("tok", r.token); S.user = r.user; S.view = null; } catch (x) { flash(x.message); } render(); };
   } else {
     if (!S.user) S.user = (await api("/auth/me")).user;
+    if (S.user.must_change_password) {   // first sign-in with a temporary password: only this screen, until a new password is saved
+      root.innerHTML = `<div class="login"><div class="panel"><h1>${esc(t("Choose your own password"))}</h1><p class="hint">${esc(t("You signed in with a temporary password. Choose a new one to continue."))}</p><form id="fcp"><label>${esc(t("Temporary password"))}<input id="cp0" type="password" autocomplete="current-password" required></label><br><label>${esc(t("New password"))}<input id="cp1" type="password" autocomplete="new-password" required></label><br><label>${esc(t("Repeat new password"))}<input id="cp2" type="password" autocomplete="new-password" required></label><br><button class="btn">${esc(t("save"))}</button> <button type="button" class="btn" id="cpo">${t("signout")}</button></form></div></div>`;
+      $("#cpo").onclick = signout;
+      $("#fcp").onsubmit = async e => { e.preventDefault(); try {
+        if (val("cp1") !== val("cp2")) throw new Error(t("The two new passwords are not the same"));
+        await api("/auth/change-password", "POST", {current_password: val("cp0"), new_password: val("cp1")});
+        S.user = null; flash(t("saved"), true);
+      } catch (x) { flash(x.message); } render(); };
+      return;
+    }
+    if (S.user.role === "student" || S.user.role === "teacher") {   // course / batch selection (Session 14 students, Session 15 teachers)
+      if (!S.mine) { try { S.mine = await api("/my/batches"); } catch (x) { S.mine = []; } }
+      const ids = S.mine.map(b => b.id), saved = +sessionStorage.getItem("sb") || null;
+      S.sb = ids.includes(S.sb) ? S.sb : ids.includes(saved) ? saved : ids.length === 1 ? ids[0] : null;
+      if (S.sb) sessionStorage.setItem("sb", S.sb); else sessionStorage.removeItem("sb");
+      if (S.mine.length > 1 && !S.sb) {   // several enrolments and none chosen yet: ask first
+        root.innerHTML = `<div class="login"><div class="panel"><h1>${esc(t("Choose your course"))}</h1><p class="hint">${esc(t(S.user.role === "teacher" ? "You teach more than one. You can switch at any time from the top of the page." : "You are enrolled in more than one. You can switch at any time from the top of the page."))}</p>${S.mine.map(b => `<p><button class="btn" data-sb="${b.id}">${esc(b.course_name)} · ${esc(b.code)}${b.substitute_until ? esc(" (" + t("substitute until") + " " + b.substitute_until + ")") : ""}</button></p>`).join("")}<p><button class="btn alt" id="so">${t("signout")}</button></p></div></div>`;
+        root.querySelectorAll("[data-sb]").forEach(x => x.onclick = () => { S.sb = +x.dataset.sb; S.aid = null; render(); });
+        $("#so").onclick = signout;
+        return;
+      }
+    }
     const tabs = (S.user.tabs || []).filter(v => views[v]); if (!tabs.includes(S.view)) S.view = tabs[0];
     let html; try { html = await views[S.view](); } catch (x) { html = `<div class="msg err">${esc(x.message)}</div>`; }
-    root.innerHTML = `<div class="app"><nav aria-label="Main"><div class="brand">${t("app")}</div>${tabs.map(v => `<button data-v="${v}" ${v === S.view ? 'aria-current="page"' : ""}>${esc(t(v))}</button>`).join("")}<div class="sp"></div><button id="so">${t("signout")}</button></nav><main>${note()}${html}</main></div>`;
+    root.innerHTML = `<div class="app"><nav aria-label="Main"><div class="brand">${t("app")}</div>${tabs.map(v => `<button data-v="${v}" ${v === S.view ? 'aria-current="page"' : ""}>${esc(t(v))}</button>`).join("")}<div class="sp"></div>${S.mine && S.mine.length > 1 ? `<label class="hint">${esc(t("Course"))} <select id="sbsel" aria-label="${esc(t("Course"))}">${S.mine.map(b => `<option value="${b.id}" ${b.id === S.sb ? "selected" : ""}>${esc(b.course_name)} · ${esc(b.code)}${b.substitute_until ? esc(" (" + t("substitute until") + " " + b.substitute_until + ")") : ""}</option>`).join("")}</select></label>` : ""}<button id="bell" aria-label="${esc(t("Notifications"))}">${esc(t("Notifications"))}<span class="n" id="bellN" hidden></span></button><button id="so">${t("signout")}</button></nav><main>${note()}${html}</main></div>`;
     document.querySelectorAll("nav [data-v]").forEach(b => b.onclick = () => { S.view = b.dataset.v; render(); });
     $("#so").onclick = signout;
+    if (window.initBell) initBell();   // Session 28
+    if ($("#sbsel")) $("#sbsel").onchange = e => { S.sb = +e.target.value; S.aid = null; S.topen = null; S.adate = null; render(); };   // switch course without signing out
   }
 }
 window.addEventListener("DOMContentLoaded", () => loadText().then(() => api("/public/info").then(i => { S.info = i; }).catch(() => {})).then(render));
@@ -176,5 +244,6 @@ window.addEventListener("DOMContentLoaded", () => loadText().then(() => api("/pu
 <script src="learning.js"></script>
 <script src="fees.js"></script>
 <script src="admin.js"></script>
+<script src="notify.js"></script>
 </body>
 </html>

@@ -11,16 +11,12 @@ async function apiForm(path, fd, method = "POST") {
   const r = await fetch(API + "/api" + path, {method, headers: {Authorization: "Bearer " + S.token}, body: fd});
   const j = await r.json().catch(() => ({}));
   if (r.status === 401) { signout(); throw new Error(j.error); }
+  if (r.status === 413 && !j.error) throw new Error(t("file_too_large_server"));
   if (!r.ok) throw new Error(j.error || "Something went wrong");
   return j;
 }
-async function download(path, name) {
-  const r = await fetch(API + "/api" + path, {headers: {Authorization: "Bearer " + S.token}});
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || t("download_failed"));
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(await r.blob()); a.download = name || "file";
-  document.body.appendChild(a); a.click(); a.remove();
-}
+const download = (path, name) => fetchFile(path, {name});                        // always save
+const viewFile = (path, name) => fetchFile(path, {name, preview: true});         // preview PDF/images, save other types
 
 // one delegated handler for buttons (data-do) and selects/inputs (data-ch) so re-rendering never loses them
 const DO = {}, CH = {}, CT = {};
@@ -65,7 +61,13 @@ views.home = async () => {
     html += `<div class="stats">${h.courses.map(c => `<div class="stat"><b>${pct(c.attendance_pct)}</b>${esc(c.course_name)} · ${t("attendance_pct")}<br><small>${t("avg_pct")}: ${pct(c.avg_pct)}</small></div>`).join("")}</div>`;
     html += `<div class="panel"><h2>${t("open_assignments")}</h2>${h.todo.length ? h.todo.map(a => `<div class="cl"><div><b>${esc(a.title)}</b><br>${esc(a.course_name)} · ${a.due_date ? esc(t("due_date")) + " " + esc(a.due_date) : t("no_due")}</div><button class="btn sm" data-do="goA" data-id="${a.id}">${t("open")}</button></div>`).join("") : `<p>${t("empty")}</p>`}</div>`;
   } else {
-    html += `<div class="stats"><div class="stat"><b>${h.to_grade}</b>${t("pending_grading")}</div><div class="stat"><b>${h.low_attendance.length}</b>${t("low_att_students")}</div></div>`;
+    const d = await api("/teacher/dashboard").catch(() => null);   // Session 19: the batch picked in the header (or all batches); same numbers as everywhere else
+    if (d) {
+      const card = (n, k) => `<div class="stat"><b>${n}</b>${t(k)}</div>`, A = d.assignments, C = d.classes;
+      html += `<div class="stats">${card(d.batches.length, "dash_batches")}${card(d.students, "dash_students")}${card(C.held, "dash_held")}${card(C.upcoming, "dash_upcoming")}${card(A.given, "dash_assignments")}${card(A.tests, "dash_tests")}${card(d.tutorials.given, "dash_tutorials")}${card(A.submissions, "dash_submissions")}${card(A.pending_grading, "pending_grading")}${card(A.graded, "dash_graded")}${card(pct(d.attendance.pct), "attendance_pct")}${card(d.attendance.low_students, "low_att_students")}</div>`;
+      html += `<div class="panel"><h2>${t("dash_batches")}</h2>${d.batches.map(b => `<div class="cl"><div><b>${esc(b.course_name)}</b> · ${esc(b.code)}<br><span class="hint">${esc(b.days || "")} ${esc(b.start_time || "")} · ${b.students} ${t("dash_students")}</span></div></div>`).join("") || `<p>${t("empty")}</p>`}</div>`;
+      if (d.recent_activity.length) html += `<div class="panel"><h2>${t("dash_recent")}</h2>${d.recent_activity.map(r => `<div class="cl"><div>${esc(r.action.replace(/_/g, " "))}${r.detail ? " · " + esc(r.detail) : ""}<br><span class="hint">${esc(r.at)}</span></div></div>`).join("")}</div>`;
+    } else html += `<div class="stats"><div class="stat"><b>${h.to_grade}</b>${t("pending_grading")}</div><div class="stat"><b>${h.low_attendance.length}</b>${t("low_att_students")}</div></div>`;
     if (h.low_attendance.length) html += `<div class="panel"><h2>${t("low_att_students")}</h2>${h.low_attendance.map(s => `<div class="cl"><div><b>${esc(s.full_name)}</b><br>${esc(s.course_name)} · ${esc(s.batch_code)}</div>${tag(pct(s.pct), "bad")}</div>`).join("")}</div>`;
   }
   return html + `<div class="panel"><h2>${t("this_week")}</h2>${weekList(h)}</div>`;
@@ -88,8 +90,8 @@ views.assignments = async () => {
   return `<h1>${t("assignments")}</h1>` + (list.length ? list.map(x => `<div class="panel cl"><div><b>${esc(x.title)}</b> ${statusTag(x)}<br>${esc(x.course_name)} · ${x.due_date ? esc(t("due_date")) + " " + esc(x.due_date) : t("no_due")}</div><button class="btn sm" data-do="goA" data-id="${x.id}">${t(x.my.grade == null && !x.my.submitted ? "submit_work" : "open")}</button></div>`).join("") : `<p>${t("empty")}</p>`);
 };
 DO.backA = () => { S.aid = null; };
-DO.dlAtt = async d => { await download("/assignments/" + d.id + "/attachment", d.name); return false; };
-DO.dlSub = async d => { await download("/submissions/" + d.id + "/file", d.name); return false; };
+DO.dlAtt = async d => { await viewFile("/assignments/" + d.id + "/attachment", d.name); return false; };
+DO.dlSub = async d => { await viewFile("/submissions/" + d.id + "/file", d.name); return false; };
 DO.submitA = async d => {
   const fd = new FormData(); fd.append("text", $("#atext").value);
   const f = $("#afile").files[0]; if (f) fd.append("file", f);
@@ -105,7 +107,7 @@ views.progress = async () => {
     const a = A[c.batch_id] || {recent: []};
     return `<div class="panel"><h2>${esc(c.course_name)} · ${esc(c.batch_code)}</h2><div class="stats"><div class="stat"><b>${pct(a.pct)}</b>${t("attendance_pct")} ${a.low ? tag(t("low_attendance"), "bad") : ""}</div><div class="stat"><b>${pct(c.avg_pct)}</b>${t("avg_pct")}</div></div>
       <p>${a.recent.map(r => tag(r.date.slice(5) + " " + t(r.status), r.status === "absent" ? "bad" : r.status === "present" ? "ok" : "")).join(" ") || t("empty")}</p>
-      ${c.items.length ? `<table><thead><tr><th>${t("title")}</th><th>${t("kind")}</th><th>${t("due_date")}</th><th>${t("grade")}</th></tr></thead><tbody>${c.items.map(i => `<tr><td>${esc(i.title)}</td><td>${t(i.kind)}</td><td>${esc(i.due_date || "–")}</td><td>${i.grade != null ? i.grade + "/" + i.max_points : t("not_graded_yet")}${i.feedback ? `<br><small>${esc(i.feedback)}</small>` : ""}</td></tr>`).join("")}</tbody></table>` : `<p>${t("empty")}</p>`}</div>`;
+      ${c.items.length ? `<table><thead><tr><th>${t("title")}</th><th>${t("kind")}</th><th>${t("due_date")}</th><th>${t("status")}</th><th>${t("grade")}</th><th>${t("teacher_comment")}</th></tr></thead><tbody>${c.items.map(i => `<tr><td>${esc(i.title)}</td><td>${t(i.kind)}</td><td>${esc(i.due_date || "–")}</td><td>${tag(t(i.status === "graded" ? "graded" : i.status === "submitted" ? "submitted" : "pending"), i.status === "graded" ? "ok" : i.status === "submitted" ? "" : "warn")}</td><td>${i.grade != null ? i.grade + "/" + i.max_points : "–"}</td><td>${i.feedback ? esc(i.feedback) : "–"}</td></tr>`).join("")}</tbody></table>` : `<p>${t("empty")}</p>`}</div>`;
   }).join("") || `<p>${t("empty")}</p>`);
 };
 
@@ -115,7 +117,7 @@ views.materials = async () => {
   const list = await api("/materials");
   return `<h1>${t("materials")}</h1><div class="panel">${list.map(m => matRow(m, false)).join("") || `<p>${t("empty")}</p>`}</div>`;
 };
-DO.dlMat = async d => { await download("/materials/" + d.id + "/file", d.name); return false; };
+DO.dlMat = async d => { await viewFile("/materials/" + d.id + "/file", d.name); return false; };
 DO.delMat = async d => { if (!confirm(t("confirm_delete"))) return false; await api("/materials/" + d.id, "DELETE"); flash(t("saved"), true); };
 
 // ---------- classroom (teacher: own batches; admin: all batches) ----------
@@ -126,9 +128,10 @@ DO.ctab = d => { S.ct = d.v; S.aid = null; };
 views.classroom = async () => {
   const bs = await api("/batches");
   if (!bs.length) return `<h1>${t("classroom")}</h1><div class="panel"><p>${t("empty")}</p></div>`;
+  if (S.user.role === "teacher" && bs.some(b => b.id === S.sb)) S.cb = S.sb;   // a teacher works in the batch chosen in the header (Session 15)
   if (!bs.some(b => b.id === S.cb)) S.cb = bs[0].id;
   const tab = CT[S.ct] ? S.ct : "attendance", b = bs.find(x => x.id === S.cb);
-  const sel = `<label>${t("select_batch")}<select data-ch="batch">${bs.map(x => `<option value="${x.id}" ${x.id === S.cb ? "selected" : ""}>${esc(x.course_name)} · ${esc(x.code)}${S.user.role === "admin" && x.teacher_name ? " (" + esc(x.teacher_name) + ")" : ""}</option>`).join("")}</select></label>`;
+  const sel = S.user.role === "teacher" ? `<h2>${esc(b.course_name)} · ${esc(b.code)}</h2>` : `<label>${t("select_batch")}<select data-ch="batch">${bs.map(x => `<option value="${x.id}" ${x.id === S.cb ? "selected" : ""}>${esc(x.course_name)} · ${esc(x.code)}${S.user.role === "admin" && x.teacher_name ? " (" + esc(x.teacher_name) + ")" : ""}</option>`).join("")}</select></label>`;
   const tabs = ["attendance", "assignments", "gradebook", "materials", "recordings", "schedule"];
   return `<h1>${t("classroom")}</h1><div class="panel">${sel}<div class="subtabs">${tabs.map(k => `<button data-do="ctab" data-v="${k}" ${k === tab ? 'aria-current="true"' : ""}>${t(k)}</button>`).join("")}</div></div>` + await CT[tab](b);
 };
@@ -164,7 +167,7 @@ CT.assignments = async b => {
   if (sel) {
     const s = await api(`/assignments/${sel.id}/submissions`);
     html += `<div class="panel"><h2>${esc(s.assignment.title)} · ${s.assignment.max_points} pts</h2>${s.students.map(r => `<div class="sub"><div><b>${esc(r.full_name)}</b> ${r.submitted ? tag(t("submitted") + (r.is_late ? " · " + t("late_tag") : ""), r.is_late ? "warn" : "ok") : tag(t("not_submitted"), "warn")}</div>${r.text_answer ? `<p class="pre">${esc(r.text_answer)}</p>` : ""}${r.has_file ? `<button class="btn sm" data-do="dlSub" data-id="${r.submission_id}" data-name="${esc(r.file_name || "file")}">${esc(r.file_name || t("download"))}</button>` : ""}
-      <div class="row" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:end;margin-top:.4rem"><label style="flex:0 0 110px">${t("grade")} /${s.assignment.max_points}<input type="number" step="0.5" min="0" max="${s.assignment.max_points}" id="g_${r.student_id}" value="${r.grade ?? ""}"></label><label>${t("feedback")}<input id="f_${r.student_id}" value="${esc(r.feedback || "")}"></label><button class="btn sm" data-do="saveG" data-sid="${r.student_id}" data-aid="${sel.id}">${t("save_grade")}</button></div></div>`).join("")}</div>`;
+      <div class="row" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:end;margin-top:.4rem">${(() => { const lock = r.grade != null && !s.can_edit_grades ? "disabled" : ""; return `<label style="flex:0 0 110px">${t("grade")} /${s.assignment.max_points}<input type="number" step="0.5" min="0" max="${s.assignment.max_points}" id="g_${r.student_id}" value="${r.grade ?? ""}" ${lock}></label><label>${t("feedback")}<input id="f_${r.student_id}" value="${esc(r.feedback || "")}" ${lock}></label>` + (lock ? `<span class="hint">${t("grade_locked_teacher")}</span>` : `<button class="btn sm" data-do="saveG" data-sid="${r.student_id}" data-aid="${sel.id}">${t("save_grade")}</button>`); })()}</div></div>`).join("")}</div>`;
   }
   return html;
 };
@@ -174,7 +177,9 @@ DO.saveG = async d => { await api(`/assignments/${d.aid}/grades`, "POST", {stude
 
 CT.gradebook = async b => {
   const g = await api(`/batches/${b.id}/gradebook`);
-  return `<div class="panel"><h2>${t("gradebook")}</h2><table><thead><tr><th>${t("student")}</th><th>${t("graded_items")}</th><th>${t("avg_pct")}</th><th>${t("attendance_pct")}</th></tr></thead><tbody>${g.map(s => `<tr><td>${esc(s.full_name)}</td><td>${s.graded_items}</td><td>${pct(s.avg_pct)}</td><td>${pct(s.attendance_pct)} ${s.low_attendance ? tag(t("low_attendance"), "bad") : ""}</td></tr>`).join("")}</tbody></table>${g.length ? "" : `<p>${t("empty")}</p>`}</div>`;
+  const mine = S.user.role === "teacher" ? (await api(`/my/given-grades?batch_id=${b.id}`)).grades : [];
+  const given = mine.length ? `<div class="panel"><h2>${t("grades_i_gave")}</h2><table><thead><tr><th>${t("student")}</th><th>${t("title")}</th><th>${t("grade")}</th><th>${t("feedback")}</th></tr></thead><tbody>${mine.map(x => `<tr><td>${esc(x.full_name)}</td><td>${esc(x.title)}</td><td>${x.grade}/${x.max_points}</td><td>${esc(x.feedback || "–")}</td></tr>`).join("")}</tbody></table></div>` : "";
+  return given + `<div class="panel"><h2>${t("gradebook")}</h2><table><thead><tr><th>${t("student")}</th><th>${t("graded_items")}</th><th>${t("avg_pct")}</th><th>${t("attendance_pct")}</th></tr></thead><tbody>${g.map(s => `<tr><td>${esc(s.full_name)}</td><td>${s.graded_items}</td><td>${pct(s.avg_pct)}</td><td>${pct(s.attendance_pct)} ${s.low_attendance ? tag(t("low_attendance"), "bad") : ""}</td></tr>`).join("")}</tbody></table>${g.length ? "" : `<p>${t("empty")}</p>`}</div>`;
 };
 
 CT.materials = async b => {
@@ -219,29 +224,29 @@ const pickedDays = () => [...document.querySelectorAll('input[name="bd"]:checked
 DO.editB = d => { S.eb = +d.id; };
 DO.closeB = () => { S.eb = null; };
 DO.saveB = async () => {
-  await api("/batches/" + S.eb, "PATCH", {days: pickedDays(), start_time: val("be_t") || null, start_date: val("be_sd") || null, meet_link: val("be_m"), capacity: val("be_c"), teacher_id: val("be_h") || null, status: val("be_s")});
+  await api("/batches/" + S.eb, "PATCH", {days: pickedDays(), start_time: val("be_t") || null, start_date: val("be_sd") || null, capacity: val("be_c"), teacher_id: val("be_h") || null, status: val("be_s")});
   S.eb = null; flash(t("saved"), true);
 };
 views.batches = async () => {
   const [b, c, tc] = await Promise.all([api("/batches"), api("/courses"), api("/users?role=teacher")]);
   const e = b.find(x => x.id === S.eb);
   setTimeout(() => {
-    onSubmit("fb", () => api("/batches", "POST", {course_id: val("bc"), code: val("bn"), days: pickedDays(), start_time: val("bt"), start_date: val("bsd") || null, capacity: val("bp"), teacher_id: val("bh") || null, meet_link: val("bm")}));
+    onSubmit("fb", () => api("/batches", "POST", {course_id: val("bc"), code: val("bn"), days: pickedDays(), start_time: val("bt"), start_date: val("bsd") || null, capacity: val("bp"), teacher_id: val("bh") || null}));
     if (e) { $("#be_h").value = e.teacher_id || ""; $("#be_s").value = e.status; }
   });
   const teachers = [["", "-"], ...tc.map(x => [x.id, x.full_name])];
-  const editor = e ? `<div class="panel"><h2>${esc(e.course_name)} · ${esc(e.code)}</h2>${dayBoxes(e.days)}<div class="row" style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:end"><label>${t("time")}<input type="time" id="be_t" value="${esc(e.start_time || "")}"></label><label>${t("start_date")}<input type="date" id="be_sd" value="${esc(e.start_date || "")}"></label><label>${t("capacity")}<input type="number" id="be_c" value="${e.capacity}"></label>${field("be_h", "teacher", "", teachers)}${field("be_s", "status", "", [["open", "open"], ["running", "running"], ["closed", "closed"]])}<label style="flex:1 1 100%">${t("meet")}<input type="url" id="be_m" value="${esc(e.meet_link || "")}" placeholder="https://meet.google.com/..."></label><button class="btn" data-do="saveB">${t("save")}</button><button class="btn alt" data-do="closeB">${t("cancel")}</button></div></div>` : "";
-  return `<h1>${t("batches")}</h1>${editor}<div class="panel">${form("fb", field("bc", "course", "", c.map(x => [x.id, x.name + " " + (x.level || "")])) + field("bn", "code") + field("bt", "time", "time") + field("bsd", "start_date", "date") + field("bp", "capacity", "number") + field("bh", "teacher", "", teachers) + field("bm", "meet", "url") + dayBoxes(""))}</div><div class="panel"><table><thead><tr><th>${t("course")}</th><th>${t("code")}</th><th>${t("days")}</th><th>${t("time")}</th><th>${t("seats")}</th><th>${t("teacher")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>${b.map(x => `<tr><td>${esc(x.course_name)}</td><td>${esc(x.code)}</td><td>${x.days ? esc(x.days.split(",").map(dayName).join(", ")) : tag("–", "warn")}</td><td>${esc(x.start_time || "–")}</td><td>${x.enrolled}/${x.capacity}</td><td>${esc(x.teacher_name || "–")}</td><td>${esc(x.status)}</td><td><button class="btn sm" data-do="editB" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("")}</tbody></table></div>`;
+  const editor = e ? `<div class="panel"><h2>${esc(e.course_name)} · ${esc(e.code)}</h2>${dayBoxes(e.days)}<div class="row" style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:end"><label>${t("time")}<input type="time" id="be_t" value="${esc(e.start_time || "")}"></label><label>${t("start_date")}<input type="date" id="be_sd" value="${esc(e.start_date || "")}"></label><label>${t("capacity")}<input type="number" id="be_c" value="${e.capacity}"></label>${field("be_h", "teacher", "", teachers)}${field("be_s", "status", "", [["open", "open"], ["running", "running"], ["closed", "closed"]])}<p class="hint" style="flex:1 1 100%">${esc(t("The class link is set in Classroom, not here."))}</p><button class="btn" data-do="saveB">${t("save")}</button><button class="btn alt" data-do="closeB">${t("cancel")}</button></div></div>` : "";
+  return `<h1>${t("batches")}</h1>${editor}<div class="panel">${form("fb", field("bc", "course", "", c.filter(x => x.is_active).map(x => [x.id, x.name + " " + (x.level || "")])) + field("bn", "code") + field("bt", "time", "time") + field("bsd", "start_date", "date") + field("bp", "capacity", "number") + field("bh", "teacher", "", teachers) + dayBoxes(""))}</div><div class="panel"><table><thead><tr><th>${t("course")}</th><th>${t("code")}</th><th>${t("days")}</th><th>${t("time")}</th><th>${t("seats")}</th><th>${t("teacher")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>${b.map(x => `<tr><td>${esc(x.course_name)}</td><td>${esc(x.code)}</td><td>${x.days ? esc(x.days.split(",").map(dayName).join(", ")) : tag("–", "warn")}</td><td>${esc(x.start_time || "–")}</td><td>${x.enrolled}/${x.capacity}</td><td>${esc(x.teacher_name || "–")}</td><td>${esc(x.status)}</td><td><button class="btn sm" data-do="editB" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("")}</tbody></table></div>`;
 };
 
 
 // ---------- tutorials: teachers and admins post; students read, download and send an answer; the poster and admins read the answers ----------
-DO.dlTut = async d => { await download("/tutorials/" + d.id + "/file", d.name); return false; };
+DO.dlTut = async d => { await viewFile("/tutorials/" + d.id + "/file", d.name); return false; };
 DO.readTut = async d => { S.tfull = S.tfull || {}; S.tfull[d.id] = (await api("/tutorials/" + d.id)).text; };
 DO.moreTut = () => { S.tlimit = (S.tlimit || 30) + 30; };
 DO.delTut = async d => { if (!confirm(t("confirm_delete"))) return false; await api("/tutorials/" + d.id, "DELETE"); if (S.topen === +d.id) S.topen = null; flash(t("saved"), true); };
 DO.openT = d => { S.topen = S.topen === +d.id ? null : +d.id; };   // opens or closes the answer box (student) or the answers list (teacher/admin) under one tutorial
-DO.dlTAns = async d => { await download("/tutorial-submissions/" + d.id + "/file", d.name); return false; };
+DO.dlTAns = async d => { await viewFile("/tutorial-submissions/" + d.id + "/file", d.name); return false; };
 DO.sendTAns = async d => {
   const text = $("#tans_x").value.trim(), file = $("#tans_f").files[0];
   if (!text && !file) { flash(t("tutorial_answer_need")); return false; }
@@ -262,7 +267,8 @@ const answersList = (r) => `<div class="sub"><h3>${t("tutorial_answers")} (${r.s
 
 views.tutorials = async () => {
   const f = S.tf || {}, q = new URLSearchParams();
-  if (f.course) q.set("course_id", f.course); if (f.q) q.set("q", f.q);
+  const tch = S.user.role === "teacher";   // Session 18: a teacher has no course selector; the header batch decides (the server limits the list to their own batches)
+  if (f.course && !tch) q.set("course_id", f.course); if (f.q) q.set("q", f.q);
   const lim = S.tlimit || 30; q.set("limit", lim);
   const [list, courses] = await Promise.all([api("/tutorials?" + q), S.courses ? S.courses : api("/courses").then(c => (S.courses = c)).catch(() => [])]);
   // the one tutorial that is open: load its answer (student) or all its answers (teacher/admin)
@@ -271,12 +277,12 @@ views.tutorials = async () => {
   if (open && open.can_submit) panel = answerBox(open, (await api("/tutorials/" + open.id + "/submission")).submission);
   else if (open && open.can_view_answers) panel = answersList(await api("/tutorials/" + open.id + "/submissions"));
   setTimeout(() => {
-    const ff = $("#tff"); if (ff) { $("#tf_c").value = f.course || ""; ff.onsubmit = e => { e.preventDefault(); S.tf = {course: val("tf_c"), q: val("tf_q")}; S.tlimit = 30; render(); }; }
+    const ff = $("#tff"); if (ff) { if ($("#tf_c")) $("#tf_c").value = f.course || ""; ff.onsubmit = e => { e.preventDefault(); S.tf = {course: $("#tf_c") ? val("tf_c") : "", q: val("tf_q")}; S.tlimit = 30; render(); }; }
     const fp = $("#tfp"); if (fp) fp.onsubmit = async e => {
       e.preventDefault();
       try {
         const fd = new FormData(); fd.append("title", val("tp_t")); fd.append("text", $("#tp_x").value.trim());
-        if (val("tp_u")) fd.append("url", val("tp_u")); if (val("tp_c")) fd.append("course_id", val("tp_c"));
+        if (val("tp_u")) fd.append("url", val("tp_u")); const pc = tch ? ((S.mine || []).find(b => b.id === S.sb) || {}).course_id : val("tp_c"); if (pc) fd.append("course_id", pc);
         const file = $("#tp_f").files[0]; if (file) fd.append("file", file);
         await apiForm("/tutorials", fd); flash(t("saved"), true);
       } catch (x) { flash(x.message); }
@@ -294,10 +300,33 @@ views.tutorials = async () => {
   };
   const canPost = S.user && ["admin", "teacher"].includes(S.user.role) && (S.user.permissions == null || S.user.permissions.includes("create_tutorials"));
   return `<h1>${t("tutorials")}</h1><p class="hint">${t("tutorials_intro")}</p>
-    ${canPost ? `<div class="panel"><h2>${t("share_tutorial")}</h2><form id="tfp" class="row">${field("tp_t", "title")}${field("tp_c", "course_optional", "", opts)}
+    ${canPost ? `<div class="panel"><h2>${t("share_tutorial")}</h2><form id="tfp" class="row">${field("tp_t", "title")}${tch ? "" : field("tp_c", "course_optional", "", opts)}
       <label style="flex:1 1 100%">${t("tutorial_text")}<textarea id="tp_x" rows="5" maxlength="8000"></textarea></label>
       <label>${t("file")}<input type="file" id="tp_f" accept=".pdf,.jpg,.jpeg,.png,.docx,.pptx,.xlsx,.mp3,.m4a,.mp4"></label>${field("tp_u", "url", "url")}
       <p class="hint" style="flex:1 1 100%;margin:0">${t("tutorial_need")}</p><button class="btn alt">${t("post")}</button></form></div>` : ""}
-    <div class="panel"><form id="tff" class="row">${field("tf_c", "course", "", [["", t("all_courses")], ...opts.slice(1)])}<label>${t("search")}<input id="tf_q" value="${esc(f.q || "")}"></label><button class="btn">${t("search")}</button></form></div>
+    <div class="panel"><form id="tff" class="row">${tch ? "" : field("tf_c", "course", "", [["", t("all_courses")], ...opts.slice(1)])}<label>${t("search")}<input id="tf_q" value="${esc(f.q || "")}"></label><button class="btn">${t("search")}</button></form></div>
     ${list.length ? list.map(card).join("") : `<div class="panel"><p>${t("empty")}</p></div>`}${list.length >= lim ? `<p><button class="btn" data-do="moreTut">${t("load_more")}</button></p>` : ""}`;
+};
+
+// ---------- my information (Session 16): read-only page for the signed-in student or teacher ----------
+views.my_information = async () => {
+  const r = await api("/my/information"), p = r.profile, st = r.role === "student";
+  const row = (k, v) => v ? `<tr><th scope="row">${esc(t(k))}</th><td>${esc(v)}</td></tr>` : "";
+  const who = [row("my_id", st ? p.student_code : p.teacher_code), row("login_id", p.login_id), row("full_name", p.full_name), row("email", p.email), row("phone", p.phone)];
+  if (st) who.push(row("date_of_birth", p.date_of_birth), row("grade", p.grade), row("island", p.island), row("guardian_name", p.guardian_name), row("guardian_relationship", p.guardian_relationship), row("guardian_phone", p.guardian_phone));
+  else who.push(row("bio", p.bio));
+  const bl = r.batches.map(b => `<div class="cl"><div><b>${esc(b.course_name)}</b> ${b.course_kind === "tuition" ? tag(t("tuition")) : ""}<br>${esc(b.code)}${b.days ? " · " + esc(b.days) : ""}${b.start_time ? " " + esc(b.start_time) : ""}${b.teacher_name ? " · " + esc(b.teacher_name) : ""}${b.enrol_code ? " · " + esc(b.enrol_code) : ""}</div></div>`).join("");
+  return `<h1>${t("my_information")}</h1><p class="hint">${t("my_info_hint")}</p><div class="panel"><table class="kv">${who.join("")}</table></div><div class="panel"><h2>${t(st ? "my_batches" : "my_teaching_batches")}</h2>${bl || `<p>${t("empty")}</p>`}</div>`;
+};
+
+// ---------- my earnings (Session 31): a teacher's own approved earnings ----------
+views.my_earnings = async () => {
+  let r;
+  try { r = await api("/my/earnings"); } catch (e) { return `<h1>${t("my_earnings")}</h1><p>${esc(e.message || "")}</p>`; }
+  const money = n => `<bdi dir="ltr">MVR ${esc(n)}</bdi>`;
+  const body = r.items.map(x => `<tr><td>${esc(x.period)}</td><td>${esc(x.course_name)} ${esc(x.batch_code)}</td><td>${money(x.collected_mvr)}</td><td>${x.share_percent}%</td><td>${money(x.teacher_share_mvr)}</td></tr>`).join("");
+  const pays = r.payments.map(x => `<tr><td>${esc(x.paid_on)}</td><td>${money(x.amount_mvr)}</td><td>${esc(x.method)} ${esc(x.reference || "")}</td></tr>`).join("");
+  return `<h1>${t("my_earnings")}</h1><p class="hint">${esc(r.note)}</p><div class="stats"><div class="stat"><b>${money(r.earned_mvr)}</b>${t("Earned")}</div><div class="stat"><b>${money(r.paid_mvr)}</b>${t("Paid")}</div><div class="stat"><b>${money(r.outstanding_mvr)}</b>${t("Outstanding")}</div></div>
+    <div class="panel">${body ? `<div style="overflow-x:auto"><table><thead><tr><th>${t("Month")}</th><th>${t("batch")}</th><th>${t("Collected")}</th><th>${t("Share")}</th><th>${t("Your share")}</th></tr></thead><tbody>${body}</tbody></table></div>` : `<p>${t("empty")}</p>`}</div>
+    <div class="panel"><h2>${t("Payments received")}</h2>${pays ? `<table><thead><tr><th>${t("Date")}</th><th>${t("Amount")}</th><th>${t("Method")}</th></tr></thead><tbody>${pays}</tbody></table>` : `<p>${t("empty")}</p>`}</div>`;
 };

@@ -3,22 +3,30 @@
 |---|---|---|---|
 | GET | /health | public | Health check |
 | GET | /public/courses | public | Open and upcoming courses for the website |
-| POST | /auth/login | public | `{email,password}` returns `{token,user}` (rate-limited) |
+| POST | /auth/login | public | `{login,password}` (`login` = login ID like `BAL/AL1/001`, case and spaces ignored; an email also works while `ALLOW_EMAIL_LOGIN` is on) returns `{token,user}`. Limited per address and per account (8 failures in 5 minutes gives 429). While `user.must_change_password` is 1 every route except `/auth/me` and `/auth/change-password` answers 403 `{code:"password_change_required"}` |
 | GET | /auth/me | any | Current user: `{id,email,full_name,role,must_change_password,permissions,tabs}`. `permissions` is `null` (everything the role has) or a list of areas; `tabs` is what the page may draw |
+| POST | /users/<id>/reset-password | admin (people) | New random temporary password, returned once as `{login_id,temporary_password}` (no-store); old password stops working; person must change it at next sign-in. Not for your own account |
 | POST | /auth/change-password | any | `{current_password,new_password}` |
-| GET, POST | /users | admin | List (`?role=`), create admin/teacher/student. Create accepts optional `permissions` (full admin only) |
+| GET, POST | /users | admin | List (`?role=`), create admin/teacher/student. Create needs `full_name,email,role`; leave `password` out and the server makes a random one and returns `{id,login_id,temporary_password}` once. Create accepts optional `permissions` (full admin only) and, for a student, optional `course_id`: the permanent student ID (BAL/<course code>/NNN) is issued at once from that course |
 | PATCH | /users/:id | admin | Name, phone, active flag, password reset, `permissions` (`"all"` or a list of areas for that role; full admin only) |
 | GET | /courses | any | List |
-| POST, PATCH | /courses, /courses/:id | admin | Create, update |
+| POST, PATCH | /courses, /courses/:id | admin | Create, update. Optional `kind` (`course` or `tuition`), `code` (2 to 8 letters or digits, unique, stored upper case; derived from the name when omitted), `is_active`. Duplicate code: 409. Answers include `kind`, `code`, `is_active` |
 | GET | /batches | any | Admin all, teacher own, student enrolled |
 | POST, PATCH | /batches, /batches/:id | admin | Create, update (Meet link, teacher, capacity) |
 | GET | /batches/:id/students | admin, own teacher | Roster |
 | GET | /enrollments | admin, student (own) | List |
+| GET | /my/batches | student, teacher | Batches the student is ACTIVELY in (picker choices). `?batch_id=` on /my/home, /my/grades, /my/attendance, /assignments, /materials, /recordings, /tutorials and /timetable limits a student's answer to that batch; a batch they are not actively in is 403. For a teacher the same routes accept `?batch_id=` for their own batches only (403 otherwise) |
 | POST | /enrollments | admin | `{student_id,batch_id}`; waitlists when full |
-| PATCH | /enrollments/:id | admin | `{status}` or `{transfer_to_batch_id}` |
+| PATCH | /enrollments/:id | admin | `{status}` or `{transfer_to_batch_id}`, plus optional `reason` and `effective_date` (YYYY-MM-DD, default today). A transfer or a change to `dropped` writes one `enrollment_events` row |
+| GET | /enrollment-events | admin (perm enrollments) | Transfers and withdrawals; filters `kind`, `from`, `to`, `student_id`, `batch_id` |
+| GET | /enrollment-events.csv | admin (perm enrollments) | Same rows as CSV (logged in the audit log) |
 | GET | /dashboard | admin | Counts |
 | GET, PUT | /settings | admin | Academy info and bank details |
-| GET | /audit | admin | Last 200 actions |
+| GET | /audit.csv | admin (perm audit) | Same filters as CSV, max 20000 rows; the export is logged |
+| GET | /audit/summary | admin (perm audit) | Total, first/last time, counts per action and busiest users for the filter (drill-down) |
+| GET | /audit/actions | admin (perm audit) | Action names present in the log |
+| GET | /audit | admin | Last 100 actions, now with user_role, login_id, course_id, batch_id, old_value, new_value, ip Filters `user_id, login_id, role, course_id, batch_id, action (comma list), entity, entity_id, q, date_from, date_to` (Maldives dates); `page`, `per_page` (max 500); totals in headers `X-Total-Count`, `X-Page`, `X-Per-Page`. No route can change or delete a row |
+| POST | /auth/logout | any signed-in user | Writes a `logout` log row; the token is stateless so the browser discards it |
 | GET | /public/info | public | Academy name, phone, WhatsApp number |
 | GET | /public/batches | public | Open batches with seats left |
 | POST | /public/apply | public | Multipart application (`id_card`, and `guardian_id` if under 18); 5 per hour per IP |
@@ -66,7 +74,10 @@ Invoice `status` is `unpaid`, `slip_submitted`, `paid`, `void` or `waived`. `ove
 
 | Method | Path | Who | Purpose |
 |---|---|---|---|
-| POST | /invoices/generate | admin | `{month}` creates the missing invoices for active enrollments; returns `{created, skipped, skipped_total}`. Safe to repeat |
+| POST | /invoices/generate | admin | `{month}` creates the missing invoices for active enrollments; returns `{created, skipped, skipped_total, details[], details_truncated}`. `details` names each enrolment with no new invoice and the `reason` (fee_zero, inactive_student, not_enrolled_yet, first_month_skipped, already_invoiced). Safe to repeat |
+| POST | /invoices/catch-up | admin | creates what is missing for the current month; `{period, created}`. Called when Fees opens |
+| GET | /invoices/{id}/invoice.pdf | admin | invoice PDF (attachment) |
+| GET/POST | /cron/generate-invoices | `Authorization: Bearer CRON_SECRET` | scheduler entry point; 401 for a wrong or missing secret or when CRON_SECRET is unset |
 | GET | /invoices | admin | `?month=&status=&student_id=&q=`; status may be `open`, `overdue` or any status. Max 500 rows |
 | GET | /invoices/:id | admin, owning student | Invoice, payments, slips (admin also: discounts, reminders, file hashes) |
 | POST | /invoices/:id/discount | admin | One-off `{kind: fixed or percent, value, reason}`; never below 0 or below what is already paid |
@@ -96,6 +107,16 @@ Invoice `status` is `unpaid`, `slip_submitted`, `paid`, `void` or `waived`. `ove
 | POST | /invoices/:id/reminders/email | admin | 409 with a clear message when email is off (nothing recorded); 502 when the mail server fails |
 | GET | /fees/report | admin | `?month=` totals, per-course breakdown, who owes |
 | GET | /fees/report.csv | admin | Same month as a CSV file, one row per invoice (formula-injection safe) |
+| GET | /fees/payment-report | admin, perm=fees | `?month=&course_id=&batch_id=&kind=course\|tuition&status=paid\|partial\|unpaid\|waived\|none` one row per student per batch: fee, due, paid, balance, status, payment dates; plus totals |
+| GET | /fees/payment-report.csv | admin, perm=fees | Same filters as a CSV file (formula-injection safe); the export is logged |
+| GET | /fees/payment-report.xlsx | admin, perm=fees | Same filters as an Excel file; the export is logged |
+| GET | /fees/student-history/<id> | admin, perm=fees | All of one student's invoices with every payment (reversed ones flagged) and totals |
+| GET | /student-information/export.csv, .xlsx | admin, perm=student_information | `?q=&batch_id=&status=` one row per student (ID, login ID, contact, guardian, enrolments); logged; no fees, no passwords |
+| GET | /student-information/enrolments.csv, .xlsx | admin, perm=student_information | One row per enrolment (student code, course code, batch code, status, enrolment ID, date); the file the enrolment import reads |
+| GET | /teacher-information/export.csv, .xlsx | admin, perm=teacher_information | `?q=&status=` one row per teacher (ID, login ID, contact, bio, batches); logged |
+| POST | /import/students | admin, perm=people | CSV file (field `file` or a text/csv body). `?dry_run=1` is the default and saves nothing; `dry_run=0` imports. Returns every row with status created / would_create / rejected and the reason; temporary passwords once |
+| POST | /import/teachers | admin, perm=people | Same, for teachers |
+| POST | /import/enrolments | admin, perm=enrollments | Same, for enrolments (course_code + batch_code + student_code or login_id or student_email) |
 | GET | /dashboard | admin | Now also `unpaid_invoices`, `overdue_invoices`, `slips_pending`, `month_collection_mvr` |
 | GET, PUT | /settings | admin | New keys: `invoice_due_day`, `first_invoice_mode`, `first_invoice_grace_days`, `receipt_prefix`, `reminder_template_en`, `reminder_template_dv` |
 
@@ -141,3 +162,259 @@ Area `teacher_information` (admin only, read-only).
 | GET | /teacher-information | admin with `teacher_information` | Teachers only. `?q=` (name, email or phone), `?status=active\|inactive`, `?limit=` (1-100, default 30). Returns `{total, teachers:[{id,full_name,email,phone,is_active,batch_count,student_count,weekly_hours}]}` |
 | GET | /teacher-information/:id | admin with `teacher_information` | `{profile (with bio), batches, students, workload:{active_batches,students,weekly_classes,weekly_hours,classes_held_30d,to_grade}}`. 404 if the id is not a teacher |
 
+Session 12: `GET /courses?active=1` leaves out inactive courses (`is_active=0`); `/public/courses` never lists them. `POST /enrollments`, enrolment transfer and `POST /batches` answer 409 for a batch/course that is inactive. Invoice generation skips enrolments of inactive courses (reason `course_inactive`). `GET /batches` rows carry `course_kind` and `course_active`; `GET /batches/<id>/students` rows carry `enrollment_id` (drop with `PATCH /enrollments/<id> {status:"dropped"}`). The Batches screen no longer sends `meet_link` (Classroom: `PUT /batches/<id>/meet-link`); the batch API still accepts it.
+
+## GET /api/my/information (student, teacher)
+Read-only profile of the signed-in user: `role`, `profile` (login_id, student_code or teacher_code, name, email, phone, plus date of birth, grade, island and guardian for students, bio for teachers), `batches` (students: active enrolments with `enrol_code`, course kind, teacher; teachers: their batches from `teacher_batches()`), `locked` (fields only an admin can change). No fees. Admin 403, no token 401.
+
+## Grades (Session 17)
+`POST /api/assignments/<id>/grades` {student_id, grade, feedback}: first grade needs `classroom`; changing a saved grade needs admin or the teacher permission `edit_grades` (403 otherwise; identical values return `changed:false`). Logged as `grade` (none -> value) or `grade_change` (old -> new, feedback old -> new). `GET /api/assignments/<id>/submissions` now includes `can_edit_grades`. `GET /api/my/given-grades?batch_id=` (teacher): grades given by me in batches I may use. `GET /api/my/grades` items now carry `status` (pending, submitted, graded). `edit_grades` is an opt-in area in `settings_schema.OPT_IN`: NULL permissions never include it.
+
+## Session 18
+`POST /api/batches/<id>/sessions` with status `cancelled` needs admin or teacher permission `cancel_class` (opt-in, never part of "everything a teacher has"). `GET /api/tutorials` for a teacher: own posts plus courses of own batches; `?batch_id=` narrows (403 if not theirs); `GET /api/tutorials/<id>` and its file/answers 403 outside that scope; `POST /api/tutorials` with a course the teacher does not teach is 403. `GET /api/assignments` (teacher/admin) items now carry `student_count`, `submitted_count`, `graded_count`, `pending_count` (active students only, each once).
+
+## GET /api/teacher/dashboard (teacher, area classroom)
+`?batch_id=` optional (403 if not the teacher's batch). Returns `scope`, `batches[]`, `courses`, `students` (active, distinct), `classes {held, held_30d, upcoming, cancelled, next[]}`, `assignments {given, tests, submissions, graded, pending_grading}`, `tutorials {given, answers}`, `attendance {present, late, absent, excused, counted, pct, low, low_students}`, `recent_activity[]` (the teacher's own last 10 actions, sign-ins excluded). Admin, student and no token: 403 / 403 / 401.
+
+## Substitute teachers (Session 22)
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| POST | /substitutions | admin (perm batches) | `batch_id, substitute_teacher_id, class_date` (or `session_id`, which fixes the date to that one class), optional `ends_on` (inclusive, max 92 days), `reason`. 400 for the batch's own teacher, a non-teacher, past dates; 409 if another substitute already covers some of those dates |
+| GET | /substitutions | admin (perm batches) | `?batch_id=`, `?when=active\|upcoming\|past\|removed\|all`; each row has `state` |
+| DELETE | /substitutions/<id> | admin (perm batches) | Ends it now; the row stays as history |
+| GET | /my/substitutions | teacher | Own current and upcoming ones (no student data). Students 403, no token 401 |
+A substitute gets 403 outside the dates on: attendance (read and save), `/my/batches` (the batch is then absent), `/timetable` (their dates only). Always 403 for a substitute: assignments, gradebook, materials, recordings, sessions (cancel), meet-link, attendance summary, dashboard.
+
+## Finance: expenses (Session 23)
+All admin only with area `finance` (a limited admin without it gets 403; teachers and students 403; no token 401).
+| Method | Path | Notes |
+|---|---|---|
+| GET | /expense-categories | `[{id, name, is_active, expense_count}]` |
+| POST | /expense-categories | `{name}`; same name in any case is 409 |
+| PATCH | /expense-categories/<id> | `{name?, is_active?}` |
+| DELETE | /expense-categories/<id> | 409 while an expense uses it (make it inactive instead) |
+| GET | /expenses | `?category_id=&date_from=&date_to=&q=&page=&per_page=` returns `{items, count, total_mvr, page, per_page}`; totals cover all matches, not just the page |
+| POST | /expenses | multipart or JSON: `expense_date, amount_mvr (whole, >0), category_id (active), description?`, `file?` (PDF/JPG/PNG, real content checked) |
+| PATCH | /expenses/<id> | any of the fields; `file` replaces the receipt, `remove_receipt=1` removes it; returns `changed[]` |
+| DELETE | /expenses/<id> | removes the row and the receipt file |
+| GET | /expenses/<id>/receipt | the file as an attachment; 404 JSON when there is none; each view is logged |
+
+## Finance: revenue and dashboard (Session 24)
+Admin only, area `finance` (others 403, no token 401). Revenue = payments received, not reversed, counted on `paid_on`. Invoices are never revenue.
+| Method | Path | Notes |
+|---|---|---|
+| GET | /finance/revenue | `?date_from=&date_to=&course_id=&batch_id=&kind=course\|tuition` returns `total_collected, payment_count, outstanding, reversed_not_counted, by_kind, by_course[], by_batch[], by_month[]`. `outstanding` ignores the dates (unpaid balance of non-void invoices in the course/batch/kind filter). 400 on a bad date, bad kind or start after end |
+| GET | /finance/dashboard | `?date_from=&date_to=` (default: first of this month to today, Maldives) returns `revenue, expenses, net, outstanding_fees, months[12] {month, revenue, expenses, net}, teacher_earnings, academy_revenue` (the last two are "coming" until Session 31) |
+| POST | /earnings/calculate | admin, `finance`. Body/query `month` (YYYY-MM, not in the future), `dry_run=1` previews and saves nothing. Returns `month, dry_run, share_percent, count, items[], by_teacher[], totals`. 409 if the month has an approved row. Teacher share is rounded down towards zero; academy gets the rest |
+| GET | /earnings | admin, `finance`. `?month=&teacher_id=&batch_id=` returns saved rows (`collected_mvr, share_percent, teacher_share_mvr, academy_share_mvr, status`), `by_teacher`, `totals` |
+| POST | /earnings/approve | admin, `finance`. `month` (must have ended), optional `expected_teacher_total` (409 if the recalculated total differs). Recalculates, then locks every row of the month |
+| GET | /earnings/teachers | admin, `finance`. Per teacher `earned_mvr` (approved months), `paid_mvr`, `outstanding_mvr` |
+| POST / GET | /earnings/payments | admin, `finance`. POST `teacher_id, amount_mvr, method (cash, bank_transfer, cheque, other), paid_on?, reference?, note?`; 409 above outstanding. GET `?teacher_id=` |
+| POST | /earnings/payments/<id>/void | admin, `finance`. `reason` required; the row stays |
+| GET | /earnings/report, /earnings/report.csv, /earnings/report.xlsx | admin, `finance`. `?from=YYYY-MM&to=YYYY-MM&teacher_id=`; exports are logged |
+| GET | /my/earnings | teacher, own approved months and payments only; 403 when setting `teachers_see_earnings` is off |
+
+## Admin dashboard (Session 25)
+| Method | Path | Notes |
+|---|---|---|
+| GET | /admin/dashboard | Any admin (teacher/student 403, no token 401). Filters `?course_id=&batch_id=&kind=course\|tuition&teacher_id=&date_from=&date_to=` (400 on a bad value). Returns `students, teachers, batches, courses, tuition_classes, student_accounts, teacher_accounts, admissions_pending, admissions_received, classes_held, classes_cancelled, classes_upcoming, assignments, tests, submissions, graded, pending_grading, tutorials`, `filters`, `options` (course, batch and teacher lists for the dropdowns). `financial {revenue, expenses, net, outstanding}` only with area `finance`; `fees {unpaid_invoices, overdue_invoices, slips_pending}` only with area `fees`. Definitions are at the top of admindash.py. No dates = all time |
+
+## Notifications and reminders (Session 28)
+Own inbox (any signed-in role; no token 401). Times are UTC text `YYYY-MM-DD HH:MM:SS`. `link` is a tab name the page may open.
+| Method | Path | Notes |
+|---|---|---|
+| GET | /notifications | `?unread=1&limit=30 (max 100)&before=<id>` returns `{items[{id,kind,title,body,link,created_at,read_at}], unread}`, newest first, `Cache-Control: private, no-store` |
+| GET | /notifications/unread-count | `{unread}` |
+| POST | /notifications/:id/read | Own only (someone else's or missing: 404). Repeating is fine. Returns `{ok, unread}` |
+| POST | /notifications/read-all | `{ok, marked, unread: 0}` |
+| POST | /announcements | Admin, area `classroom`. `{title (max 100), message (max 500, optional), audience: batch\|students\|teachers\|everyone, batch_id}`. `batch` = that batch's active students plus its teacher. 201 `{sent}`; 400 bad input, 404 unknown batch, 409 nobody there or notifications off |
+| POST | /notifications/run | Admin, area `settings`. `?dry_run=1` is the DEFAULT (counts only, nothing kept); `dry_run=0` runs the reminders now. Returns `{dry_run, date, fee_due_soon, fee_overdue, assignment_due, admin_digest, removed_old, skipped}` |
+| GET | /notifications/status | Admin, area `settings`: `{enabled, last_run, cron_secret_set, fee_days_before, overdue_every_days, assignment_days_before, unread_total}` |
+| GET, POST | /cron/reminders | `Authorization: Bearer <CRON_SECRET>` only (never in the URL; 401 otherwise, also when no secret is set). Runs for real. Registered in vercel.json at 02:30 UTC |
+
+Notification kinds: `slip_uploaded` (admins with fees), `slip_verified`, `slip_rejected`, `class_cancelled`, `class_reinstated`, `substitute_assigned`, `substitute_for_you`, `substitute_class`, `substitute_removed`, `assignment_new`, `grade`, `announcement`, `fee_due_soon`, `fee_overdue`, `assignment_due`, `admin_overdue`, `admin_slips`. New settings: `notify_enabled`, `remind_fee_days_before` (3), `remind_overdue_every_days` (7), `remind_assignment_days_before` (1); 0 turns a reminder off.
+
+## WhatsApp click-to-chat (Session 29)
+Admin only (teacher/student 403, no token 401). Nothing is sent by the server; it prepares links and remembers what was opened. Responses are `private, no-store` (phone numbers).
+| Method | Path | Notes |
+|---|---|---|
+| POST | /whatsapp/prepare | `{audience: student\|batch\|students\|teachers\|everyone, student_id, batch_id, message (max 1000), guardians}`. Placeholders `{name} {student} {academy}`. Returns `{items[{user_id, name, to: student\|teacher\|guardian, phone, url, sent_today}], missing[{user_id, name, to}], count}`. `url` is `https://wa.me/<number>?text=...` (7-digit Maldives numbers get 960). 403 without `student_information` (students, guardians) or `teacher_information` (teachers); a batch includes its teacher only with the latter. At most 500 chats (400) |
+| POST | /whatsapp/sent | `{user_id, to, preview}` logs that the chat was opened (`wa_log`, audit `whatsapp_sent`); 201. 400 bad `to`/missing id, 404 person not found or wrong role |
+
+## Who can call what (Session 32)
+
+Generated from the `@auth` rules and checked by `tests/test_session32.py`, which fails if a route is added without a decision. `Area` is the permission an admin needs (a limited admin without it gets 403); `-` means the route checks inside. Teachers, students and substitutes are further limited to their own batches and records inside each route (also tested). No token gives 401 on every route below.
+
+| Method | Path | Roles | Area |
+|---|---|---|---|
+| GET | `/api/admin/dashboard` | admin | - |
+| POST | `/api/announcements` | admin | classroom |
+| GET | `/api/applications` | admin | admissions |
+| GET | `/api/applications/<int:aid>` | admin | admissions |
+| PATCH | `/api/applications/<int:aid>` | admin | admissions |
+| POST | `/api/applications/<int:aid>/approve` | admin | admissions |
+| GET | `/api/applications/<int:aid>/file/<which>` | admin | admissions |
+| DELETE | `/api/applications/<int:aid>/files` | admin | admissions |
+| POST | `/api/applications/<int:aid>/reject` | admin | admissions |
+| POST | `/api/applications/<int:aid>/waitlist` | admin | admissions |
+| GET | `/api/assignments` | any signed-in role | student: assignments, teacher: classroom, admin: classroom |
+| DELETE | `/api/assignments/<int:aid>` | admin, teacher | classroom |
+| PATCH | `/api/assignments/<int:aid>` | admin, teacher | classroom |
+| GET | `/api/assignments/<int:aid>/attachment` | any signed-in role | student: assignments, teacher: classroom, admin: classroom |
+| POST | `/api/assignments/<int:aid>/grades` | admin, teacher | classroom |
+| GET | `/api/assignments/<int:aid>/submissions` | admin, teacher | classroom |
+| POST | `/api/assignments/<int:aid>/submit` | student | assignments |
+| GET | `/api/audit` | admin | audit |
+| GET | `/api/audit.csv` | admin | audit |
+| GET | `/api/audit/actions` | admin | audit |
+| GET | `/api/audit/summary` | admin | audit |
+| POST | `/api/auth/change-password` | any signed-in role | - |
+| POST | `/api/auth/logout` | any signed-in role | - |
+| GET | `/api/auth/me` | any signed-in role | - |
+| GET | `/api/batches` | any signed-in role | - |
+| POST | `/api/batches` | admin | batches |
+| DELETE | `/api/batches/<int:bid>` | admin | batches |
+| PATCH | `/api/batches/<int:bid>` | admin | batches |
+| POST | `/api/batches/<int:bid>/assignments` | admin, teacher | classroom |
+| GET | `/api/batches/<int:bid>/attendance` | admin, teacher | classroom |
+| POST | `/api/batches/<int:bid>/attendance` | admin, teacher | classroom |
+| GET | `/api/batches/<int:bid>/attendance/summary` | admin, teacher | classroom |
+| GET | `/api/batches/<int:bid>/gradebook` | admin, teacher | classroom |
+| POST | `/api/batches/<int:bid>/materials` | admin, teacher | classroom |
+| PUT | `/api/batches/<int:bid>/meet-link` | admin, teacher | class_links |
+| POST | `/api/batches/<int:bid>/recordings` | admin, teacher | add_recordings |
+| POST | `/api/batches/<int:bid>/sessions` | admin, teacher | classroom |
+| GET | `/api/batches/<int:bid>/students` | admin, teacher | - |
+| GET | `/api/courses` | any signed-in role | - |
+| POST | `/api/courses` | admin | courses |
+| DELETE | `/api/courses/<int:cid>` | admin | courses |
+| PATCH | `/api/courses/<int:cid>` | admin | courses |
+| GET | `/api/dashboard` | admin | - |
+| GET | `/api/discounts` | admin | fees |
+| POST | `/api/discounts` | admin | fees |
+| DELETE | `/api/discounts/<int:did>` | admin | fees |
+| GET | `/api/earnings` | admin | finance |
+| POST | `/api/earnings/approve` | admin | finance |
+| POST | `/api/earnings/calculate` | admin | finance |
+| GET | `/api/earnings/payments` | admin | finance |
+| POST | `/api/earnings/payments` | admin | finance |
+| POST | `/api/earnings/payments/<int:pid>/void` | admin | finance |
+| GET | `/api/earnings/report` | admin | finance |
+| GET | `/api/earnings/report.csv` | admin | finance |
+| GET | `/api/earnings/report.xlsx` | admin | finance |
+| GET | `/api/earnings/teachers` | admin | finance |
+| GET | `/api/enrollment-events` | admin | enrollments |
+| GET | `/api/enrollment-events.csv` | admin | enrollments |
+| GET | `/api/enrollments` | any signed-in role | - |
+| POST | `/api/enrollments` | admin | enrollments |
+| DELETE | `/api/enrollments/<int:eid>` | admin | enrollments |
+| PATCH | `/api/enrollments/<int:eid>` | admin | enrollments |
+| POST | `/api/enrollments/<int:eid>/void-open-invoices` | admin | fees |
+| GET | `/api/expense-categories` | admin | finance |
+| POST | `/api/expense-categories` | admin | finance |
+| DELETE | `/api/expense-categories/<int:kid>` | admin | finance |
+| PATCH | `/api/expense-categories/<int:kid>` | admin | finance |
+| GET | `/api/expenses` | admin | finance |
+| POST | `/api/expenses` | admin | finance |
+| DELETE | `/api/expenses/<int:eid>` | admin | finance |
+| PATCH | `/api/expenses/<int:eid>` | admin | finance |
+| GET | `/api/expenses/<int:eid>/receipt` | admin | finance |
+| GET | `/api/families` | admin | fees |
+| POST | `/api/families` | admin | fees |
+| PATCH | `/api/families/<int:fid>` | admin | fees |
+| POST | `/api/families/<int:fid>/members` | admin | fees |
+| DELETE | `/api/families/<int:fid>/members/<int:sid>` | admin | fees |
+| PATCH | `/api/families/<int:fid>/members/<int:sid>` | admin | fees |
+| GET | `/api/fees/overdue` | admin | fees |
+| GET | `/api/fees/payment-report` | admin | fees |
+| GET | `/api/fees/payment-report.csv` | admin | fees |
+| GET | `/api/fees/payment-report.xlsx` | admin | fees |
+| GET | `/api/fees/report` | admin | fees |
+| GET | `/api/fees/report.csv` | admin | fees |
+| GET | `/api/fees/student-history/<int:sid>` | admin | fees |
+| GET | `/api/finance/dashboard` | admin | finance |
+| GET | `/api/finance/revenue` | admin | finance |
+| POST | `/api/import/enrolments` | admin | enrollments |
+| POST | `/api/import/students` | admin | people |
+| POST | `/api/import/teachers` | admin | people |
+| GET | `/api/invoices` | admin | fees |
+| GET | `/api/invoices/<int:iid>` | admin, student | fees |
+| POST | `/api/invoices/<int:iid>/discount` | admin | fees |
+| GET | `/api/invoices/<int:iid>/invoice.pdf` | admin | fees |
+| POST | `/api/invoices/<int:iid>/reminders` | admin | fees |
+| POST | `/api/invoices/<int:iid>/reminders/email` | admin | fees |
+| POST | `/api/invoices/<int:iid>/reopen` | admin | fees |
+| POST | `/api/invoices/<int:iid>/slips` | student | fees |
+| POST | `/api/invoices/<int:iid>/void` | admin | fees |
+| POST | `/api/invoices/<int:iid>/waive` | admin | fees |
+| POST | `/api/invoices/catch-up` | admin | fees |
+| POST | `/api/invoices/generate` | admin | fees |
+| GET | `/api/materials` | any signed-in role | student: materials, teacher: classroom, admin: classroom |
+| DELETE | `/api/materials/<int:mid>` | admin, teacher | classroom |
+| GET | `/api/materials/<int:mid>/file` | any signed-in role | student: materials, teacher: classroom, admin: classroom |
+| GET | `/api/my/attendance` | student | progress |
+| GET | `/api/my/batches` | student, teacher | - |
+| GET | `/api/my/earnings` | teacher | - |
+| GET | `/api/my/fees` | student | fees |
+| GET | `/api/my/fees/summary` | student | fees |
+| GET | `/api/my/given-grades` | teacher | classroom |
+| GET | `/api/my/grades` | student | progress |
+| GET | `/api/my/home` | student, teacher | - |
+| GET | `/api/my/information` | student, teacher | - |
+| GET | `/api/my/substitutions` | teacher | - |
+| GET | `/api/notifications` | any signed-in role | - |
+| POST | `/api/notifications/<int:nid>/read` | any signed-in role | - |
+| POST | `/api/notifications/read-all` | any signed-in role | - |
+| POST | `/api/notifications/run` | admin | settings |
+| GET | `/api/notifications/status` | admin | settings |
+| GET | `/api/notifications/unread-count` | any signed-in role | - |
+| GET | `/api/payments` | admin | fees |
+| POST | `/api/payments` | admin | fees |
+| GET | `/api/payments/<int:pid>/receipt.pdf` | admin, student | fees |
+| POST | `/api/payments/<int:pid>/reverse` | admin | fees |
+| GET | `/api/recordings` | any signed-in role | student: recordings, teacher: classroom, admin: classroom |
+| DELETE | `/api/recordings/<int:rid>` | admin, teacher | add_recordings |
+| GET | `/api/settings` | admin | settings |
+| PUT | `/api/settings` | admin | settings |
+| GET | `/api/settings/schema` | admin | settings |
+| GET | `/api/slips` | admin | fees |
+| GET | `/api/slips/<int:sid>/file` | admin, student | fees |
+| POST | `/api/slips/<int:sid>/reject` | admin | fees |
+| POST | `/api/slips/<int:sid>/verify` | admin | fees |
+| GET | `/api/student-information` | admin | student_information |
+| GET | `/api/student-information/<int:uid>` | admin | student_information |
+| GET | `/api/student-information/enrolments.csv` | admin | student_information |
+| GET | `/api/student-information/enrolments.xlsx` | admin | student_information |
+| GET | `/api/student-information/export.csv` | admin | student_information |
+| GET | `/api/student-information/export.xlsx` | admin | student_information |
+| GET | `/api/submissions/<int:sid>/file` | any signed-in role | student: assignments, teacher: classroom, admin: classroom |
+| GET | `/api/substitutions` | admin | batches |
+| POST | `/api/substitutions` | admin | batches |
+| DELETE | `/api/substitutions/<int:sid>` | admin | batches |
+| GET | `/api/teacher-information` | admin | teacher_information |
+| GET | `/api/teacher-information/<int:uid>` | admin | teacher_information |
+| GET | `/api/teacher-information/export.csv` | admin | teacher_information |
+| GET | `/api/teacher-information/export.xlsx` | admin | teacher_information |
+| GET | `/api/teacher/dashboard` | teacher | classroom |
+| GET | `/api/timetable` | any signed-in role | - |
+| GET | `/api/tutorial-submissions/<int:sid>/file` | any signed-in role | student: submit_tutorial_work, teacher: create_tutorials, admin: create_tutorials |
+| GET | `/api/tutorials` | any signed-in role | tutorials |
+| POST | `/api/tutorials` | admin, teacher | create_tutorials |
+| DELETE | `/api/tutorials/<int:tid>` | admin, teacher | tutorials |
+| GET | `/api/tutorials/<int:tid>` | any signed-in role | tutorials |
+| GET | `/api/tutorials/<int:tid>/file` | any signed-in role | tutorials |
+| GET | `/api/tutorials/<int:tid>/submission` | student | submit_tutorial_work |
+| POST | `/api/tutorials/<int:tid>/submission` | student | submit_tutorial_work |
+| GET | `/api/tutorials/<int:tid>/submissions` | admin, teacher | create_tutorials |
+| GET | `/api/users` | admin | - |
+| POST | `/api/users` | admin | people |
+| DELETE | `/api/users/<int:uid>` | admin | people |
+| GET | `/api/users/<int:uid>` | admin | people |
+| PATCH | `/api/users/<int:uid>` | admin | people |
+| POST | `/api/users/<int:uid>/reset-password` | admin | people |
+| POST | `/api/whatsapp/prepare` | admin | - |
+| POST | `/api/whatsapp/sent` | admin | - |
+
+Public (no sign-in, by decision): `/api/auth/login`, `/api/health`, `/api/public/apply`, `/api/public/apply/status`, `/api/public/batches`, `/api/public/courses`, `/api/public/info`, the static pages, and `/api/cron/generate-invoices` and `/api/cron/reminders` (these need `Authorization: Bearer <CRON_SECRET>`; the secret is never accepted in the URL, and without `CRON_SECRET` they are closed).
+
+Changed in Session 32: `GET /api/users` needs the People area for full details; an admin with batches, enrolments, fees, classroom or settings gets names only (`id, full_name, role, is_active`); any other admin gets 403. `GET /api/enrollments` and `GET /api/batches/<id>/students` (admin) need one of the same areas. `GET /api/dashboard` leaves out the money figures unless the admin has the Fees area.
