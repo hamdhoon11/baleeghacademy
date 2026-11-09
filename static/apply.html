@@ -2,61 +2,80 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b4f5c">
 <title>Apply to Baleegh Academy</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b4f5c'/%3E%3Ctext x='32' y='46' font-size='38' font-family='sans-serif' font-weight='700' text-anchor='middle' fill='%23d9a21b'%3E%D8%A8%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:wght@600&display=swap" rel="stylesheet">
 <style>
-:root{--ink:#10262b;--lagoon:#0b4f5c;--mist:#eaf4f4;--line:#c9dcdc;--sun:#d9a21b;--coral:#b8432f;
---body:"Atkinson Hyperlegible",system-ui,sans-serif;--head:"Fraunces",Georgia,serif}
+:root{--ink:#10262b;--ink2:#4a6468;--lagoon:#0b4f5c;--lagoon-d:#073b45;--lagoon-l:#12707f;--mist:#eaf4f4;--bg:#f0f6f6;--line:#d3e2e2;--sun:#d9a21b;--coral:#b8432f;
+--body:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;--head:"Fraunces",Georgia,"Times New Roman",serif;--r:14px;--r-sm:9px;
+--sh:0 1px 2px rgba(16,38,43,.05),0 8px 22px -8px rgba(16,38,43,.12);color-scheme:light}
 *{box-sizing:border-box}
-body{margin:0;font:16px/1.5 var(--body);color:var(--ink);background:var(--mist)}
-main{max-width:620px;margin:0 auto;padding:1.2rem}
-h1,h2{font-family:var(--head);color:var(--lagoon);margin:0 0 .5rem}
-.panel{background:#fff;border:1px solid var(--line);border-radius:8px;padding:1.1rem;margin-bottom:1rem}
-label{display:flex;flex-direction:column;gap:.2rem;font-size:.9rem;margin-bottom:.8rem}
-input,select{font:inherit;padding:.55rem;border:1px solid var(--line);border-radius:6px;min-height:44px;background:#fff}
-input[type=file]{padding:.4rem}
-.btn{background:var(--lagoon);color:#fff;border:0;border-radius:6px;padding:.6rem 1.1rem;min-height:44px;font:inherit;cursor:pointer;text-decoration:none;display:inline-block}
+[hidden]{display:none!important}
+body{margin:0;font:16px/1.55 var(--body);color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased}
+header.top{background:radial-gradient(120% 140% at 0 0,var(--lagoon-l) 0,var(--lagoon) 50%,var(--lagoon-d) 100%);color:#fff;padding:calc(1.4rem + env(safe-area-inset-top,0px)) 1.2rem 4.2rem}
+.top .in{max-width:680px;margin:0 auto;padding-inline:1rem;display:flex;align-items:center;gap:.9rem}
+.mark{width:2.8rem;height:2.8rem;border-radius:12px;background:var(--sun);color:var(--lagoon-d);display:grid;place-items:center;font:700 1.7rem/1 var(--body);flex:none}
+h1,h2{font-family:var(--head);font-weight:600;color:var(--lagoon);letter-spacing:-.01em;line-height:1.2;margin:0 0 .6rem}
+.top h1{color:#fff;font-size:clamp(1.4rem,1.1rem + 1.4vw,2rem);margin:0}
+h2{font-size:1.2rem}
+main{max-width:680px;margin:-3rem auto 0;padding:0 1rem calc(2.5rem + env(safe-area-inset-bottom,0px))}
+.panel{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:1.3rem;margin-bottom:1rem;box-shadow:var(--sh)}
+form#f{display:grid;grid-template-columns:1fr 1fr;gap:0 1rem}
+form#f>.full,form#f>label.full,#guardian{grid-column:1/-1}
+#guardian{display:grid;grid-template-columns:1fr 1fr;gap:0 1rem;border-top:1px solid var(--line);margin-top:.4rem;padding-top:1rem}
+#guardian h2{grid-column:1/-1}#guardian label.full{grid-column:1/-1}
+label{display:flex;flex-direction:column;gap:.25rem;font-size:.88rem;margin-bottom:.9rem;font-weight:700;color:var(--ink2)}
+input,select{font:inherit;font-weight:400;padding:.55rem .7rem;border:1px solid #b9cfcf;border-radius:var(--r-sm);min-height:44px;background:#fff;color:var(--ink);max-width:100%;min-width:0}
+input:focus,select:focus{border-color:var(--lagoon)}
+select{appearance:none;-webkit-appearance:none;padding-inline-end:2.3rem;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%230b4f5c' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right .75rem center/16px}
+input[type=file]{padding:.45rem;font-size:.9rem}
+.btn{background:var(--lagoon);color:#fff;border:0;border-radius:var(--r-sm);padding:.6rem 1.2rem;min-height:48px;font:inherit;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;transition:background .15s}
+@media(hover:hover){.btn:hover{background:var(--lagoon-l)}.btn.alt:hover{background:#e6b130}}
 .btn.alt{background:var(--sun);color:var(--ink)}
-.msg{padding:.7rem .9rem;border-radius:6px;margin-bottom:.8rem}.err{background:#f8e1dc;color:var(--coral)}.ok{background:#dff1e3;color:#1f6b35}
-.hint{font-size:.85rem;color:#4a6468}.hp{position:absolute;left:-9999px}
-.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem}
-.top button{background:none;border:1px solid var(--line);border-radius:6px;padding:.3rem .7rem;cursor:pointer;font:inherit}
+.btn.block{width:100%}.btn[disabled]{opacity:.55;cursor:not-allowed}
+.msg{padding:.7rem .9rem;border-radius:var(--r-sm);margin-bottom:.9rem;border-inline-start:4px solid currentColor}.err{background:#f8e1dc;color:var(--coral)}.ok{background:#dff1e3;color:#1f6b35}
+.hint{font-size:.85rem;color:var(--ink2);margin:.2rem 0 1rem}.hp{position:absolute;left:-9999px}
 :focus-visible{outline:3px solid var(--sun);outline-offset:2px}
+@media(max-width:600px){form#f,#guardian{grid-template-columns:1fr}.panel{padding:1.1rem}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
-<main>
-<div class="top"><h1 id="title">Apply to Baleegh Academy</h1></div>
-<div id="out"></div>
+<header class="top"><div class="in"><span class="mark" aria-hidden="true">ب</span><h1 id="title">Apply to Baleegh Academy</h1></div></header>
+<main id="main">
+<div id="out" aria-live="polite"></div>
 <form id="f" class="panel" enctype="multipart/form-data" novalidate>
-  <div class="hp" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
-  <label><span data-t="a_name">Full name</span><input name="full_name" required autocomplete="name"></label>
+  <div class="hp full" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
+  <label class="full"><span data-t="a_name">Full name</span><input name="full_name" required autocomplete="name"></label>
   <label><span data-t="a_dob">Date of birth</span><input name="date_of_birth" id="dob" type="date" required></label>
   <label><span data-t="a_grade">Grade (if you are in school)</span><input name="grade"></label>
   <label><span data-t="a_phone">Phone number</span><input name="phone" type="tel" required autocomplete="tel"></label>
-  <label><span data-t="a_email">Email (your login will use this)</span><input name="email" type="email" required autocomplete="email"></label>
   <label><span data-t="a_island">Island</span><input name="island"></label>
-  <label><span data-t="a_course">Course</span><select name="course_id" id="course" required></select></label>
-  <label><span data-t="a_batch">Preferred batch</span><select name="batch_id" id="batch"></select></label>
-  <label><span data-t="a_id">Copy of your ID card (PDF, JPG or PNG, up to 5 MB)</span><input name="id_card" type="file" accept=".pdf,.jpg,.jpeg,.png" required></label>
+  <label class="full"><span data-t="a_email">Email (your login will use this)</span><input name="email" type="email" required autocomplete="email"></label>
+  <label class="full"><span data-t="a_course">Course</span><select name="course_id" id="course" required></select></label>
+  <label class="full"><span data-t="a_batch">Preferred batch</span><select name="batch_id" id="batch"></select></label>
+  <label class="full"><span data-t="a_id">Copy of your ID card (PDF, JPG or PNG, up to 5 MB)</span><input name="id_card" type="file" accept=".pdf,.jpg,.jpeg,.png" required></label>
   <div id="guardian" hidden>
     <h2 data-t="a_guardian">Guardian details (required under 18)</h2>
-    <label><span data-t="a_gname">Guardian full name</span><input name="guardian_name"></label>
+    <label class="full"><span data-t="a_gname">Guardian full name</span><input name="guardian_name"></label>
     <label><span data-t="a_grel">Relationship</span><input name="guardian_relationship"></label>
     <label><span data-t="a_gphone">Guardian phone</span><input name="guardian_phone" type="tel"></label>
-    <label><span data-t="a_gid">Copy of guardian's ID card</span><input name="guardian_id" type="file" accept=".pdf,.jpg,.jpeg,.png"></label>
+    <label class="full"><span data-t="a_gid">Copy of guardian's ID card</span><input name="guardian_id" type="file" accept=".pdf,.jpg,.jpeg,.png"></label>
   </div>
-  <p class="hint" data-t="a_privacy">Your ID copies are stored privately and only academy admins can open them.</p>
-  <button class="btn" id="go"><span data-t="a_submit">Submit application</span></button>
+  <p class="hint full" data-t="a_privacy">Your ID copies are stored privately and only academy admins can open them.</p>
+  <button class="btn block full" id="go"><span data-t="a_submit">Submit application</span></button>
 </form>
 <form id="sf" class="panel">
   <h2 data-t="a_check">Check your application</h2>
   <label><span data-t="a_ref">Reference number</span><input id="sref" placeholder="BA-XXXXXX"></label>
   <label><span data-t="a_phone">Phone number</span><input id="sphone" type="tel"></label>
-  <button class="btn alt"><span data-t="a_lookup">Check status</span></button>
+  <button class="btn alt block"><span data-t="a_lookup">Check status</span></button>
 </form>
-<p><a class="btn alt" id="wa" href="#" target="_blank" rel="noopener" data-t="a_wa">Chat with us on WhatsApp</a></p>
+<p><a class="btn alt block" id="wa" href="#" target="_blank" rel="noopener" data-t="a_wa">Chat with us on WhatsApp</a></p>
 </main>
 <script>
 const API = window.PORTAL_API || "";

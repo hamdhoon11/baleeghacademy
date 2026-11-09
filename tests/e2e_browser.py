@@ -3,10 +3,12 @@ Runs the real app on a phone-sized screen: admin sets class days, teacher marks 
 student sees Join class, submits work, downloads files, sees grade; Phase 4 fees flow (bank details, invoices, slip upload, reject, verify, receipt); no sideways scrolling. Run: python tests/e2e_browser.py"""
 import os, sys, time, subprocess, datetime as dt, tempfile, shutil
 from playwright.sync_api import sync_playwright
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import e2e_shim  # noqa: F401  (opens the phone menu when a script clicks a tab behind More)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 tmp = tempfile.mkdtemp()
 env = dict(os.environ, DATABASE_PATH=os.path.join(tmp, "e2e.db"), ADMIN_EMAIL="admin@e2e.test", ADMIN_PASSWORD="AdminPass123", PORT="5077", SECRET_KEY="e2e")
 subprocess.run([sys.executable, "seed.py"], cwd=ROOT, env=env, check=True, capture_output=True)
+import sqlite3; _c = sqlite3.connect(env["DATABASE_PATH"]); _c.execute("UPDATE users SET must_change_password=0"); _c.commit(); _c.close()   # the forced first-sign-in password screen (Session 11) is not what these scripts test
 srv = subprocess.Popen([sys.executable, "app.py"], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(2)
 BASE = "http://127.0.0.1:5077"
