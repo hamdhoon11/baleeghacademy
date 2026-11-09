@@ -1,0 +1,7 @@
+tests/
+instance/
+.env
+.venv/
+__pycache__/
+*.pyc
+TEST-REPORT.txt

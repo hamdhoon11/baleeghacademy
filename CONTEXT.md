@@ -286,3 +286,12 @@ Session 29: `whatsapp.py` (`register(app, ns, now)`): `POST /api/whatsapp/prepar
 - Helper in app.py: `can_any(u, *areas)` and `PICKER_AREAS` (people, batches, enrollments, fees, classroom, settings). Used by `GET /api/users` (full list needs `people`, pickers get `id, full_name, role, is_active`), `GET /api/enrollments` (admin), `GET /api/batches/<id>/students` (admin). `GET /api/dashboard` adds the money extras only with `fees`.
 - The matrix runs refused writes and all allowed GETs; allowed writes are covered by each session's own tests.
 - `RESTORE.md`: backup and restore procedure. `API.md` last section: generated route table.
+
+## UI refresh (navigation and layout)
+- `static/index.html` holds the app shell and design system. Desktop: grouped icon sidebar with the user and Sign out pinned at the bottom. Phone (880px and under): top bar, bottom bar with the first 4 tabs plus **More** (a menu with the other tabs, the user and Sign out).
+- Tab order and the bar's four tabs come from the server's `ROLE_TABS`; groups for the admin sidebar are `NAV_GROUP` in `index.html`.
+- The address bar follows the tab (`#fees`), so Back, refresh and links work. Only a plain `#name` is used.
+- On phones, any table with a `<thead>` becomes labelled cards (`labelTables`). Add class `nostack` to a table to keep it as a normal scrolling table.
+- New i18n keys: `skip_to_content`, `menu_more`, `main_menu`, `all_sections`, `show_password`, `nav_*`.
+- Tests: `tests/e2e_navigation.py` sweeps every tab for every role on phone and desktop (192 checks). `tests/e2e_shim.py` opens the phone menu for the older browser scripts. Older `e2e_*.py` scripts were already stale before this work (login IDs, course chooser); `e2e_submit`, `e2e_student_info`, `e2e_teacher_info` run, the rest need updating.
+- Known: `tests.test_warm_connection` errors inside the full suite only (environment leaks from another test); it passes alone.
