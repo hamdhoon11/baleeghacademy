@@ -16,7 +16,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 
 
 def run(conn, apply, log=print, this_month=None):
-    q = lambda s, a=(): [tuple(r) for r in conn.execute(s, a).fetchall()]
+    q = lambda s, a=(): [dbx.values(r) for r in conn.execute(s, a).fetchall()]   # v0.8.40: tuple(r) is the column names on PostgreSQL
     x = lambda s, a=(): conn.execute(s, a)
     try: pct = int((q("SELECT value FROM settings WHERE key='revenue_share_percent'") or [("",)])[0][0] or "")
     except ValueError: pct = int(SS.default_of("revenue_share_percent"))

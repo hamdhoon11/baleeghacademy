@@ -57,6 +57,12 @@ class Row(dict):
         return self._vals[k] if isinstance(k, int) else super().__getitem__(k)
 
 
+def values(row):
+    """A row as a plain tuple of its values, on both engines (v0.8.40). tuple(row) is NOT the same: on PostgreSQL a Row is a dict,
+    so tuple(row) gives the column NAMES. That made the teacher earnings calculation fail on the hosted database only."""
+    return row._vals if isinstance(row, Row) else tuple(row)
+
+
 def _py(v):
     """PostgreSQL returns Decimal for SUM()/AVG(); the app (and JSON) expect plain numbers, as SQLite gives."""
     if isinstance(v, decimal.Decimal):

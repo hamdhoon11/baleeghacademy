@@ -666,6 +666,7 @@
   "enrol_search_hint": "Student, course, batch or status",
   "expenses": "Expenses",
   "fe_approve_hint": "An approved month is locked and cannot be calculated again.",
+  "fe_empty_hint": "Nothing is calculated for this month yet. Press Calculate to work it out from the fees collected.",
   "file_empty": "This file is empty.",
   "file_too_big": "This file is larger than {mb} MB. Choose a smaller file.",
   "file_wrong_type": "This file type is not accepted. Use {types}.",
