@@ -860,7 +860,7 @@ def register(app, c):
             w.writerow([csv_safe(x) for x in (i["number"], i["period"], i["student_name"], i["course_name"], i["batch_code"], i["amount_mvr"], i["discount_mvr"], i["amount_due_mvr"],
                                                i["waived_mvr"], i["paid_mvr"], i["balance"], i["due_date"], i["status"], "yes" if i["overdue"] else "no")])
         audit_c("export_fees_csv", "report", None, month); db().commit()
-        resp = Response(buf.getvalue(), mimetype="text/csv")
+        resp = Response("\ufeff" + buf.getvalue(), mimetype="text/csv; charset=utf-8")   # v0.8.34: BOM for Excel
         resp.headers["Content-Disposition"] = f'attachment; filename="fees-{month}.csv"'
         resp.headers["Cache-Control"] = "private, no-store"
         return resp

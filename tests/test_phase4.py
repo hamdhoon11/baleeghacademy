@@ -663,7 +663,7 @@ class P4(unittest.TestCase):
         c = self.J("get", "/api/fees/report.csv?month=2026-03")
         self.assertEqual(c.status_code, 200); self.assertIn("text/csv", c.mimetype); self.assertIn("attachment", c.headers["Content-Disposition"])
         import csv
-        rows = list(csv.reader(io.StringIO(c.get_data(as_text=True))))
+        rows = list(csv.reader(io.StringIO(c.get_data(as_text=True).lstrip("\ufeff"))))   # v0.8.34: CSVs start with a BOM for Excel
         self.assertEqual(rows[0][:4], ["invoice", "period", "student", "course"]); self.assertEqual(len(rows), 1 + 5)
         by = {x[2]: x for x in rows[1:]}
         self.assertEqual((by["Paid Part"][9], by["Paid Part"][10], by["Paid Part"][12]), ("100", "250", "unpaid"))

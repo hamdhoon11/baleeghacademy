@@ -83,7 +83,7 @@ class S21(unittest.TestCase):
     def test_04_csv_is_filtered_safe_and_logged(self):
         r = self.get("action=zz_test", "/api/audit.csv")
         self.assertEqual((r.status_code, r.mimetype), (200, "text/csv")); self.assertIn("attachment", r.headers["Content-Disposition"])
-        rows = list(csv.reader(io.StringIO(r.get_data(as_text=True))))
+        rows = list(csv.reader(io.StringIO(r.get_data(as_text=True).lstrip("\ufeff"))))   # v0.8.34: BOM
         self.assertEqual(rows[0][:7], ["id", "at", "user_id", "user_name", "user_role", "login_id", "action"]); self.assertEqual(len(rows) - 1, 4)
         self.assertTrue(any(x[-1] == "'=1+1 danger" for x in rows[1:]))                      # a formula cannot run when opened in Excel
         ex = self.sql("SELECT user_role,detail FROM audit_log WHERE action='export_audit_csv' ORDER BY id DESC")[0]

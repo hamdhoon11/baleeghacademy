@@ -533,3 +533,13 @@
 - Names later sessions must keep: `go`, `navBack`, `closeDetail`, `mount`, `showErr`, `busy`, `tabs`, `crumb`/`crumbFor`, `addPanel`, `pickField`, `checkFile`, `fmtTime`/`fmtDate`/`fmtNum`, `setLang`, `ui.*`, `NAV_KEYS`/`DETAIL_KEY`/`TAB_RESET`/`BAR_PREFS`, storage keys `tok sb flt` (session) and `lastTab:<id> navClosed:<id>` (local).
 - Decisions still open: fonts (self-host or keep Google Fonts) and login token storage (Session 20d, left unchanged); a language setting for `setLang` (none exists yet).
 - Not verified: real PostgreSQL, iOS Safari (needs 15.4+ for `<dialog>`), a screen reader pass, Dhivehi RTL with real text.
+
+## Done: v0.8.34: download problems ("The file could not be found" after uploading)
+- Cause 1 (the message you saw): on Vercel without S3_BUCKET, uploads went to Vercel's temporary /tmp disk, which is per instance and wiped. New `DbStorage` in storage.py keeps files in the database table `stored_files` (BYTEA on PostgreSQL); chosen automatically on Vercel when no bucket is set; `FILE_STORAGE=db|s3|local` forces it. File and record are saved by the same commit.
+- Cause 2: names in Arabic/Dhivehi went raw into Content-Disposition (Latin-1 only), crashing real servers. `common.file_headers` now sends an ASCII fallback plus `filename*=UTF-8''...`; `common.shown_name` keeps vowel marks.
+- Front end: `fetchFile` no longer opens a blank tab first; PDFs/images open in `ui.viewer` (inline PDF only where the browser can show it; Android gets Download); file name read from `filename*`.
+- New `filecheck.py`: GET /api/admin/storage, GET /api/admin/storage/missing (Settings area). Settings shows "Files and storage"; Dashboard shows a red banner when files would be lost.
+- CSV exports (activity log, payment report, fee report, transfers) start with a BOM so Excel shows Arabic/Dhivehi. Removed the leftover static/i18n/dv.json (Phase 3 decision). migrate_to_hosted.py now also copies expense receipts.
+- Files lost before this version cannot be recovered: re-upload them (the missing-files list says which).
+- Tests: tests/test_session34.py (11), e2e_ui.py (+7 checks: viewer, Arabic download, Android, storage panel).
+- Not done: PDF receipts and invoices print Arabic or Dhivehi names as "????" (receipts.latin() replaces them; the built-in PDF fonts have no such letters). A fix needs a bundled Arabic/Thaana font and right-to-left shaping.

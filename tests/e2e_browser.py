@@ -128,7 +128,7 @@ try:
         a.click("nav [data-v=fees]"); a.click("[data-tabs=fees] [data-key=report]"); a.wait_for_selector("#fxr")
         check("MVR 350" in a.inner_text("main") and "Nobody owes anything" in a.inner_text("main"), "monthly report: collected 350 and nobody owes")
         with a.expect_download() as cd: a.click("[data-do=fxCsv]")
-        csv_text = open(cd.value.path(), encoding="utf-8").read()
+        csv_text = open(cd.value.path(), encoding="utf-8-sig").read()   # v0.8.34: CSVs start with a BOM for Excel
         check(csv_text.startswith("invoice,period") and "Demo Student" in csv_text and ",350,0,350,0,350,0," in csv_text, "monthly report CSV downloads with the right numbers")
         # ---- fees tab on a phone ----
         s.click("nav [data-v=fees]"); s.wait_for_selector("text=BA-R-0001"); s.wait_for_timeout(300)

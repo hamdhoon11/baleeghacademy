@@ -473,3 +473,15 @@ CREATE TABLE IF NOT EXISTS teacher_payments (
   void_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tpay_teacher ON teacher_payments(teacher_id, paid_on);
+
+-- v0.8.34: uploaded files kept inside the database. Used on Vercel when no bucket is set (its disk loses files) or with FILE_STORAGE=db.
+-- area: ids | learning | slips | receipts; name: the generated stored name the other tables point to. BLOB becomes BYTEA on PostgreSQL.
+CREATE TABLE IF NOT EXISTS stored_files (
+  area TEXT NOT NULL,
+  name TEXT NOT NULL,
+  content_type TEXT,
+  size INTEGER NOT NULL DEFAULT 0,
+  data BLOB NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (area, name)
+);

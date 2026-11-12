@@ -44,14 +44,18 @@ def migrate(app, src_db, uploads, dry_run=False, log=print):
         if not dry_run:
             dst.commit()
             dst.reset_sequences()
-        for area, folder in (("ids", uploads), ("learning", os.path.join(uploads, "learning")), ("slips", os.path.join(uploads, "slips"))):
-            if not os.path.isdir(folder): continue
-            for name in sorted(os.listdir(folder)):
-                path = os.path.join(folder, name)
-                if not os.path.isfile(path): continue
-                out["files"] += 1
-                if not dry_run:
-                    with open(path, "rb") as f: store.put(area, name, f.read())
+        with app.app_context():   # the database file store (v0.8.34) writes through the app's connection
+            for area, folder in (("ids", uploads), ("learning", os.path.join(uploads, "learning")), ("slips", os.path.join(uploads, "slips")), ("receipts", os.path.join(uploads, "receipts"))):
+                if not os.path.isdir(folder): continue
+                for name in sorted(os.listdir(folder)):
+                    path = os.path.join(folder, name)
+                    if not os.path.isfile(path): continue
+                    out["files"] += 1
+                    if not dry_run:
+                        with open(path, "rb") as f: store.put(area, name, f.read())
+            if not dry_run and store.kind == "db":
+                from flask import g
+                if "db" in g: g.db.commit()
         log(f"  files: {out['files']}")
     finally:
         src.close(); dst.close()

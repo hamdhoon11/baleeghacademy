@@ -246,7 +246,7 @@ def register(app, c, today):
         import csv, io
         buf = io.StringIO(); w = csv.writer(buf); w.writerow(REPORT_COLS)
         for x in r: w.writerow([pr.csv_safe(x[k]) for k in REPORT_COLS])
-        return Response("\ufeff" + buf.getvalue(), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=teacher-earnings.csv"})
+        return Response("\ufeff" + buf.getvalue(), mimetype="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=teacher-earnings.csv"})
 
     @app.get("/api/earnings/report.csv")
     @auth("admin", perm="finance")

@@ -28,7 +28,7 @@ def main():
     pg, store = app.config["USE_POSTGRES"], app.extensions["store"]
     print("Database:", "PostgreSQL" if pg else f"SQLite file {app.config['DATABASE_PATH']}", "| Files:", store.describe())
     if not pg and os.environ.get("VERCEL"): print("  WARNING: on Vercel a SQLite file is wiped regularly. Set DATABASE_URL.")
-    if store.kind == "local" and os.environ.get("VERCEL"): print("  WARNING: on Vercel local files are wiped regularly. Set S3_BUCKET.")
+    if store.kind == "local" and os.environ.get("VERCEL"): print("  WARNING: on Vercel local files are wiped regularly. Set S3_BUCKET, or leave FILE_STORAGE empty to keep them in the database.")
 
     def database():
         c = dbx.connect(app.config, os.path.dirname(os.path.abspath(__file__)))
@@ -44,6 +44,10 @@ def main():
             c.rollback(); c.close()
 
     def files():
+        with app.app_context():   # the database file store uses the app's connection; nothing is committed, so the test file never stays
+            return _files()
+
+    def _files():
         name = f"check-{uuid.uuid4().hex}.pdf"
         store.put("slips", name, b"%PDF-1.4 check")
         try:

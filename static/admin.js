@@ -278,7 +278,8 @@ views.settings = async () => {
     const mark = () => { if (S.setDirty) return; S.setDirty = true; $("#setDirty").hidden = false; announce(t("Unsaved changes")); };
     p.addEventListener("input", mark); p.addEventListener("change", mark);
   });
-  return `<h1>${t("settings")}</h1>${tabs({id: "settings", items: sc.groups.map(x => [x.id, t(x.title)]), current: g.id, onSelect: setSelect, label: t("settings")})}<div class="mt1 panel" id="setp"><h2>${esc(t(g.title))}</h2>${g.hint ? `<p class="hint">${esc(t(g.hint))}</p>` : ""}${g.items.map(input).join("")}<p><button class="btn" data-do="saveSet">${t("save")}</button> <span class="tag warn" id="setDirty" hidden>${esc(t("Unsaved changes"))}</span></p><p class="hint">${esc(t("Empty fields use the default. Every change is written to the audit log."))}</p></div>`;
+  const store = await storagePanel();
+  return `<h1>${t("settings")}</h1>${store.banner}${tabs({id: "settings", items: sc.groups.map(x => [x.id, t(x.title)]), current: g.id, onSelect: setSelect, label: t("settings")})}<div class="mt1 panel" id="setp"><h2>${esc(t(g.title))}</h2>${g.hint ? `<p class="hint">${esc(t(g.hint))}</p>` : ""}${g.items.map(input).join("")}<p><button class="btn" data-do="saveSet">${t("save")}</button> <span class="tag warn" id="setDirty" hidden>${esc(t("Unsaved changes"))}</span></p><p class="hint">${esc(t("Empty fields use the default. Every change is written to the audit log."))}</p></div>${store.panel}`;
 };
 DO.setTab = d => { S.sg = d.g; };
 
@@ -523,7 +524,8 @@ views.dashboard = async () => {
     ["Submissions", d.submissions], ["Graded", d.graded], ["Waiting for grading", d.pending_grading]]);
   const fin = d.financial ? `<h2>${t("Finance")}</h2>` + cards([["Revenue", "MVR " + d.financial.revenue], ["Expenses", "MVR " + d.financial.expenses], [d.financial.net < 0 ? "Net loss" : "Net profit", "MVR " + d.financial.net], ["Outstanding fees", "MVR " + d.financial.outstanding], ["Teacher earnings", "MVR " + d.financial.teacher_earnings], ["Academy revenue", "MVR " + d.financial.academy_revenue]]) : "";
   const fee = d.fees ? cards([[t("fx_unpaid_invoices"), d.fees.unpaid_invoices], [t("fx_overdue_invoices"), d.fees.overdue_invoices], [t("fx_slips_pending"), d.fees.slips_pending]]) : "";
-  return `<h1>${t("dashboard")}</h1><div class="panel">${filt}<p class="hint">${t("No dates chosen means all time. Accounts: ")}${d.student_accounts} ${t("Students")}, ${d.teacher_accounts} ${t("Teachers")}.</p></div>${acad}${fin}${fee}<div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
+  const store = await storagePanel(true);
+  return `<h1>${t("dashboard")}</h1>${store.banner}<div class="panel">${filt}<p class="hint">${t("No dates chosen means all time. Accounts: ")}${d.student_accounts} ${t("Students")}, ${d.teacher_accounts} ${t("Teachers")}.</p></div>${acad}${fin}${fee}<div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
 };
 
 // Session 27: exports and CSV import (the import panel is drawn at the bottom of People)
@@ -551,3 +553,24 @@ const impPanel = () => {
       ${made ? `<p class="msg err">${t("Temporary passwords are shown only now. Save them before leaving this page.")} <button class="btn sm" data-do="impCreds">${t("Download new accounts CSV")}</button></p>` : ""}
       ${r.rows.filter(x => x.status === "rejected").map(x => `<div class="msg err">${t("Row")} ${x.row} · ${esc(x.name)}: ${esc(x.message)}</div>`).join("")}` : ""}</div>`;
 };
+
+// ---------- v0.8.34: files and storage. Where uploads are kept, whether that lasts, and which records lost their file ----------
+const canStorage = () => S.user && S.user.role === "admin" && (S.user.tabs || []).includes("settings");
+async function storagePanel(bannerOnly) {
+  if (!canStorage()) return {banner: "", panel: ""};
+  let h; try { h = await api("/admin/storage"); } catch (_) { return {banner: "", panel: ""}; }
+  const banner = h.persistent ? "" : `<div class="msg err" role="alert"><b>${esc(t("storage_not_kept"))}</b> ${esc(h.advice)}</div>`;
+  if (bannerOnly) return {banner, panel: ""};
+  const m = S.stMissing;
+  const list = !m ? "" : m.missing ? `<p><b>${m.missing}</b> ${esc(t("storage_missing_n"))}${m.complete ? "" : " " + esc(t("storage_partial").replace("{n}", m.checked).replace("{m}", m.total))}</p><p>${Object.entries(m.by_kind).map(([k, n]) => `<span class="chip">${esc(t(k))}: ${n}</span>`).join(" ")}</p>`
+      + `<table><thead><tr><th>${t("kind")}</th><th>${t("name")}</th><th>${t("date")}</th></tr></thead><tbody>${m.items.map(x => `<tr><td>${esc(t(x.kind))}</td><td>${esc(x.label || "#" + x.id)}</td><td><bdi dir="ltr">${esc(fmtTime(x.at))}</bdi></td></tr>`).join("")}</tbody></table><p class="hint">${esc(t("storage_missing_hint"))}</p>`
+    : `<p class="msg ok">${esc(t("storage_none_missing").replace("{n}", m.checked))}</p>`;
+  const panel = `<div class="panel mt1" id="storep"><h2>${esc(t("Files and storage"))}</h2><table class="kv nostack"><tbody>`
+    + `<tr><th scope="row">${esc(t("storage_where"))}</th><td>${esc(h.where)}</td></tr>`
+    + `<tr><th scope="row">${esc(t("storage_database"))}</th><td>${esc(h.database === "postgresql" ? "PostgreSQL" : "SQLite")}${h.on_vercel ? " · Vercel" : ""}</td></tr>`
+    + (h.files != null ? `<tr><th scope="row">${esc(t("storage_files"))}</th><td>${h.files} · <bdi dir="ltr">${h.mb} MB</bdi></td></tr>` : "")
+    + `<tr><th scope="row">${esc(t("storage_kept"))}</th><td>${h.persistent ? tag(t("Yes"), "ok") : tag(t("No"), "bad")}</td></tr></tbody></table>`
+    + `<p><button type="button" class="btn alt" data-do="stCheck">${esc(t("storage_check"))}</button></p>${list}</div>`;
+  return {banner, panel};
+}
+DO.stCheck = async () => { S.stMissing = await api("/admin/storage/missing"); };

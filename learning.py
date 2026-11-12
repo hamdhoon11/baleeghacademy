@@ -70,7 +70,7 @@ def register(app, c):
         if not magic_ok(ext, data[:16]): raise ValueError("File content does not match its type")
         name = uuid.uuid4().hex + ext
         store.put("learning", name, data)
-        return name, re.sub(r"[^\w.\- ]", "_", os.path.basename(f.filename))[:80]
+        return name, common.shown_name(f.filename)
 
     def rm(name):
         if name: store.delete("learning", name)

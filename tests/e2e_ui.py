@@ -1,7 +1,7 @@
 """Browser checks for the v0.8.33 UI corrections (Session 22c): Session 1 (a failed save keeps the form), Session 2 (dialogs: Escape,
 focus back to the button that opened them), Session 9A (tabs are links, crumbs, Back), Session 14 (grading in place, Save all,
 attendance guard). Run: python tests/e2e_ui.py (needs playwright + chromium)"""
-import os, sys, subprocess, time, tempfile, json, urllib.request
+import os, sys, subprocess, time, tempfile, json, urllib.request, urllib.parse
 from playwright.sync_api import sync_playwright
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import e2e_shim  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -94,6 +94,34 @@ try:
         ok("S14: Cancel keeps the date", t.input_value("#adate") == before)
         t.click("[data-do=saveAtt]"); t.wait_for_selector("text=Attendance saved for")
         ok("S14: the save message counts the students", "Attendance saved for 1 students" in t.inner_text("main"))
+        # ---- v0.8.34: downloads. A material named in Arabic opens in the viewer and downloads with its real name; on Android, no inline PDF ----
+        name = "درس النحو.pdf"
+        r = urllib.request.Request(B + f"/api/batches/1/materials", method="POST")
+        import io as _io, uuid as _uuid
+        bnd = _uuid.uuid4().hex
+        bodyb = (f"--{bnd}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nNahw\r\n--{bnd}\r\nContent-Disposition: form-data; name=\"file\"; filename*=UTF-8''{urllib.parse.quote(name)}; filename=\"{name}\"\r\nContent-Type: application/pdf\r\n\r\n").encode() + b"%PDF-1.4 nahw" + f"\r\n--{bnd}--\r\n".encode()
+        r = urllib.request.Request(B + "/api/batches/1/materials", data=bodyb, method="POST", headers={"Content-Type": "multipart/form-data; boundary=" + bnd, "Authorization": "Bearer " + adm})
+        mid = json.load(urllib.request.urlopen(r))["id"]
+        st = page(); e2e_shim.login(st, B, "student@baleegh.test", "ChangeMe-Stud1", db=env["DATABASE_PATH"], batch=1)
+        st.click("nav [data-v=materials]") if st.locator("nav [data-v=materials]").count() else None
+        st.goto(B + "/#materials"); st.wait_for_selector(f"[data-do=dlMat][data-id='{mid}']")
+        st.click(f"[data-do=dlMat][data-id='{mid}']"); st.wait_for_selector("dialog.dlg.view[open]")
+        ok("v0.8.34: a PDF opens in the viewer inside the page (no blank tab)", st.locator("dialog.dlg.view[open] .fv-pdf, dialog.dlg.view[open] .fv .hint").count() == 1 and len(st.context.pages) == 1)
+        ok("v0.8.34: the viewer's Download keeps the Arabic name", st.get_attribute("dialog.dlg.view[open] a[download]", "download") == name)
+        with st.expect_download() as dl: st.click("dialog.dlg.view[open] a[download]")
+        ok("v0.8.34: Download saves the file with its Arabic name", dl.value.suggested_filename == name)
+        st.keyboard.press("Escape"); st.wait_for_selector("dialog.dlg", state="detached")
+        ok("v0.8.34: closing the viewer returns focus to the button", st.evaluate("document.activeElement.dataset.do") == "dlMat")
+        an = b.new_context(viewport={"width": 390, "height": 800}, user_agent="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36").new_page()
+        an.on("pageerror", lambda x: errs.append(str(x)))
+        e2e_shim.login(an, B, "student@baleegh.test", "ChangeMe-Stud1", db=env["DATABASE_PATH"], batch=1)
+        an.goto(B + "/#materials"); an.wait_for_selector(f"[data-do=dlMat][data-id='{mid}']"); an.click(f"[data-do=dlMat][data-id='{mid}']"); an.wait_for_selector("dialog.dlg.view[open]")
+        ok("v0.8.34: on Android the viewer says PDFs cannot show here and offers Download", an.locator("dialog.dlg.view[open] .fv-pdf").count() == 0 and an.is_visible("dialog.dlg.view[open] a[download]"))
+        # admin: storage panel in Settings, missing-file check
+        a.goto(B + "/#settings"); a.wait_for_selector("#storep")
+        ok("v0.8.34: Settings shows Files and storage", "Where files are kept" in a.inner_text("#storep"))
+        a.click("[data-do=stCheck]"); a.wait_for_selector("#storep .msg.ok, #storep table:not(.kv)")
+        ok("v0.8.34: the missing-files check runs", "files are there" in a.inner_text("#storep") or "no longer stored" in a.inner_text("#storep"))
         ok("no script errors", not errs, errs[:3])
         b.close()
 finally:

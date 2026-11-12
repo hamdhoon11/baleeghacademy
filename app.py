@@ -24,6 +24,8 @@ def create_app(config=None):
         S3_ENDPOINT_URL=os.environ.get("S3_ENDPOINT_URL", ""), S3_REGION=os.environ.get("S3_REGION", ""),
         S3_ACCESS_KEY_ID=os.environ.get("S3_ACCESS_KEY_ID", ""), S3_SECRET_ACCESS_KEY=os.environ.get("S3_SECRET_ACCESS_KEY", ""),
         S3_PREFIX=os.environ.get("S3_PREFIX", ""),
+        FILE_STORAGE=os.environ.get("FILE_STORAGE", ""),       # v0.8.34: db | s3 | local; empty = S3 if S3_BUCKET is set, the database on Vercel, else a local folder
+        ON_VERCEL=ON_VERCEL,
         CORS_ORIGINS=[o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()],
         TOKEN_HOURS=int(os.environ.get("TOKEN_HOURS", "8")),
         JOIN_EARLY_MIN=int(os.environ.get("JOIN_EARLY_MIN", "15")),      # Join class button appears this many minutes before start
@@ -811,7 +813,7 @@ def create_app(config=None):
 
     # ---------- admissions (Phase 2) ----------
     UPLOADS = os.path.join(os.path.dirname(app.config["DATABASE_PATH"]), "uploads")   # used only when files are kept on local disk
-    store = storage.make(app.config, UPLOADS)
+    store = storage.make(app.config, UPLOADS, conn=db)   # on Vercel without a bucket the files go into the database (v0.8.34)
     app.extensions["store"] = store
     apply_hits = {}
     MAGIC = {".pdf": b"%PDF", ".jpg": b"\xff\xd8\xff", ".jpeg": b"\xff\xd8\xff", ".png": b"\x89PNG"}
@@ -1135,6 +1137,8 @@ def create_app(config=None):
     import notify
     notify.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 28: notifications (must come first: the modules below call ns.notify)
     learning.register(app, ns)
+    import filecheck
+    filecheck.register(app, ns)   # v0.8.34: storage health and the list of records whose file is gone
     import whatsapp
     whatsapp.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 29: WhatsApp click-to-chat by phone number
 
@@ -1178,7 +1182,7 @@ def create_app(config=None):
 
     @app.errorhandler(FileNotFoundError)
     def _file_missing(e):
-        return api_error("The file could not be found. It may have been removed.", 404)
+        return api_error("The file could not be found on the server. It may have been removed, or lost before storage was fixed: ask the person to upload it again.", 404)
 
     @app.errorhandler(HTTPException)
     def _http_error(e):

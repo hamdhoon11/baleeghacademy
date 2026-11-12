@@ -96,7 +96,7 @@ def register(app, c):
             w.writerow([csv_safe(v) for v in (x["effective_date"], x["kind"], x["student_code"], x["student_name"], x["from_course"], x["from_batch_code"],
                                               x["to_course"], x["to_batch_code"], x["reason"], x["by_name"], x["at"])])
         audit("export_enrollment_events_csv", "report", None, f"{len(r)} rows"); db().commit()
-        resp = Response(buf.getvalue(), mimetype="text/csv")
+        resp = Response("\ufeff" + buf.getvalue(), mimetype="text/csv; charset=utf-8")   # v0.8.34: BOM for Excel
         resp.headers["Content-Disposition"] = 'attachment; filename="transfers-withdrawals.csv"'
         resp.headers["Cache-Control"] = "private, no-store"
         return resp

@@ -142,7 +142,7 @@ class S13(unittest.TestCase):
         self.assertEqual(self.J("get", "/api/enrollment-events?from=yesterday").status_code, 400)
         csv_r = self.J("get", "/api/enrollment-events.csv?from=2026-05-01&to=2026-05-31")
         self.assertEqual(csv_r.status_code, 200); self.assertIn("text/csv", csv_r.headers["Content-Type"]); self.assertIn("attachment", csv_r.headers["Content-Disposition"])
-        text = csv_r.get_data(as_text=True)
+        text = csv_r.get_data(as_text=True).lstrip("\ufeff")   # v0.8.34: BOM for Excel
         self.assertTrue(text.startswith("date,type,student_id,student,previous_course,previous_batch,new_course,new_batch"))
         self.assertIn("2026-05-02,transfer", text); self.assertIn("'=cmd", text)            # formula text is neutralised
         self.assertTrue(self.J("get", "/api/audit").get_json()[0]["action"] == "export_enrollment_events_csv")

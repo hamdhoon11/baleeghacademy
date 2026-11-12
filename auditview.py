@@ -87,7 +87,7 @@ def register(app, c):
         for x in r: wr.writerow([csv_safe(x.get(k)) for k in COLS])
         audit("export_audit_csv", "report", None, f"{len(r)} rows" + (" (cut at %d)" % MAX_CSV if len(r) == MAX_CSV else "") + (f"; filters: {dict(request.args)}" if request.args else ""))
         db().commit()
-        resp = Response(buf.getvalue(), mimetype="text/csv")
+        resp = Response("\ufeff" + buf.getvalue(), mimetype="text/csv; charset=utf-8")   # v0.8.34: BOM so Excel reads Arabic and Dhivehi correctly
         resp.headers["Content-Disposition"] = 'attachment; filename="activity-log.csv"'
         return resp
 

@@ -236,6 +236,13 @@ details.addp[open]>summary{margin-bottom:.8rem}
 .xrow td{background:#f8fbfb}.xrow .kv{margin:0}
 dialog.dlg{border:0;border-radius:var(--r);padding:0;width:min(32rem,calc(100vw - 1.5rem));max-height:calc(100dvh - 1.5rem);box-shadow:0 24px 64px rgba(7,59,69,.35);color:var(--ink);background:#fff}
 dialog.dlg.wide{width:min(40rem,calc(100vw - 1.5rem))}
+dialog.dlg.view{width:min(60rem,calc(100vw - 1rem))}
+.fv{display:flex;justify-content:center;background:#f4f9f9;border-radius:var(--r-sm);min-height:6rem;align-items:center}
+.fv-img{max-width:100%;max-height:min(70vh,52rem);object-fit:contain;display:block}
+.fv-pdf{width:100%;height:min(72vh,60rem);border:0;border-radius:var(--r-sm);background:#fff}
+.fv>.hint{padding:1rem;text-align:center;margin:0}
+.fv-meta{margin:0;overflow-wrap:anywhere}
+.fv-act{display:flex;flex-wrap:wrap;gap:.6rem}.fv-act .btn{flex:1 1 10rem}
 dialog.dlg::backdrop{background:rgba(16,38,43,.5)}
 .dlg-f{display:flex;flex-direction:column;gap:.9rem;padding:1.2rem 1.3rem;max-height:calc(100dvh - 1.5rem)}
 .dlg-f h2{margin:0}.dlg.danger h2{color:var(--coral)}
@@ -321,30 +328,41 @@ async function readError(r) {
   return t("download_failed");
 }
 const PREVIEW_TYPE = /^(application\/pdf|image\/(png|jpe?g|gif|webp))$/;
+// v0.8.34: the server sends filename="ascii fallback" plus filename*=UTF-8''full%20name for Arabic and Dhivehi names; prefer the full one.
 function nameFromHeader(r, fallback) {
-  const m = /filename="?([^";]+)"?/i.exec(r.headers.get("Content-Disposition") || "");
-  return fallback || (m && m[1]) || "file";
+  const h = r.headers.get("Content-Disposition") || "";
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(h);
+  if (star) { try { return decodeURIComponent(star[1].trim()); } catch (_) {} }
+  if (fallback) return fallback;
+  const m = /filename="?([^";]+)"?/i.exec(h);
+  return (m && m[1]) || "file";
 }
-// opts.preview: open PDFs and images in a new tab, download anything else. Without it the file is always saved.
+function saveBlob(url, name) {
+  const a = document.createElement("a");
+  a.href = url; a.download = name || "file"; a.rel = "noopener";
+  document.body.appendChild(a); a.click(); a.remove();
+}
+// opts.preview: PDFs and images open in a viewer inside the page (with Download and Open buttons); anything else is saved.
+// v0.8.34: no blank tab is opened before the file arrives any more. That tab stayed empty on Android (no built-in PDF viewer),
+// in iPhone home-screen apps and with popup blockers, and was left behind when the download failed.
 async function fetchFile(path, opts = {}) {
-  const win = opts.preview ? window.open("", "_blank") : null;   // opened right at the click so the browser does not block it
-  const done = () => { if (win && !win.closed) win.close(); };
-  try {
-    const r = await send(API + "/api" + path, {headers: {Authorization: "Bearer " + S.token}}, 120000);
-    if (r.status === 401) { done(); signout(); throw new Error(await readError(r)); }
-    if (!r.ok) throw new Error(await readError(r));
-    const type = (r.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
-    if (type === "text/html" || type === "application/json") throw new Error(t("file_open_failed"));   // an error page with a 200 status, not a document
-    const blob = await r.blob();
-    const typed = blob.type === type || !type ? blob : new Blob([blob], {type});
-    const url = URL.createObjectURL(typed);
-    if (win && PREVIEW_TYPE.test(type)) { win.location = url; setTimeout(() => URL.revokeObjectURL(url), 120000); return; }
-    done();
-    const a = document.createElement("a");
-    a.href = url; a.download = nameFromHeader(r, opts.name);
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-  } catch (x) { done(); throw x; }
+  const r = await send(API + "/api" + path, {headers: {Authorization: "Bearer " + S.token}}, 120000);
+  if (r.status === 401) { signout(); throw new Error(await readError(r)); }
+  if (!r.ok) throw new Error(await readError(r));
+  const type = (r.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+  if (type === "text/html" || type === "application/json") throw new Error(t("file_open_failed"));   // an error page with a 200 status, not a document
+  const blob = await r.blob();
+  if (!blob.size) throw new Error(t("file_empty_download"));
+  const typed = blob.type === type || !type ? blob : new Blob([blob], {type});
+  const name = nameFromHeader(r, opts.name), url = URL.createObjectURL(typed);
+  if (opts.preview && PREVIEW_TYPE.test(type)) {
+    await ui.viewer({name, url, type, size: typed.size});   // resolves when the viewer is closed
+    URL.revokeObjectURL(url);
+    return;
+  }
+  saveBlob(url, name);
+  announce(t("download_started").replace("{name}", name));
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 async function loadText() { try { EN = await (await fetch(API + "/i18n/en.json")).json(); } catch (_) { EN = {}; } }
 function signout() {
