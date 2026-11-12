@@ -1,5 +1,5 @@
 /* Phase 4 screens: Fees tab for students and admins, fee notices on Home and Dashboard.
-   Loaded after learning.js and reuses its helpers (api, apiForm, download, DO, tag, mvToday, S, t, esc, $, val, field, flash, render).
+   Loaded after learning.js and reuses its helpers (api, apiForm, download, DO, tag, mvToday, S, t, esc, $, val, field, flash, render, mount, ui).
    Money, dates and invoice numbers are wrapped in <bdi dir="ltr"> so they stay left-to-right inside Dhivehi (right-to-left) text. */
 const ltr = s => `<bdi dir="ltr">${esc(s)}</bdi>`;
 const mvr = n => `<bdi dir="ltr">MVR ${esc(n)}</bdi>`;
@@ -11,9 +11,10 @@ const fxPrQuery = () => { const f = S.fxf || {}; return Object.entries({month: f
 const fxPrTag = r => tag(t(r.status_label), {paid: "ok", waived: "ok", partial: "warn", unpaid: "bad", none: ""}[r.status] || "");
 const fxFile = ".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png";
 
-DO.fxGo = () => { S.view = "fees"; };
+DO.fxGo = () => { openTab("fees"); return false; };
 DO.fxRcpt = async d => { await download(`/payments/${d.id}/receipt.pdf`, `receipt-${d.no}.pdf`); return false; };
 DO.fxTab = d => { S.fxt = d.v; S.fxmsg = null; };
+const fxSelect = k => { S.fxt = k; S.fxmsg = null; S.fxhl = null; };
 
 // ---------- notices on existing screens ----------
 const fxHome = views.home;
@@ -26,12 +27,7 @@ views.home = async () => {
   const i = h.indexOf("</h1>");
   return i < 0 ? n + h : h.slice(0, i + 5) + n + h.slice(i + 5);
 };
-const fxDash = views.dashboard;
-views.dashboard = async () => {
-  const [h, d] = await Promise.all([fxDash(), api("/dashboard")]);
-  const st = [[t("fx_unpaid_invoices"), d.unpaid_invoices], [t("fx_overdue_invoices"), d.overdue_invoices], [t("fx_slips_pending"), d.slips_pending], [t("fx_month_collection"), "MVR " + d.month_collection_mvr]];
-  return h.replace('<div class="panel">', `<div class="stats">${st.map(([k, v]) => `<div class="stat"><b><bdi dir="ltr">${esc(v)}</bdi></b>${esc(k)}</div>`).join("")}</div><div class="panel">`);
-};
+// Session 8: the fee cards on the admin Dashboard are drawn by admin.js (views.dashboard); the old wrapper here was never shown.
 
 // ---------- student ----------
 DO.fxUp = d => { S.fxu = +d.id; };
@@ -39,16 +35,15 @@ DO.fxUpClose = () => { S.fxu = null; };
 
 async function fxStudent() {
   const d = await api("/my/fees"), b = d.bank;
-  setTimeout(() => {
-    const f = $("#fxs"); if (!f) return;
-    f.onsubmit = async e => {
-      e.preventDefault();
+  mount(() => {
+    onSubmit("fxs", async () => {   // an error keeps the form as typed (Session 1)
       const fd = new FormData();
-      fd.append("amount_mvr", val("fxs_a")); fd.append("transfer_date", val("fxs_d")); fd.append("reference", val("fxs_r"));
+      fd.append("amount_mvr", wholeNum("fxs_a", "fx_amount_sent", {min: 1, empty: false})); fd.append("transfer_date", val("fxs_d")); fd.append("reference", val("fxs_r"));
       const file = $("#fxs_f").files[0]; if (file) fd.append("file", file);
-      try { await apiForm(`/invoices/${S.fxu}/slips`, fd); S.fxu = null; flash(t("fx_slip_sent"), true); } catch (x) { flash(x.message); }
-      render();
-    };
+      await apiForm(`/invoices/${S.fxu}/slips`, fd); S.fxu = null;
+      return t("fx_slip_sent");
+    });
+    if (S.fxhl) { const c = $("#inv-" + S.fxhl); S.fxhl = null; if (c) { c.scrollIntoView({block: "center"}); c.focus({preventScroll: true}); } }   // opened from a notification (Session 15)
   });
   const bank = b.configured
     ? `<p>${esc(b.bank_name)}<br>${esc(b.bank_account_name)}<br><b>${ltr(b.bank_account_number)}</b></p><p class="hint">${t("fx_bank_note")}</p>`
@@ -57,9 +52,9 @@ async function fxStudent() {
     <label>${t("fx_transfer_date")}<input id="fxs_d" type="date" max="${mvToday()}" value="${mvToday()}" required></label>
     <label>${t("fx_reference")}<input id="fxs_r" maxlength="80"></label>
     <label>${t("fx_slip_file")}<input id="fxs_f" type="file" accept="${fxFile}" required></label>
-    <p class="hint" style="flex:1 1 100%">${t("fx_slip_hint")}</p>
+    <p class="full hint">${t("fx_slip_hint")}</p>
     <button class="btn alt">${t("fx_send_slip")}</button> <button type="button" class="btn" data-do="fxUpClose">${t("close")}</button></form>`;
-  const card = i => `<div class="panel"><div class="cl"><div><b>${esc(i.description)}</b><br><span class="hint">${ltr(i.number)} · ${t("fx_due_on")} ${ltr(i.due_date)}</span></div>${fxBadge(i)}</div>
+  const card = i => `<div class="panel${S.fxhl === i.id ? " next" : ""}" id="inv-${i.id}" tabindex="-1"><div class="cl"><div><b>${esc(i.description)}</b><br><span class="hint">${ltr(i.number)} · ${t("fx_due_on")} ${ltr(i.due_date)}</span></div>${fxBadge(i)}</div>
     <p>${t("fx_amount_due")}: ${mvr(i.amount_due_mvr)}${i.discount_mvr ? ` · ${t("fx_discount")}: ${mvr(i.discount_mvr)}` : ""}${i.paid_mvr ? ` · ${t("fx_paid")}: ${mvr(i.paid_mvr)}` : ""}${i.balance && !["paid", "waived"].includes(i.status) ? ` · <b>${t("fx_balance")}: ${mvr(i.balance)}</b>` : ""}</p>
     ${i.overdue ? `<div class="msg err">${t("fx_overdue_by")} ${ltr(i.days_overdue)}</div>` : ""}
     ${i.last_rejection ? `<div class="msg err"><b>${t("fx_slip_rejected")}:</b> ${esc(i.last_rejection.reason)}</div>` : ""}
@@ -72,17 +67,18 @@ async function fxStudent() {
 }
 
 // ---------- admin ----------
-const fxAsk = text => { const r = prompt(text); return r && r.trim() ? r.trim() : null; };
+// Session 4: every reason is asked in a ui.js dialog; the server needs one for all of these
+const fxAsk = (title, opts = {}) => ui.ask(title, {label: t("fx_prompt_reason"), required: true, multiline: true, ...opts});
 const fxSet = (k, v) => { S.fxf = {...(S.fxf || {}), [k]: v}; };
 
 DO.fxView = async d => { await viewFile(`/slips/${d.id}/file`, d.name || "slip"); return false; };
 DO.fxVerify = async d => {
   const amount = $("#fxv_" + d.id).value.trim();
-  if (d.dup === "1" && !confirm(t("fx_confirm_dup"))) return false;
+  if (d.dup === "1" && !await ui.confirm(t("fx_confirm_dup"), {danger: true, okText: t("fx_verify")})) return false;
   const r = await api(`/slips/${d.id}/verify`, "POST", {amount_mvr: amount, confirm_duplicate: d.dup === "1"});
   flash(`${t("fx_verified")}: ${r.receipt_no}`, true);
 };
-DO.fxReject = async d => { const r = fxAsk(t("fx_prompt_reject")); if (!r) return false; await api(`/slips/${d.id}/reject`, "POST", {reason: r}); flash(t("saved"), true); };
+DO.fxReject = async d => { const r = await fxAsk(t("reject"), {label: t("fx_prompt_reject")}); if (!r) return false; await api(`/slips/${d.id}/reject`, "POST", {reason: r}); flash(t("saved"), true); };
 DO.fxGen = async () => {
   const r = await api("/invoices/generate", "POST", {month: val("fxg_m")});
   S.fxGenResult = r.details.filter(x => x.reason !== "already_invoiced");   // shown under the button: who was skipped and why
@@ -92,16 +88,20 @@ DO.fxInvPdf = async d => { await download(`/invoices/${d.id}/invoice.pdf`, `${d.
 const fxSkipText = r => ({fee_zero: t("fx_skip_fee_zero"), inactive_student: t("fx_skip_inactive_student"), not_enrolled_yet: t("fx_skip_not_enrolled_yet"),
   first_month_skipped: t("fx_skip_first_month_skipped"), already_invoiced: t("fx_skip_already_invoiced"), not_active: t("fx_skip_not_active")})[r] || r;
 const fxSkipList = () => (S.fxGenResult || []).length ? `<div class="msg err"><b>${t("fx_skip_title")}</b><ul>${S.fxGenResult.map(x => `<li>${esc(x.student)} · ${esc(x.course)} ${esc(x.batch)}: ${esc(fxSkipText(x.reason))}</li>`).join("")}</ul></div>` : "";
+// Session 4: one form instead of two prompts and the old "10%" convention
 DO.fxDisc = async d => {
-  const v = fxAsk(t("fx_prompt_discount")); if (!v) return false;
-  const r = fxAsk(t("fx_prompt_reason")); if (!r) return false;
-  const pctv = v.endsWith("%");
-  await api(`/invoices/${d.id}/discount`, "POST", {kind: pctv ? "percent" : "fixed", value: v.replace("%", "").trim(), reason: r}); flash(t("saved"), true);
+  const v = await ui.form(t("fx_discount") + (d.no ? " · " + d.no : ""), [
+    {id: "kind", label: t("fx_kind"), type: "select", options: [["fixed", t("fx_disc_fixed")], ["percent", t("fx_disc_percent")]], value: "fixed"},
+    {id: "value", label: t("fx_value"), type: "number", required: true, min: 1, step: 1, inputmode: "numeric"},
+    {id: "reason", label: t("fx_prompt_reason"), type: "textarea", required: true, maxlength: 300}],
+    {okText: t("fx_discount"), validate: x => x.kind === "percent" && +x.value > 100 ? t("fx_disc_over_100") : ""});
+  if (!v) return false;
+  await api(`/invoices/${d.id}/discount`, "POST", {kind: v.kind, value: v.value, reason: v.reason}); flash(t("saved"), true);
 };
-DO.fxVoid = async d => { const r = fxAsk(t("fx_prompt_reason")); if (!r) return false; await api(`/invoices/${d.id}/void`, "POST", {reason: r}); flash(t("saved"), true); };
-DO.fxWaive = async d => { const r = fxAsk(t("fx_prompt_reason")); if (!r) return false; await api(`/invoices/${d.id}/waive`, "POST", {reason: r}); flash(t("saved"), true); };
-DO.fxReopen = async d => { const r = fxAsk(t("fx_prompt_reason")); if (!r) return false; await api(`/invoices/${d.id}/reopen`, "POST", {reason: r}); flash(t("saved"), true); };
-DO.fxRev = async d => { const r = fxAsk(t("fx_prompt_reason")); if (!r) return false; await api(`/payments/${d.id}/reverse`, "POST", {reason: r}); flash(t("saved"), true); };
+DO.fxVoid = async d => { const r = await fxAsk(t("fx_void"), {danger: true, okText: t("fx_void")}); if (!r) return false; await api(`/invoices/${d.id}/void`, "POST", {reason: r}); flash(t("saved"), true); };
+DO.fxWaive = async d => { const r = await fxAsk(t("fx_waive"), {okText: t("fx_waive")}); if (!r) return false; await api(`/invoices/${d.id}/waive`, "POST", {reason: r}); flash(t("saved"), true); };
+DO.fxReopen = async d => { const r = await fxAsk(t("fx_reopen"), {okText: t("fx_reopen")}); if (!r) return false; await api(`/invoices/${d.id}/reopen`, "POST", {reason: r}); flash(t("saved"), true); };
+DO.fxRev = async d => { const r = await fxAsk(t("fx_reverse"), {danger: true, okText: t("fx_reverse")}); if (!r) return false; await api(`/payments/${d.id}/reverse`, "POST", {reason: r}); flash(t("saved"), true); };
 DO.fxEnd = async d => { await api("/discounts/" + d.id, "DELETE"); flash(t("saved"), true); };
 DO.fxFamDel = async d => { await api(`/families/${d.fid}/members/${d.sid}`, "DELETE"); flash(t("saved"), true); };
 DO.fxRemind = async d => {   // open the chat first (popup blockers need it inside the click), then record that it was sent
@@ -116,15 +116,16 @@ DO.fxPrBack = () => { S.fxf = {...(S.fxf || {}), hist: null}; };
 DO.fxCsv = async () => { const m = val("fxr_m") || fxMonth(); await download("/fees/report.csv?month=" + m, `fees-${m}.csv`); return false; };
 
 const invRow = i => `<div class="cl ${i.status === "void" ? "off" : ""}"><div><b>${esc(i.student_name)}</b> ${fxBadge(i)}<br><span class="hint">${ltr(i.number)} · ${esc(i.course_name)} ${esc(i.batch_code)} · ${t("fx_due_on")} ${ltr(i.due_date)}</span><br>${mvr(i.amount_due_mvr)} · ${t("fx_balance")}: ${mvr(i.balance)}${i.status_reason ? `<br><span class="hint">${esc(i.status_reason)}</span>` : ""}</div>
-  <div class="seg"><button class="btn sm" data-do="fxInvPdf" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_invoice_pdf")}</button>${["unpaid", "slip_submitted"].includes(i.status) ? `<button class="btn sm" data-do="fxDisc" data-id="${i.id}">${t("fx_discount")}</button><button class="btn sm" data-do="fxWaive" data-id="${i.id}">${t("fx_waive")}</button><button class="btn sm" data-do="fxVoid" data-id="${i.id}">${t("fx_void")}</button>` : ""}${["void", "waived"].includes(i.status) ? `<button class="btn sm" data-do="fxReopen" data-id="${i.id}">${t("fx_reopen")}</button>` : ""}</div></div>`;
+  <div class="seg"><button class="btn sm" data-do="fxInvPdf" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_invoice_pdf")}</button>${["unpaid", "slip_submitted"].includes(i.status) ? `<button class="btn sm" data-do="fxDisc" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_discount")}</button><button class="btn sm" data-do="fxWaive" data-id="${i.id}">${t("fx_waive")}</button><button class="btn sm" data-do="fxVoid" data-id="${i.id}">${t("fx_void")}</button>` : ""}${["void", "waived"].includes(i.status) ? `<button class="btn sm" data-do="fxReopen" data-id="${i.id}">${t("fx_reopen")}</button>` : ""}</div></div>`;
 
 const FX = {
   async slips() {
     const l = await api("/slips?status=pending");
-    return `<div class="panel"><h2>${t("fx_tab_slips")}</h2>${l.length ? l.map(s => `<div class="sub"><b>${esc(s.student_name)}</b> · ${ltr(s.invoice_number)} · ${esc(s.course_name)} ${esc(s.batch_code)}<br>
+    const hl = S.fxhl; if (hl) mount(() => { const c = document.querySelector(`[data-inv="${hl}"]`); S.fxhl = null; if (c) { c.scrollIntoView({block: "center"}); c.focus({preventScroll: true}); } });
+    return `<div class="panel"><h2>${t("fx_tab_slips")}</h2>${l.length ? l.map(s => `<div class="sub${hl === s.invoice_id ? " next" : ""}" data-inv="${s.invoice_id}" tabindex="-1"><b>${esc(s.student_name)}</b> · ${ltr(s.invoice_number)} · ${esc(s.course_name)} ${esc(s.batch_code)}<br>
       ${t("fx_amount_sent")}: ${mvr(s.amount_mvr)} · ${t("fx_balance")}: ${mvr(s.balance)} · ${t("fx_transfer_date")}: ${ltr(s.transfer_date)}${s.reference ? ` · ${t("fx_reference")}: ${ltr(s.reference)}` : ""}
       ${s.duplicates.length ? `<div class="msg err">${t("fx_dup_warn")} ${s.duplicates.map(x => ltr(x.invoice_number) + " " + esc(x.student_name)).join(", ")}</div>` : ""}
-      <div class="row" style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:end"><button class="btn sm" data-do="fxView" data-id="${s.id}" data-name="${esc(s.file_name)}">${t("fx_view_slip")}</button>
+      <div class="rowflex row"><button class="btn sm" data-do="fxView" data-id="${s.id}" data-name="${esc(s.file_name)}">${t("fx_view_slip")}</button>
       <label style="flex:0 1 150px">${t("fx_amount_received")}<input id="fxv_${s.id}" type="number" min="1" step="1" inputmode="numeric" value="${Math.min(s.amount_mvr, s.balance) || s.amount_mvr}"></label>
       <button class="btn" data-do="fxVerify" data-id="${s.id}" data-dup="${s.duplicate_verified ? 1 : 0}">${t("fx_verify")}</button><button class="btn alt" data-do="fxReject" data-id="${s.id}">${t("reject")}</button></div></div>`).join("") : `<p>${t("fx_no_slips")}</p>`}</div>`;
   },
@@ -132,8 +133,8 @@ const FX = {
     const f = S.fxf || {}, q = new URLSearchParams();
     if (f.month) q.set("month", f.month); if (f.status) q.set("status", f.status); if (f.q) q.set("q", f.q);
     const l = await api("/invoices?" + q);
-    setTimeout(() => { const ff = $("#fxff"); if (ff) { $("#fxf_s").value = f.status || ""; ff.onsubmit = e => { e.preventDefault(); fxSet("month", val("fxf_m")); fxSet("status", val("fxf_s")); fxSet("q", val("fxf_q")); render(); }; } });
-    return `<div class="panel"><h2>${t("fx_generate")}</h2><div class="row" style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:end"><label>${t("fx_month")}<input id="fxg_m" type="month" value="${fxMonth()}"></label><button class="btn alt" data-do="fxGen">${t("fx_generate")}</button></div><p class="hint">${t("fx_generate_hint")}</p>${fxSkipList()}</div>
+    mount(() => { const ff = $("#fxff"); if (ff) { $("#fxf_s").value = f.status || ""; ff.onsubmit = e => { e.preventDefault(); fxSet("month", val("fxf_m")); fxSet("status", val("fxf_s")); fxSet("q", val("fxf_q")); render(); }; } });
+    return `<div class="panel"><h2>${t("fx_generate")}</h2><div class="rowflex row"><label>${t("fx_month")}<input id="fxg_m" type="month" value="${fxMonth()}"></label><button class="btn alt" data-do="fxGen">${t("fx_generate")}</button></div><p class="hint">${t("fx_generate_hint")}</p>${fxSkipList()}</div>
       <div class="panel"><form id="fxff" class="row"><label>${t("fx_month")}<input id="fxf_m" type="month" value="${esc(f.month || "")}"></label>
       <label>${t("status")}<select id="fxf_s"><option value="">${t("fx_all")}</option>${["unpaid", "slip_submitted", "overdue", "paid", "waived", "void"].map(s => `<option value="${s}">${t("fx_st_" + s)}</option>`).join("")}</select></label>
       <label>${t("fx_search")}<input id="fxf_q" value="${esc(f.q || "")}"></label><button class="btn">${t("fx_filter")}</button></form></div>
@@ -141,7 +142,7 @@ const FX = {
   },
   async record() {
     const [inv, pays] = await Promise.all([api("/invoices?status=open"), api("/payments")]);
-    setTimeout(() => onSubmit("fxp", () => api("/payments", "POST", {invoice_id: val("fxp_i"), amount_mvr: val("fxp_a"), method: val("fxp_m"), paid_on: val("fxp_d") || undefined, reference: val("fxp_r"), note: val("fxp_n")})));
+    mount(() => onSubmit("fxp", () => api("/payments", "POST", {invoice_id: val("fxp_i"), amount_mvr: wholeNum("fxp_a", "fx_amount_received", {min: 1, empty: false}), method: val("fxp_m"), paid_on: val("fxp_d") || undefined, reference: val("fxp_r"), note: val("fxp_n")})));
     return `<div class="panel"><h2>${t("fx_tab_record")}</h2>${inv.length ? `<form id="fxp" class="row">${field("fxp_i", t("fx_invoice"), "", inv.map(i => [i.id, `${i.number} · ${i.student_name} · MVR ${i.balance}`]))}
       <label>${t("fx_amount_received")}<input id="fxp_a" type="number" min="1" step="1" inputmode="numeric" required></label>${field("fxp_m", t("fx_method"), "", ["cash", "bank_transfer", "other"].map(m => [m, t("fx_m_" + m)]))}
       <label>${t("date")}<input id="fxp_d" type="date" max="${mvToday()}" value="${mvToday()}"></label><label>${t("fx_reference")}<input id="fxp_r"></label><label>${t("fx_note")}<input id="fxp_n"></label><button class="btn alt">${t("fx_record")}</button></form>` : `<p>${t("fx_nothing_open")}</p>`}</div>
@@ -151,7 +152,7 @@ const FX = {
   async discounts() {
     const [ds, fams, en, st] = await Promise.all([api("/discounts"), api("/families"), api("/enrollments"), api("/users?role=student")]);
     const kinds = [["fixed", "MVR"], ["percent", "%"]];
-    setTimeout(() => {
+    mount(() => {
       onSubmit("fxd", () => api("/discounts", "POST", {enrollment_id: val("fxd_e"), kind: val("fxd_k"), value: val("fxd_v"), reason: val("fxd_r")}));
       onSubmit("fxfam", () => api("/families", "POST", {name: val("fxfam_n"), concession_kind: val("fxfam_k"), concession_value: val("fxfam_v") || 0, concession_reason: val("fxfam_r")}));
       onSubmit("fxm", () => api(`/families/${val("fxm_f")}/members`, "POST", {student_id: val("fxm_s")}));
@@ -182,8 +183,8 @@ const FX = {
     }
     const [r, courses, batches] = await Promise.all([api("/fees/payment-report?" + fxPrQuery()), api("/courses"), api("/batches")]);
     const T_ = r.totals, sel = (id, cur, opts) => `<select id="${id}"><option value="">${t("All")}</option>${opts.map(([v, l]) => `<option value="${esc(v)}" ${String(cur || "") === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
-    setTimeout(() => { const fm = $("#fxpr"); if (fm) fm.onsubmit = e => { e.preventDefault(); S.fxf = {...(S.fxf || {}), prm: val("fxp_m") || fxMonth(), prc: val("fxp_c"), prb: val("fxp_b"), prk: val("fxp_k"), prs: val("fxp_s")}; render(); }; });
-    return `<div class="panel"><form id="fxpr" class="row" style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:end"><label>${t("fx_month")}<input id="fxp_m" type="month" value="${esc(r.month)}"></label>
+    mount(() => { const fm = $("#fxpr"); if (fm) fm.onsubmit = e => { e.preventDefault(); S.fxf = {...(S.fxf || {}), prm: val("fxp_m") || fxMonth(), prc: val("fxp_c"), prb: val("fxp_b"), prk: val("fxp_k"), prs: val("fxp_s")}; render(); }; });
+    return `<div class="panel"><form id="fxpr" class="rowflex row"><label>${t("fx_month")}<input id="fxp_m" type="month" value="${esc(r.month)}"></label>
       <label>${t("Course")}${sel("fxp_c", f.prc, courses.map(c => [c.id, c.name]))}</label><label>${t("Batch")}${sel("fxp_b", f.prb, batches.map(b => [b.id, (b.course_name || "") + " " + b.code]))}</label>
       <label>${t("Type")}${sel("fxp_k", f.prk, [["course", t("Course")], ["tuition", t("Tuition class")]])}</label>
       <label>${t("Status")}${sel("fxp_s", f.prs, [["paid", t("Paid")], ["partial", t("Partially Paid")], ["unpaid", t("Unpaid")], ["waived", t("Waived")], ["none", t("No invoice")]])}</label>
@@ -194,7 +195,7 @@ const FX = {
   async report() {
     const m = (S.fxf || {}).rep || fxMonth();
     const r = await api("/fees/report?month=" + m), T_ = r.totals;
-    setTimeout(() => { const f = $("#fxr"); if (f) f.onsubmit = e => { e.preventDefault(); fxSet("rep", val("fxr_m") || fxMonth()); render(); }; });
+    mount(() => { const f = $("#fxr"); if (f) f.onsubmit = e => { e.preventDefault(); fxSet("rep", val("fxr_m") || fxMonth()); render(); }; });
     return `<div class="panel"><form id="fxr" class="row"><label>${t("fx_month")}<input id="fxr_m" type="month" value="${esc(m)}"></label><button class="btn">${t("fx_show")}</button><button type="button" class="btn alt" data-do="fxCsv">${t("fx_csv")}</button></form></div>
       <div class="stats">${[[t("fx_invoiced"), T_.invoiced], [t("fx_collected"), T_.collected], [t("fx_outstanding"), T_.outstanding]].map(([k, v]) => `<div class="stat"><b>${mvr(v)}</b>${k}</div>`).join("")}<div class="stat"><b>${T_.overdue_count}</b>${t("fx_st_overdue")}</div></div>
       <div class="panel"><h2>${t("fx_by_course")}</h2>${r.by_course.map(c => `<div class="cl"><span>${esc(c.course_name)}</span><span>${mvr(c.collected)} / ${mvr(c.invoiced)}</span></div>`).join("") || `<p>${t("empty")}</p>`}</div>
@@ -207,7 +208,7 @@ async function fxAdmin() {
   if (!S.fxCaughtUp) { S.fxCaughtUp = true; try { await api("/invoices/catch-up", "POST"); } catch (x) { /* not allowed or offline: the Fees screen still opens */ } }   // bills anyone enrolled since the last run
   const tab = S.fxt || "slips";
   const inner = await FX[tab]();
-  return `<h1>${t("fees")}</h1><div class="subtabs" role="tablist">${FX_TABS.map(k => `<button data-do="fxTab" data-v="${k}" ${k === tab ? 'aria-current="true"' : ""}>${t("fx_tab_" + k)}</button>`).join("")}</div>${inner}`;
+  return `<h1>${t("fees")}</h1>${tabs({id: "fees", items: FX_TABS.map(k => [k, t("fx_tab_" + k)]), current: tab, onSelect: fxSelect, label: t("fees")})}${inner}`;
 }
 
 views.fees = async () => S.user.role === "admin" ? fxAdmin() : fxStudent();

@@ -613,7 +613,7 @@ def register(app, c):
                                (iid, g.user["id"], name, shown, digest, amount, tdate.isoformat(), (f.get("reference") or "").strip()[:80] or None, stamp()))
             P.recompute(iid)
             audit_c("slip_upload", "invoice", iid, f"slip {cur.lastrowid}, claimed {amount} MVR")
-            c.notify(c.notify_admins_with("fees"), "slip_uploaded", "New payment slip", f"{g.user['full_name']} sent a slip for {amount} MVR.", "fees")   # Session 28
+            c.notify(c.notify_admins_with("fees"), "slip_uploaded", "New payment slip", f"{g.user['full_name']} sent a slip for {amount} MVR.", f"fees:{iid}")   # Session 28
             db().commit()
         except Exception:
             db().rollback()
@@ -674,7 +674,7 @@ def register(app, c):
             db().rollback()
             return money_err(x)
         audit_c("slip_verify", "payment", p["id"], f"slip {sid}, invoice {s['invoice_id']}, {p['amount_mvr']} MVR, {p['receipt_no']}" + (", duplicate confirmed" if dup["duplicates"] else ""))
-        c.notify([s["student_id"]], "slip_verified", "Payment received", f"We received {p['amount_mvr']} MVR. Receipt {p['receipt_no']}.", "fees")   # Session 28
+        c.notify([s["student_id"]], "slip_verified", "Payment received", f"We received {p['amount_mvr']} MVR. Receipt {p['receipt_no']}.", f"fees:{s['invoice_id']}")   # Session 28
         db().commit()
         return jsonify(payment_id=p["id"], receipt_no=p["receipt_no"], invoice=get_invoice(s["invoice_id"]), warnings=[{"duplicate_of": dup["duplicates"]}] if dup["duplicates"] else [])
 
@@ -689,7 +689,8 @@ def register(app, c):
             return err("Slip not found", 404) if not s else err(f"This slip was already {s['status']}", 409)
         P.recompute(one("SELECT invoice_id FROM payment_slips WHERE id=?", (sid,))["invoice_id"])
         audit_c("slip_reject", "slip", sid, reason)
-        c.notify([one("SELECT student_id FROM payment_slips WHERE id=?", (sid,))["student_id"]], "slip_rejected", "Payment slip not accepted", f"Reason: {reason}. Please send a new slip.", "fees")   # Session 28
+        sl = one("SELECT student_id,invoice_id FROM payment_slips WHERE id=?", (sid,))
+        c.notify([sl["student_id"]], "slip_rejected", "Payment slip not accepted", f"Reason: {reason}. Please send a new slip.", f"fees:{sl['invoice_id']}")   # Session 28; link: Session 16
         db().commit()
         return jsonify(ok=True)
 

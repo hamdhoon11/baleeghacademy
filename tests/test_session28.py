@@ -70,7 +70,7 @@ class S28(unittest.TestCase):
         type(self).aid = r.get_json()["id"]
         for h in (self.S1, self.S2):
             it = [i for i in self.inbox(h)["items"] if i["kind"] == "assignment_new"]
-            self.assertEqual(len(it), 1); self.assertIn("Essay", it[0]["body"]); self.assertIn("2027-03-15", it[0]["body"]); self.assertEqual(it[0]["link"], "assignments")
+            self.assertEqual(len(it), 1); self.assertIn("Essay", it[0]["body"]); self.assertIn("2027-03-15", it[0]["body"]); self.assertEqual(it[0]["link"], f"assignments:{self.aid}")   # v0.8.33: tab:id
         self.assertNotIn("assignment_new", self.kinds(self.S3)); self.assertNotIn("assignment_new", self.kinds(self.T1))
 
     def test_03_grade_and_grade_change(self):
@@ -129,7 +129,7 @@ class S28(unittest.TestCase):
         self.assertEqual(self.count("slip_uploaded", self.lim), 0)             # an admin without the fees area is not
         self.assertEqual(self.c.post(f"/api/slips/{sid}/verify", json={}, headers=self.H).status_code, 200)
         it = [i for i in self.inbox(self.S1)["items"] if i["kind"] == "slip_verified"]
-        self.assertEqual(len(it), 1); self.assertIn("400", it[0]["body"]); self.assertEqual(it[0]["link"], "fees")
+        self.assertEqual(len(it), 1); self.assertIn("400", it[0]["body"]); self.assertEqual(it[0]["link"], f"fees:{inv}")
         sid2 = up(100).get_json()["id"]
         self.assertEqual(self.c.post(f"/api/slips/{sid2}/reject", json={"reason": "Blurry photo"}, headers=self.H).status_code, 200)
         it = [i for i in self.inbox(self.S1)["items"] if i["kind"] == "slip_rejected"]
@@ -288,6 +288,19 @@ class S28(unittest.TestCase):
         finally: self.app.config.pop("CRON_SECRET", None)
         import json
         self.assertIn("/api/cron/reminders", [x["path"] for x in json.load(open(os.path.join(ROOT, "vercel.json"), encoding="utf-8"))["crons"]])
+
+    def test_20a_links_open_the_item(self):
+        """Session 16 (v0.8.33): links are "tab:id" so the page opens the assignment, invoice or batch; students' class messages stay on Home."""
+        links = lambda h, kind: {i["link"] for i in self.inbox(h)["items"] if i["kind"] == kind}
+        self.assertEqual(links(self.S1, "grade"), {f"assignments:{self.aid}"})
+        inv = self.sql("SELECT id FROM invoices WHERE student_id=? ORDER BY id", (self.s1,))[0]["id"]
+        self.assertEqual(links(self.S1, "slip_rejected"), {f"fees:{inv}"})
+        self.assertEqual(links(self.S1, "class_cancelled"), {"home"})
+        self.assertEqual(links(self.T1, "class_cancelled"), {f"classroom:{self.b1}"})
+        self.assertEqual(links(self.T2, "substitute_assigned"), {f"classroom:{self.b1}"})
+        self.assertEqual(links(self.T2, "substitute_removed"), {"home"})
+        for tab_id in links(self.S1, "grade") | links(self.T1, "class_cancelled"):   # the tab part is always a real tab name the page knows
+            self.assertRegex(tab_id, r"^[a-z_]+(:\d+)?$")
 
     def test_20_admin_screens_are_admin_only(self):
         for h in (self.T1, self.S1, self.L):

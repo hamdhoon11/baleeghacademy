@@ -29,7 +29,7 @@ try:
             pg = br.new_context(viewport={"width": 390, "height": 800}).new_page()
             pg.on("pageerror", lambda e: errors.append(str(e)))
             return pg
-        def login(pg, e, w): pg.goto(BASE + "/"); pg.fill("#le", e); pg.fill("#lp", w); pg.click("#fl button"); pg.wait_for_selector("nav")
+        def login(pg, e, w): e2e_shim.login(pg, BASE, e, w, db=env["DATABASE_PATH"])   # Session 22: forced change, course chooser, waits for the app
         def opened(pg):
             pg.click("nav [data-v=teacher_information]"); pg.wait_for_selector("#tif")
             pg.fill("#tif_q", "demo"); pg.click("#tif button"); pg.wait_for_selector(".cl:has-text('Demo Teacher')")

@@ -1,0 +1,101 @@
+"""Browser checks for the v0.8.33 UI corrections (Session 22c): Session 1 (a failed save keeps the form), Session 2 (dialogs: Escape,
+focus back to the button that opened them), Session 9A (tabs are links, crumbs, Back), Session 14 (grading in place, Save all,
+attendance guard). Run: python tests/e2e_ui.py (needs playwright + chromium)"""
+import os, sys, subprocess, time, tempfile, json, urllib.request
+from playwright.sync_api import sync_playwright
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import e2e_shim  # noqa: E402
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+tmp = tempfile.mkdtemp(); PORT = "5086"; B = f"http://127.0.0.1:{PORT}"
+env = dict(os.environ, DATABASE_PATH=os.path.join(tmp, "u.db"), ADMIN_EMAIL="admin@u.test", ADMIN_PASSWORD="AdminPass123", PORT=PORT, SECRET_KEY="u", NO_PROXY="127.0.0.1,localhost")
+subprocess.run([sys.executable, "seed.py"], cwd=ROOT, env=env, check=True, capture_output=True)
+srv = subprocess.Popen([sys.executable, "app.py"], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(2.5)
+fails, errs = [], []
+def ok(name, cond, extra=""):
+    print(("PASS " if cond else "FAIL ") + name + (" " + str(extra) if not cond and extra else ""))
+    if not cond: fails.append(name)
+def api(path, body=None, tok=None, method=None):
+    r = urllib.request.Request(B + "/api" + path, data=json.dumps(body).encode() if body is not None else None, method=method, headers={"Content-Type": "application/json", **({"Authorization": "Bearer " + tok} if tok else {})})
+    return json.load(urllib.request.urlopen(r))
+e2e_shim.clear_forced_change(env["DATABASE_PATH"])   # seeded accounts start with the forced password change (Session 11)
+try:
+    adm = api("/auth/login", {"email": "admin@u.test", "password": "AdminPass123"})["token"]
+    aid = api("/batches/1/assignments", {"title": "Essay one", "max_points": 10}, adm)["id"]
+    with sync_playwright() as p:
+        b = p.chromium.launch()
+        def page(w=1366, h=800):
+            pg = b.new_context(viewport={"width": w, "height": h}).new_page(); pg.on("pageerror", lambda x: errs.append(str(x))); return pg
+
+        # ---- Session 1: a failed save keeps what was typed, shows the message next to the form, button usable again ----
+        a = page(); e2e_shim.login(a, B, "admin@u.test", "AdminPass123", db=env["DATABASE_PATH"])
+        a.click("nav [data-v=people]"); a.click("details.addp[data-add=person] summary")
+        a.evaluate("document.querySelector('#fu').dataset.mark = 'same-node'")   # proves the form was not redrawn
+        a.fill("#un", "Second Admin Copy"); a.fill("#ue", "admin@u.test"); a.select_option("#ur", "admin")   # the email is taken: the server says no
+        a.click("#fu button"); a.wait_for_selector("[data-err][role=alert]")
+        ok("S1: error shown in a role=alert banner right before the form", a.evaluate("document.querySelector('#fu').previousElementSibling.matches('[data-err][role=alert]')"))
+        ok("S1: the form is the same element and keeps what was typed", a.evaluate("document.querySelector('#fu').dataset.mark") == "same-node" and a.input_value("#un") == "Second Admin Copy")
+        ok("S1: the submit button is enabled again and not busy", a.evaluate("(b => !b.disabled && !b.hasAttribute('aria-busy'))(document.querySelector('#fu button'))"))
+        ok("S1: the banner has focus (screen readers and keyboard land on it)", a.evaluate("document.activeElement.matches('[data-err]')"))
+
+        # ---- Session 1: the button is disabled while its request runs ----
+        a.route("**/api/courses/*", lambda r: (time.sleep(1.2), r.continue_()) if r.request.method == "DELETE" else r.continue_())
+        # ---- Session 2: dialog opens with focus on Cancel (danger), Escape closes, focus returns to the opener ----
+        a.click("nav [data-v=courses]"); a.click("[data-do=ecEdit]"); a.wait_for_selector("#fce")
+        ok("S9A: crumb 'Courses and tuition > course' above the h1", a.is_visible(".crumb") and a.evaluate("document.querySelector('.crumb').nextElementSibling.tagName") == "H1")
+        a.click("[data-do=ecDel]"); a.wait_for_selector("dialog.dlg[open]")
+        ok("S2: delete confirm is a danger dialog that names what will be deleted", a.is_visible("dialog.dlg.danger[open]") and "Arabic" in a.inner_text("dialog.dlg[open]"))
+        ok("S2: focus starts on Cancel for a danger dialog", a.evaluate("document.activeElement.value") == "cancel")
+        a.keyboard.press("Tab"); a.keyboard.press("Tab"); a.keyboard.press("Tab")
+        ok("S2: Tab stays inside the dialog", a.evaluate("!!document.activeElement.closest('dialog.dlg')"))
+        a.keyboard.press("Escape"); a.wait_for_selector("dialog.dlg", state="detached")
+        ok("S2: Escape cancels and focus returns to the Delete button", a.evaluate("document.activeElement.dataset.do") == "ecDel")
+        ok("S2: nothing was deleted (still editing)", a.is_visible("#fce"))
+        a.click("[data-do=ecDel]"); a.wait_for_selector("dialog.dlg[open]"); a.click("dialog.dlg[open] button[value=ok]")
+        a.wait_for_function("(b => b && b.disabled && b.getAttribute('aria-busy') === 'true')(document.querySelector('[data-do=ecDel]'))", timeout=3000)
+        ok("S1: the clicked button is disabled with aria-busy while the request runs", True)
+        a.wait_for_selector("[data-err][role=alert]")   # the seeded course has batches: the server refuses
+        ok("S1: refused delete shows the reason next to the editor, editor kept", a.is_visible("#fce") and "batch" in a.inner_text("[data-err]").lower())
+        a.unroute("**/api/courses/*")
+
+        # ---- Session 9A: tabs are links; Back from an editor; quick jump also reachable by the Search button ----
+        ok("S9A: every tab is a link to #name", a.evaluate("[...document.querySelectorAll('nav [data-v]')].every(e => e.tagName === 'A' && e.getAttribute('href') === '#' + e.dataset.v)"))
+        a.click(".crumb a"); a.wait_for_selector("#fce", state="detached")
+        ok("S9A: the crumb link goes back to the list", a.evaluate("location.hash") == "#courses")
+        a.click("#qjTop"); a.wait_for_selector("dialog.dlg[open] [role=combobox]"); a.keyboard.press("Escape")
+        ok("S9B: Search button in the sidebar opens quick jump; Escape returns focus to it", a.evaluate("document.activeElement.id") == "qjTop")
+
+        # ---- Session 14: grading in place ----
+        t = page(); e2e_shim.login(t, B, "teacher@baleegh.test", "ChangeMe-Teach1", db=env["DATABASE_PATH"], batch=1)
+        t.click("nav [data-v=classroom]"); t.click(e2e_shim.subtab("classroom", "assignments")); t.click(f"[data-do=selA][data-id='{aid}']"); t.wait_for_selector("#gradep")
+        t.evaluate("document.querySelector('#gradep').dataset.mark = 'same-node'")
+        sid = t.get_attribute("#gradep .sub[data-sid]", "data-sid")
+        t.fill(f"#g_{sid}", "8"); t.fill(f"#f_{sid}", "Good work"); t.click(f"[data-do=saveG][data-sid='{sid}']"); t.wait_for_selector(f"#gs_{sid}:not([hidden])")
+        ok("S14: grade saved in place with a Saved mark (no redraw)", t.evaluate("document.querySelector('#gradep').dataset.mark") == "same-node")
+        ok("S14: focus stays in the student's row (on the Saved mark once the row locks)", t.evaluate(f"!!document.activeElement.closest('.sub[data-sid=\\'{sid}\\']')"))
+        g = api(f"/assignments/{aid}/submissions", tok=api("/auth/login", {"email": "teacher@baleegh.test", "password": "ChangeMe-Teach1"})["token"])
+        ok("S14: the server has the grade", any(r["grade"] == 8 for r in g["students"]))
+        ok("S14: without 'Change saved grades' the saved row locks itself (no redraw needed)", t.is_disabled(f"#g_{sid}") and t.locator(f"[data-do=saveG][data-sid='{sid}']").count() == 0)
+        tid = [u for u in api("/users?role=teacher", tok=adm) if u["email"] == "teacher@baleegh.test"][0]["id"]
+        api(f"/users/{tid}", {"permissions": ["classroom", "tutorials", "create_tutorials", "class_links", "add_recordings", "edit_grades", "cancel_class"]}, adm, "PATCH")
+        t.reload(); t.wait_for_selector("[data-tabs=classroom]"); t.click(e2e_shim.subtab("classroom", "assignments")); t.click(f"[data-do=selA][data-id='{aid}']")
+        t.wait_for_selector(f"#f_{sid}:not([disabled])")
+        t.fill(f"#f_{sid}", "Very good work"); t.click("[data-do=saveGAll]"); t.wait_for_selector("#gradep .saved[data-err]")
+        ok("S14: Save all saves the changed row and says how many", "1 grades saved" in t.inner_text("#gradep .saved[data-err]"))
+        t.click("[data-do=saveGAll]"); t.wait_for_timeout(400)
+        ok("S14: Save all with nothing changed says so", "Nothing changed" in t.inner_text("#gradep .saved[data-err]"))
+        # attendance: Mark all present, then a date change asks first; Cancel keeps the date and the marks
+        t.click(e2e_shim.subtab("classroom", "attendance")); t.wait_for_selector("#attp")
+        t.locator(".seg input[value=absent]").first.check(); t.click("[data-do=attAllPresent]")
+        ok("S14: Mark all present ticks everyone present", t.evaluate("[...document.querySelectorAll('#attp .seg input[value=present]')].every(i => i.checked)"))
+        before = t.input_value("#adate")
+        t.fill("#adate", "2026-01-05"); t.dispatch_event("#adate", "change"); t.wait_for_selector("dialog.dlg[open]"); t.wait_for_timeout(300)
+        ok("S14: only one dialog even when the date field sends change twice", t.locator("dialog.dlg[open]").count() == 1)
+        ok("S14: changing the date with unsaved marks asks first", "not saved" in t.inner_text("dialog.dlg[open]"))
+        e2e_shim.dialog(t, ok=False)
+        ok("S14: Cancel keeps the date", t.input_value("#adate") == before)
+        t.click("[data-do=saveAtt]"); t.wait_for_selector("text=Attendance saved for")
+        ok("S14: the save message counts the students", "Attendance saved for 1 students" in t.inner_text("main"))
+        ok("no script errors", not errs, errs[:3])
+        b.close()
+finally:
+    srv.terminate()
+print("\n%d failure(s)" % len(fails)); sys.exit(1 if fails else 0)

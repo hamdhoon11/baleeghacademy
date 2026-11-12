@@ -31,7 +31,7 @@ try:
             pg.on("pageerror", lambda e: errors.append(str(e)))
             return pg
         def login(pg, e, w):
-            pg.goto(BASE + "/"); pg.fill("#le", e); pg.fill("#lp", w); pg.click("#fl button"); pg.wait_for_selector("nav")
+            e2e_shim.login(pg, BASE, e, w, db=env["DATABASE_PATH"])   # Session 22
             pg.click("nav [data-v=tutorials]"); pg.wait_for_selector("#tff")
 
         # teacher posts
@@ -46,8 +46,7 @@ try:
         check(s.locator("#tfp").count() == 0, "student does not see the post form")
         s.wait_for_selector("text=Verb tables")
         check(s.locator(".tag", has_text="Not answered yet").count() == 1, "student sees Not answered yet")
-        with s.expect_download() as dl: s.click("[data-do=dlTut]")
-        check(open(dl.value.path(), "rb").read() == PDF, "student downloads the tutorial file")
+        check(e2e_shim.preview_bytes(s, "[data-do=dlTut]") == PDF, "student opens the tutorial file")
         s.click("[data-do=openT]"); s.wait_for_selector("#tans_x"); check(s.locator("#tans_f").count() == 1, "answer box has text and file")
         s.click("[data-do=sendTAns]"); s.wait_for_selector(".msg, .flash, [role=alert], #fl, body"); time.sleep(0.5)
         check(s.locator(".tag", has_text=re.compile(r"^Answered$")).count() == 0 and s.locator("[data-do=dlTAns]").count() == 0, "an empty answer is refused and nothing is saved")
@@ -61,19 +60,19 @@ try:
         t.click("nav [data-v=home]"); t.click("nav [data-v=tutorials]"); t.wait_for_selector("[data-do=openT]")
         check("(1)" in t.locator("[data-do=openT]").inner_text(), "teacher now sees Answers (1)")
         t.click("[data-do=openT]"); t.wait_for_selector("text=Changed text"); check(t.locator("[data-do=dlTAns]").count() == 1, "teacher sees the student's text and file")
-        with t.expect_download() as dl2: t.click("[data-do=dlTAns]")
-        check(open(dl2.value.path(), "rb").read() == PDF + b" answer", "teacher downloads the student's file")
+        check(e2e_shim.preview_bytes(t, "[data-do=dlTAns]") == PDF + b" answer", "teacher opens the student's file")
         a = page_for(); login(a, "admin@s.test", "AdminPass123"); a.wait_for_selector("[data-do=openT]"); a.click("[data-do=openT]")
         a.wait_for_selector("text=Demo Student"); check(True, "admin sees the answer with the student's name")
 
         # other people
-        o = page_for(); login(o, "t2@s.test", "Password123"); o.wait_for_selector("text=Verb tables")
-        check(o.locator("[data-do=openT]").count() == 0, "another teacher sees no answers button")
-        l = page_for(); login(l, "lim@s.test", "Password123"); l.wait_for_selector("text=Verb tables")
+        # Session 18: a teacher sees tutorials of their own courses only, a student those of courses they are enrolled in
+        o = page_for(); login(o, "t2@s.test", "Password123"); o.wait_for_selector("#tff")
+        check(o.locator("text=Verb tables").count() == 0 and o.locator("[data-do=openT]").count() == 0, "another teacher (no batch in that course) does not see it or its answers")
+        l = page_for(); login(l, "lim@s.test", "Password123"); l.wait_for_selector("#tff")
         check(l.locator("[data-do=openT]").count() == 0 and l.locator(".tag", has_text="Not answered yet").count() == 0, "a student without Submit tutorial work sees no answer box")
         check(s.locator("[data-do=delTut]").count() == 0, "student has no delete button")
         t.click("nav [data-v=home]"); t.click("nav [data-v=tutorials]"); t.wait_for_selector("[data-do=delTut]")
-        t.once("dialog", lambda d: d.accept()); t.click("[data-do=delTut]"); t.wait_for_selector("text=Verb tables", state="detached"); check(True, "teacher deletes their tutorial")
+        t.click("[data-do=delTut]"); e2e_shim.dialog(t); t.wait_for_selector("text=Verb tables", state="detached"); check(True, "teacher deletes their tutorial")
         br.close()
 finally:
     srv.terminate(); shutil.rmtree(tmp, ignore_errors=True)
