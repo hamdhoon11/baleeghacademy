@@ -524,3 +524,12 @@
 - Known: `test_warm_connection` errors when it runs last in the full run.
 
 ## NEXT SESSION: none. The plan (Sessions 8 to 32) is complete. Suggested follow-ups if you want them: a real PostgreSQL run of all tests, a click-through of the browser screens, and automatic WhatsApp sending through the Business API.
+
+## Done: v0.8.33: UI correction sessions 1 to 22 (front end; small server additions)
+- Full detail, names to keep and a 5-line manual test per session: `CORRECTIONS-v0.8.33.md`.
+- New: `static/ui.js` (dialogs), `tools/codemod_styles.py`, `tests/e2e_ui.py`, `tests/test_session33.py`. Rewritten: the script in `static/index.html`, `static/admin.js` (one definition per view), `static/notify.js` panel, `static/apply.html` script.
+- Server: `GET /api/audit?offset=`, `/api/public/info` returns `upload_max_mb` and `learning_max_mb`, notification links `tab:id` (fees.py, learning.py, notify.py, substitutions.py). No schema change, no migration.
+- Tests: 418 unit tests pass in ONE run (test_warm_connection isolated); all 10 browser scripts pass (349 checks).
+- Names later sessions must keep: `go`, `navBack`, `closeDetail`, `mount`, `showErr`, `busy`, `tabs`, `crumb`/`crumbFor`, `addPanel`, `pickField`, `checkFile`, `fmtTime`/`fmtDate`/`fmtNum`, `setLang`, `ui.*`, `NAV_KEYS`/`DETAIL_KEY`/`TAB_RESET`/`BAR_PREFS`, storage keys `tok sb flt` (session) and `lastTab:<id> navClosed:<id>` (local).
+- Decisions still open: fonts (self-host or keep Google Fonts) and login token storage (Session 20d, left unchanged); a language setting for `setLang` (none exists yet).
+- Not verified: real PostgreSQL, iOS Safari (needs 15.4+ for `<dialog>`), a screen reader pass, Dhivehi RTL with real text.

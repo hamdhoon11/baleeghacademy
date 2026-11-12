@@ -269,9 +269,10 @@ def register(app, c):
         was = ex["status"] if ex else "scheduled"   # Session 28: tell students (and the teacher, when someone else changed it) only when the state really changes
         now_st = new_status if ex else status
         if (was == "cancelled") != (now_st == "cancelled"):
-            who = c.notify_students_of(bid) + ([b["teacher_id"]] if b["teacher_id"] != g.user["id"] else [])
-            c.notify(who, "class_cancelled" if now_st == "cancelled" else "class_reinstated", "Class cancelled" if now_st == "cancelled" else "Class is back on",
-                     f"{day.strftime('%a %d %b')} at {st}" + (f": {d.get('note')}" if now_st == "cancelled" and d.get("note") else ""), "home")
+            kind_, title_ = ("class_cancelled", "Class cancelled") if now_st == "cancelled" else ("class_reinstated", "Class is back on")
+            text_ = f"{day.strftime('%a %d %b')} at {st}" + (f": {d.get('note')}" if now_st == "cancelled" and d.get("note") else "")
+            c.notify(c.notify_students_of(bid), kind_, title_, text_, "home")   # students have no Classroom tab
+            if b["teacher_id"] != g.user["id"]: c.notify([b["teacher_id"]], kind_, title_, text_, f"classroom:{bid}")   # Session 16: opens that batch's schedule
         db().commit()
         return jsonify(id=sid), 201
 
@@ -450,7 +451,7 @@ def register(app, c):
         aid = db().execute("INSERT INTO assignments(batch_id,title,description,kind,due_date,max_points,attachment,attachment_name,created_by) VALUES(?,?,?,?,?,?,?,?,?)",
                            (bid, d["title"].strip(), (d.get("description") or "").strip() or None, kind, due, mx, stored, shown, g.user["id"])).lastrowid
         audit("create_assignment", "assignment", aid, d["title"] + (" (with file)" if stored else ""), batch_id=bid)
-        c.notify(c.notify_students_of(bid), "assignment_new", "New " + ("test" if kind == "test" else "assignment"), d["title"].strip() + (f" (due {due[:10]})" if due else ""), "assignments")   # Session 28
+        c.notify(c.notify_students_of(bid), "assignment_new", "New " + ("test" if kind == "test" else "assignment"), d["title"].strip() + (f" (due {due[:10]})" if due else ""), f"assignments:{aid}")   # Session 28; link opens it (Session 16)
         db().commit()
         return jsonify(id=aid), 201
 
@@ -644,13 +645,13 @@ def register(app, c):
             if g.user["role"] != "admin" and not can("edit_grades"):
                 return err("This grade is already saved. Only an admin, or a teacher with permission to change grades, can edit it.", 403)
             db().execute("UPDATE submissions SET grade=?,feedback=?,graded_at=datetime('now') WHERE id=?", (gr, fb, ex["id"]))   # graded_by stays the first grader; the log has every change
-            c.notify([sid], "grade", "Grade updated", f"{a['title']}: {gr} / {a['max_points']}", "assignments")   # Session 28
+            c.notify([sid], "grade", "Grade updated", f"{a['title']}: {gr} / {a['max_points']}", f"assignments:{aid}")   # Session 28
             audit("grade_change", "assignment", aid, f"student {sid}: grade {ex['grade']} -> {gr} (max {a['max_points']}); feedback {'changed' if fb != ex['feedback'] else 'unchanged'}"
                   + (f": {ex['feedback'] or ''} -> {fb or ''}" if fb != ex["feedback"] else ""), batch_id=a["batch_id"], old=ex["grade"], new=gr)
         else:
             if ex: db().execute("UPDATE submissions SET grade=?,feedback=?,graded_by=?,graded_at=datetime('now') WHERE id=?", (gr, fb, g.user["id"], ex["id"]))
             else: db().execute("INSERT INTO submissions(assignment_id,student_id,grade,feedback,graded_by,graded_at) VALUES(?,?,?,?,?,datetime('now'))", (aid, sid, gr, fb, g.user["id"]))
-            c.notify([sid], "grade", "Assignment graded", f"{a['title']}: {gr} / {a['max_points']}", "assignments")   # Session 28
+            c.notify([sid], "grade", "Assignment graded", f"{a['title']}: {gr} / {a['max_points']}", f"assignments:{aid}")   # Session 28
             audit("grade", "assignment", aid, f"student {sid}: grade none -> {gr} (max {a['max_points']})" + (f"; feedback: {fb}" if fb else ""), batch_id=a["batch_id"], new=gr)
         db().commit()
         return jsonify(ok=True, grade=gr, changed=True)

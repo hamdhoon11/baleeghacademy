@@ -26,7 +26,7 @@ try:
             pg = br.new_context(viewport={"width": 390, "height": 800}).new_page()
             pg.on("pageerror", lambda e: errors.append(str(e)))
             return pg
-        def login(pg, e, w): pg.goto(BASE + "/"); pg.fill("#le", e); pg.fill("#lp", w); pg.click("#fl button"); pg.wait_for_selector("nav")
+        def login(pg, e, w): e2e_shim.login(pg, BASE, e, w, db=env["DATABASE_PATH"])   # Session 22: forced change, course chooser, waits for the app
         s = page_for(); login(s, "student@baleegh.test", "ChangeMe-Stud1")
         s.click("nav [data-v=assignments]"); s.wait_for_selector("[data-do=goA]")
         check(s.locator("[data-do=goA]", has_text="Submit work").count() == 2, "both the assignment and the test show a Submit work button")

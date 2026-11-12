@@ -310,7 +310,7 @@ class P3(unittest.TestCase):
         self.assertEqual(self.c.get("/i18n/dv.json").status_code, 404)
         for name in ("index.html", "apply.html"):
             page = open(os.path.join(ROOT, "static", name), encoding="utf-8").read()
-            self.assertNotIn('data-l="dv"', page); self.assertNotIn("rtl", page); self.assertNotIn("Thaana", page)
+            self.assertNotIn('data-l="dv"', page); self.assertNotIn("Thaana", page)   # no language switch or Dhivehi text; RTL-safe CSS and setLang() are allowed since v0.8.33 (Session 18)
         page = self.c.get("/").get_data(as_text=True)
         self.assertIn("learning.js", page)
         self.assertEqual(self.c.get("/learning.js").status_code, 200)

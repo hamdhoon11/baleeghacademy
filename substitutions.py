@@ -75,8 +75,8 @@ def register(app, c, today, utc_stamp):
         audit("substitute_assign", "substitution", sid, f"batch {b['code']}: teacher {tid} on {lo}" + (f" to {hi}" if hi != lo else "") + (f" ({reason})" if reason else ""),
               batch_id=bid, old=b["teacher_id"], new=tid)
         span = lo + (f" to {hi}" if hi != lo else "")     # Session 28: tell the substitute, the teacher being replaced and the students
-        c.notify([tid], "substitute_assigned", "You are a substitute teacher", f"Batch {b['code']}, {span}" + (f": {reason}" if reason else ""), "home")
-        c.notify([b["teacher_id"]], "substitute_for_you", "A substitute will teach your batch", f"Batch {b['code']}, {span}", "home")
+        c.notify([tid], "substitute_assigned", "You are a substitute teacher", f"Batch {b['code']}, {span}" + (f": {reason}" if reason else ""), f"classroom:{bid}")
+        c.notify([b["teacher_id"]], "substitute_for_you", "A substitute will teach your batch", f"Batch {b['code']}, {span}", f"classroom:{bid}")
         c.notify(c.notify_students_of(bid), "substitute_class", "Substitute teacher", f"Batch {b['code']}, {span}: another teacher will take the class.", "home")
         db().commit()
         return jsonify(id=sid), 201
@@ -102,7 +102,8 @@ def register(app, c, today, utc_stamp):
         db().execute("UPDATE substitutions SET removed_at=?, removed_by=? WHERE id=?", (utc_stamp(), g.user["id"], sid))
         audit("substitute_remove", "substitution", sid, f"batch {r['batch_id']}: teacher {r['substitute_teacher_id']}", batch_id=r["batch_id"], old=r["substitute_teacher_id"])
         bc = one("SELECT code FROM batches WHERE id=?", (r["batch_id"],))["code"]     # Session 28
-        c.notify([r["substitute_teacher_id"], r["original_teacher_id"]], "substitute_removed", "Substitute cancelled", f"Batch {bc}, {r['class_date']}: the substitution was removed.", "home")
+        c.notify([r["substitute_teacher_id"]], "substitute_removed", "Substitute cancelled", f"Batch {bc}, {r['class_date']}: the substitution was removed.", "home")   # no longer their class
+        c.notify([r["original_teacher_id"]], "substitute_removed", "Substitute cancelled", f"Batch {bc}, {r['class_date']}: the substitution was removed.", f"classroom:{r['batch_id']}")   # Session 16
         c.notify(c.notify_students_of(r["batch_id"]), "substitute_removed", "Teacher unchanged", f"Batch {bc}, {r['class_date']}: the usual teacher will take the class.", "home")
         db().commit()
         return jsonify(ok=True)

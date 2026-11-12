@@ -26,10 +26,11 @@ try:
             pg.on("dialog", lambda d: d.accept())
             return pg
         def login(pg, email, pw):
-            pg.goto(BASE + "/"); pg.fill("#le", email); pg.fill("#lp", pw); pg.click("#fl button"); pg.wait_for_selector("nav")
+            e2e_shim.login(pg, BASE, email, pw, db=env["DATABASE_PATH"])   # Session 22
         nav = lambda pg: [b.get_attribute("data-v") for b in pg.query_selector_all("nav [data-v]")]
         s = page_for(); login(s, "student@baleegh.test", "ChangeMe-Stud1")
-        check(nav(s) == ["home", "assignments", "progress", "materials", "recordings", "fees", "tutorials"], "student starts with every student tab")
+        server = s.evaluate("S.user.tabs")   # Session 9: the phone bar puts Fees 4th, so compare the tabs, not their DOM order
+        check(sorted(nav(s)) == sorted(["home", "assignments", "progress", "materials", "recordings", "fees", "tutorials", "my_information"]) and sorted(server) == sorted(nav(s)), "student starts with every student tab")
         check(s.query_selector("nav .lang") is None and s.query_selector("[data-l]") is None, "no language switch in the app")
         a = page_for(); login(a, "admin@p.test", "AdminPass123")
         a.click("nav [data-v=people]"); a.wait_for_selector("[data-do=euEdit]")
@@ -40,7 +41,7 @@ try:
         a.click("#fue button.btn.alt"); a.wait_for_selector("tr:has-text('Demo Student') .tag:has-text('Limited')")
         check(True, "people list marks the student as Limited")
         s.reload(); s.wait_for_selector("nav")
-        check(nav(s) == ["home", "assignments", "materials", "tutorials"], "student now sees only the ticked tabs")
+        check(sorted(t_ for t_ in nav(s) if t_ != "my_information") == sorted(["home", "assignments", "materials", "tutorials"]), "student now sees only the ticked tabs")
         code = s.evaluate("fetch('/api/my/grades',{headers:{Authorization:'Bearer '+sessionStorage.getItem('tok')}}).then(r=>r.status)")
         check(code == 403, "server refuses the blocked data even when the page asks for it")
         s.click("nav [data-v=home]"); s.wait_for_selector("h1")

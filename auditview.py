@@ -65,8 +65,12 @@ def register(app, c):
         if e: return err(e)
         page, per, e = paging(100)
         if e: return err(e)
+        # Session 13 (v0.8.33): ?offset= wins over page, so the screen can ask for one row more than a page and know whether a next page exists
+        off = request.args.get("offset", "")
+        if off and not off.isdigit(): return err("offset must be a number")
+        start = int(off) if off else (page - 1) * per
         total = one(f"SELECT COUNT(*) n {BASE}{w}", p)["n"]
-        out = rows(f"SELECT a.*, u.full_name AS user_name {BASE}{w} ORDER BY a.id DESC LIMIT ? OFFSET ?", (*p, per, (page - 1) * per))
+        out = rows(f"SELECT a.*, u.full_name AS user_name {BASE}{w} ORDER BY a.id DESC LIMIT ? OFFSET ?", (*p, per, start))
         resp = jsonify(out)
         resp.headers.update({"X-Total-Count": str(total), "X-Page": str(page), "X-Per-Page": str(per), "Access-Control-Expose-Headers": "X-Total-Count, X-Page, X-Per-Page"})
         return resp

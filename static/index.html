@@ -34,18 +34,31 @@ main:focus{outline:none}
 /* ---------- app shell: sidebar on a computer ---------- */
 .app{display:grid;grid-template-columns:var(--navw) minmax(0,1fr);min-height:100vh;min-height:100dvh}
 nav{background:linear-gradient(180deg,var(--lagoon) 0,var(--lagoon-d) 100%);color:#fff;padding:1.1rem .8rem 1rem;display:flex;flex-direction:column;gap:.15rem;position:sticky;top:0;height:100vh;height:100dvh;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.25) transparent}
-.brand{display:flex;align-items:center;gap:.7rem;padding:.3rem 2.8rem 1rem .5rem;font:600 1.15rem/1.15 var(--head)}
+.brand{display:flex;align-items:center;gap:.7rem;padding-block:.3rem 1rem;padding-inline:.5rem 2.8rem;font:600 1.15rem/1.15 var(--head)}
+.btitle,.topback{display:none}
 .mark{width:2.2rem;height:2.2rem;border-radius:10px;background:var(--sun);color:var(--lagoon-d);display:grid;place-items:center;font:700 1.35rem/1 var(--body);flex:none}
 .pri,.ovf,.sheet{display:contents}
 #moreBtn,.scrim{display:none}
-.tab{display:flex;align-items:center;gap:.75rem;width:100%;background:none;border:0;color:#cfe6e8;text-align:start;padding:.5rem .75rem;border-radius:10px;cursor:pointer;min-height:44px;position:relative}
+.tab{display:flex;align-items:center;gap:.75rem;width:100%;background:none;border:0;color:#cfe6e8;text-align:start;padding:.5rem .75rem;border-radius:10px;cursor:pointer;min-height:44px;position:relative;text-decoration:none;font:inherit}
 @media(pointer:fine){.tab{min-height:40px}}
 .tab svg,#bell svg{width:20px;height:20px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 @media(hover:hover){.tab:hover{background:rgba(255,255,255,.09);color:#fff}}
 .tab[aria-current=page]{background:rgba(255,255,255,.15);color:#fff;font-weight:700}
-.tab[aria-current=page]::before{content:"";position:absolute;inset-block:.55rem;inset-inline-start:-.8rem;width:4px;border-radius:0 4px 4px 0;background:var(--sun)}
+.tab[aria-current=page]::before{content:"";position:absolute;inset-block:.55rem;inset-inline-start:-.8rem;width:4px;border-start-start-radius:0;border-end-start-radius:0;border-start-end-radius:4px;border-end-end-radius:4px;background:var(--sun)}
 .grp{font:700 .68rem/1 var(--body);letter-spacing:.09em;text-transform:uppercase;color:#9cc6cb;padding:.9rem .75rem .3rem}
 .grp.rep{display:none}
+.grp .gbtn{all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;width:100%;cursor:pointer;min-height:28px;border-radius:6px}
+.grp .gbtn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2.4;transition:transform .15s}
+.grp .gbtn[aria-expanded=false] svg{transform:rotate(-90deg)}[dir=rtl] .grp .gbtn[aria-expanded=false] svg{transform:rotate(90deg)}
+.grp .gbtn[aria-disabled=true]{cursor:default}.grp .gbtn[aria-disabled=true] svg{opacity:.35}
+.grp .gbtn:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
+.grp .glbl{display:none}
+.grp.cur{color:#fff}.grp.cur .gbtn{text-decoration:underline;text-decoration-color:var(--sun);text-decoration-thickness:2px;text-underline-offset:.3em}
+@media(min-width:881px){.tab.gc{display:none}nav.reord .tab[data-v]{order:var(--o)}nav.reord .foot{order:99}}
+.bdg{margin-inline-start:auto;min-width:1.35rem;height:1.35rem;padding:0 .4rem;border-radius:99px;background:var(--sun);color:var(--lagoon-d);font:700 .72rem/1.35rem var(--body);text-align:center;flex:none}
+.tab.qj{color:#cfe6e8;margin-bottom:.4rem;border:1px solid rgba(255,255,255,.18)}
+.tab.qj kbd{margin-inline-start:auto;font:600 .7rem/1 var(--body);opacity:.75;border:1px solid rgba(255,255,255,.3);border-radius:5px;padding:.2rem .35rem;background:none;color:inherit}
+#qjSheet{display:none}
 .foot{position:sticky;bottom:0;margin:auto -.8rem -1rem;padding:.7rem .8rem 1rem;background:var(--lagoon-d);border-top:1px solid rgba(255,255,255,.14);display:flex;align-items:center;gap:.4rem}
 .me{display:flex;align-items:center;gap:.65rem;min-width:0;flex:1;padding:0 .2rem}
 .foot #so{width:2.6rem;flex:none;padding:0;justify-content:center}.foot #so .tl{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
@@ -90,6 +103,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--lagoon)}
 .btn.danger{background:var(--coral)}
 .btn.block{width:100%}
 .btn.sm{padding:.2rem .7rem;min-height:44px;font-size:.85rem}
+@media(pointer:fine) and (min-width:881px){.btn.sm{min-height:32px;padding:.15rem .6rem;font-size:.8rem;border-radius:7px}}
 .btn.big{font-size:1.1rem;padding:.7rem 1.6rem}
 .banner{background:#fbefc8;color:#5c4300;border-radius:var(--r-sm);padding:.6rem .8rem;margin-bottom:.8rem;white-space:pre-wrap}
 .msg{padding:.7rem .9rem;border-radius:var(--r-sm);margin-bottom:.9rem;border-inline-start:4px solid currentColor}
@@ -109,11 +123,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--lagoon)}
 .seg input:checked+span{background:var(--lagoon);color:#fff;border-color:var(--lagoon)}
 .seg input:checked+span::before{content:"\2713\00a0"}
 .seg input:focus-visible+span{outline:3px solid var(--sun);outline-offset:2px}
-.kv{width:100%;min-width:0;border-collapse:collapse}.kv th{text-align:left;font-weight:700;font-size:.9rem;text-transform:none;letter-spacing:0;background:none;width:40%;padding:.4rem .6rem .4rem 0;vertical-align:top;color:var(--ink2)}.kv td{padding:.4rem 0;overflow-wrap:anywhere}
+.kv{width:100%;min-width:0;border-collapse:collapse}.kv th{text-align:start;font-weight:700;font-size:.9rem;text-transform:none;letter-spacing:0;background:none;width:40%;padding-block:.4rem;padding-inline:0 .6rem;vertical-align:top;color:var(--ink2)}.kv td{padding:.4rem 0;overflow-wrap:anywhere}
 .subtabs{display:flex;flex-wrap:wrap;gap:.4rem;margin:.2rem 0 1rem}
 .subtabs button{background:#fff;border:1px solid #b9cfcf;border-radius:99px;padding:.5rem 1rem;min-height:44px;cursor:pointer;color:var(--ink)}
 @media(hover:hover){.subtabs button:hover{border-color:var(--lagoon)}}
-.subtabs button[aria-current=true]{background:var(--lagoon);color:#fff;border-color:var(--lagoon);font-weight:700}
+.subtabs button[aria-current=true],.subtabs button[aria-selected=true]{background:var(--lagoon);color:#fff;border-color:var(--lagoon);font-weight:700}
 .sub{border-bottom:1px solid var(--line);padding:.7rem 0}.sub:last-child{border-bottom:0}
 fieldset.days{border:1px solid #b9cfcf;border-radius:var(--r-sm);display:flex;flex-wrap:wrap;gap:.3rem;flex:1 1 100%;margin:0}
 fieldset.days label{flex:0 0 auto;flex-direction:row;align-items:center;gap:.3rem;padding:.2rem .5rem;color:var(--ink);font-weight:400;font-size:.95rem}
@@ -135,8 +149,17 @@ label.chk{flex-direction:row;align-items:center;gap:.55rem;font-weight:400;font-
 @media(max-width:880px){
 .app{display:block}
 nav{position:fixed;inset:auto 0 0 0;height:auto;flex-direction:row;align-items:stretch;gap:.1rem;padding:.3rem .4rem calc(.3rem + var(--sab));z-index:50;overflow:visible;background:var(--lagoon-d);box-shadow:0 -6px 24px rgba(7,59,69,.28)}
-.brand{position:fixed;inset:0 0 auto 0;height:calc(var(--top) + var(--sat));padding:var(--sat) 4rem 0 1rem;background:#fff;color:var(--lagoon);border-bottom:1px solid var(--line);z-index:49;font-size:1.2rem}
-.brand .bname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.brand{position:fixed;inset:0 0 auto 0;height:calc(var(--top) + var(--sat));padding-block:var(--sat) 0;padding-inline:1rem 4rem;background:#fff;color:var(--lagoon);border-bottom:1px solid var(--line);z-index:49;font-size:1.2rem;gap:.6rem}
+.brand .bname{display:none}
+.brand .btitle{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.topback{display:grid;place-items:center;width:44px;height:44px;margin-inline-start:-.6rem;border:0;border-radius:50%;background:none;color:var(--lagoon);cursor:pointer;flex:none}
+.topback svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}[dir=rtl] .topback svg{transform:scaleX(-1)}
+.app.detail .brand .mark{display:none}
+#qjTop{display:none}#qjSheet{display:flex;flex-direction:row;justify-content:flex-start;gap:.6rem;margin:0 0 .5rem;min-height:48px;font-size:.95rem;padding-inline:.9rem;background:rgba(255,255,255,.1)}
+.bdg{position:absolute;inset-block-start:.15rem;inset-inline-end:calc(50% - 1.4rem);margin:0;min-width:1.1rem;height:1.1rem;font-size:.65rem;line-height:1.1rem;padding:0 .3rem}
+.crumb{display:none}
+.subtabs{flex-wrap:nowrap;overflow-x:auto;position:sticky;top:calc(var(--top) + var(--sat));z-index:20;background:var(--bg);margin-inline:-1rem;padding:.5rem 1rem;scrollbar-width:none;overscroll-behavior-x:contain}
+.subtabs::-webkit-scrollbar{display:none}.subtabs button{flex:none;white-space:nowrap}
 .mark{width:2rem;height:2rem;font-size:1.2rem;border-radius:9px}
 nav #bell{position:fixed;inset-block-start:calc(var(--sat) + .5rem);inset-inline-end:.7rem;z-index:51;background:var(--mist);color:var(--lagoon)}
 nav #bell .n{border-color:#fff}
@@ -147,7 +170,7 @@ nav #bell .n{border-color:#fff}
 .tab[aria-current=page],#moreBtn[aria-expanded=true],#moreBtn.has-current{background:rgba(255,255,255,.16);color:#fff}
 .tab[aria-current=page] svg{stroke:var(--sun)}
 #moreBtn{display:flex}
-.grp,.sheet .grp.rep{display:none}.pri .grp{display:none}.sheet .grp{display:block;grid-column:1/-1;padding:.9rem .3rem .2rem}.sheet .grp.rep{display:block}
+.grp,.sheet .grp.rep{display:none}.grp .gbtn{display:none}.grp .glbl{display:inline}.pri .grp{display:none}.sheet .grp{display:block;grid-column:1/-1;padding:.9rem .3rem .2rem}.sheet .grp.rep{display:block}
 .sheet{display:block;position:fixed;inset-inline:0;bottom:calc(var(--bar) + var(--sab) + .2rem);max-height:calc(100dvh - var(--top) - var(--sat) - var(--bar) - var(--sab) - 1.5rem);overflow-y:auto;overscroll-behavior:contain;margin-inline:.6rem;padding:.7rem;border-radius:18px;background:var(--lagoon-d);box-shadow:0 14px 40px rgba(7,59,69,.45);z-index:55;visibility:hidden;opacity:0;pointer-events:none;transition:opacity .15s,visibility 0s .15s}
 .app.menu .sheet{visibility:visible;opacity:1;pointer-events:auto;transition:opacity .15s}
 .ovf{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.4rem}
@@ -188,33 +211,103 @@ table.st td[data-label=""]::before,table.st td:empty{display:none}
 .stat b{font-size:1.7rem}
 form.row>.btn,form.row>button{flex:1 1 100%}
 }
+/* ---------- Sessions 2, 9A, 9B, 10, 14, 19, 21: dialogs, crumbs, skeleton, add panels, markers ---------- */
+.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+[dir=rtl] select{background-position:left .75rem center}
+[aria-invalid=true]{border-color:var(--coral)!important;box-shadow:0 0 0 1px var(--coral)}
+.msg[data-err]:focus{outline:3px solid var(--sun);outline-offset:2px}
+.fileerr{display:block;margin:.35rem 0 0;font-size:.85rem;font-weight:400}
+.crumb{margin:0 0 .35rem;font-size:.85rem;color:var(--ink2)}
+.crumb ol{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:.35rem}
+.crumb li+li::before{content:"\203A";margin-inline-end:.35rem;color:var(--ink2)}[dir=rtl] .crumb li+li::before{content:"\2039"}
+.crumb [aria-current]{color:var(--ink);font-weight:700}
+.skel{display:flex;flex-direction:column;gap:1rem}
+.sk{height:7.5rem;border-radius:var(--r);background:linear-gradient(90deg,#e3eded 0,#eef5f5 50%,#e3eded 100%) 0 0/200% 100%;animation:sk 1.2s ease-in-out infinite}
+.sk.h{height:2.2rem;width:40%}
+@keyframes sk{from{background-position:100% 0}to{background-position:-100% 0}}
+details.addp>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:.6rem;min-height:44px;font:600 1.15rem/1.2 var(--head);color:var(--lagoon)}
+details.addp>summary::-webkit-details-marker{display:none}
+details.addp>summary::before{content:"+";display:grid;place-items:center;width:1.7rem;height:1.7rem;border-radius:50%;background:var(--mist);font:700 1.1rem/1 var(--body)}
+details.addp[open]>summary::before{content:"\2212"}
+details.addp[open]>summary{margin-bottom:.8rem}
+.saved{color:#1f6b35;font-weight:700;font-size:.9rem}
+.pick{display:flex;flex-wrap:wrap;gap:.4rem;flex:1 1 220px}.pick>label{flex:1 1 100%}
+.listbar{display:flex;flex-wrap:wrap;gap:.6rem;align-items:end;margin-bottom:.8rem}.listbar label{flex:1 1 200px;max-width:26rem}
+.xrow td{background:#f8fbfb}.xrow .kv{margin:0}
+dialog.dlg{border:0;border-radius:var(--r);padding:0;width:min(32rem,calc(100vw - 1.5rem));max-height:calc(100dvh - 1.5rem);box-shadow:0 24px 64px rgba(7,59,69,.35);color:var(--ink);background:#fff}
+dialog.dlg.wide{width:min(40rem,calc(100vw - 1.5rem))}
+dialog.dlg::backdrop{background:rgba(16,38,43,.5)}
+.dlg-f{display:flex;flex-direction:column;gap:.9rem;padding:1.2rem 1.3rem;max-height:calc(100dvh - 1.5rem)}
+.dlg-f h2{margin:0}.dlg.danger h2{color:var(--coral)}
+.dlg-b{display:flex;flex-direction:column;gap:.85rem;overflow-y:auto;padding:.15rem}
+.dlg-b>label{flex:none}.dlg-b>p{margin:0}.dlg-b .hint{margin:0;font-weight:400}
+.dlg-f>.msg{margin:0}
+.dlg-a{display:flex;flex-wrap:wrap;gap:.6rem;justify-content:flex-end}
+.dlg-a .btn{min-height:44px;min-width:6.5rem}
+.dlg-list{margin:0;padding-inline-start:1.2rem}
+.req{color:var(--coral)}
+.pick-l{list-style:none;margin:0;padding:0;max-height:min(50vh,22rem);overflow-y:auto;display:flex;flex-direction:column;gap:.15rem}
+.pick-l li{display:flex;align-items:center;gap:.7rem;min-height:44px;padding:.45rem .7rem;border-radius:var(--r-sm);cursor:pointer}
+.pick-l li svg{width:20px;height:20px;flex:none;stroke:var(--lagoon);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.pick-l li[aria-selected=true]{background:var(--mist);box-shadow:inset 0 0 0 2px var(--lagoon)}
+kbd{font:600 .8rem/1 var(--body);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:.2rem .4rem;background:#f4f9f9}
+/* ---------- Session 20: utility classes for styles that were repeated inline (tools/codemod_styles.py puts them in the JS) ---------- */
+.full{flex:1 1 100%}.m0{margin:0}.mt1{margin-top:1rem}.mb1{margin-bottom:.8rem}.bk{display:block}.scrollx{overflow-x:auto}
+.rowflex{display:flex;flex-wrap:wrap;gap:.6rem;align-items:end}
+label.inl{flex:0 0 auto;flex-direction:row;align-items:center;gap:.4rem}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 @media print{nav,.scrim,.skip,.ctx{display:none!important}.app{display:block}main{padding:0}.panel{box-shadow:none}}
 </style>
 </head>
 <body>
 <div id="root"></div>
+<div id="live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+<div id="bellLive" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 <script>
 // Set API to your backend URL when the frontend is hosted on Netlify (same-origin when served by Flask).
 const API = window.PORTAL_API || "";
+const API_TIMEOUT = 20000;   // Session 1: a request that hangs gives up after 20 s with a clear message
 let EN = {};
 let S = {token: sessionStorage.getItem("tok"), user: null, view: null, note: null, shown: null};
 const t = k => EN[k] || k;
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const $ = s => document.querySelector(s);
 
+// ---- language, numbers, dates (Sessions 13 and 18). Server times are UTC text; the academy works in Maldives time (UTC+5). ----
+const RTL_LANGS = ["dv", "ar"];
+let LANG = "en";
+function setLang(code) {
+  LANG = String(code || "en").toLowerCase();
+  document.documentElement.lang = LANG;
+  document.documentElement.dir = RTL_LANGS.includes(LANG.split("-")[0]) ? "rtl" : "ltr";
+}
+const fmtNum = n => { const x = Number(n); if (n === null || n === undefined || n === "" || !isFinite(x)) return String(n ?? ""); try { return new Intl.NumberFormat(LANG, {numberingSystem: "latn", maximumFractionDigits: 2}).format(x); } catch (_) { return String(x); } };
+const MV_MS = 5 * 3600e3;
+const utcDate = v => v instanceof Date ? v : new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(String(v)) ? String(v) : String(v).trim().replace(" ", "T") + "Z");
+// "2026-11-12 09:30:00" (UTC) -> "2026-11-12 14:30" (Maldives). Anything that is not a time comes back unchanged.
+function fmtTime(utcText) { if (!utcText) return ""; const d = utcDate(utcText); return isNaN(d) ? String(utcText) : new Date(d.getTime() + MV_MS).toISOString().slice(0, 16).replace("T", " "); }
+// A date as YYYY-MM-DD in Maldives time. Date-only text ("2026-11-12") is already a calendar date and is returned as it is.
+function fmtDate(v) { if (!v) return ""; if (/^\d{4}-\d{2}-\d{2}$/.test(String(v))) return String(v); const d = utcDate(v); return isNaN(d) ? String(v) : new Date(d.getTime() + MV_MS).toISOString().slice(0, 10); }
+
 // Session 14/15: a student with several active enrolments, or a teacher with several batches, works in ONE selected batch (S.sb). Every batch-scoped read gets its batch_id here; the server checks it again (403 for a batch the student is not actively in).
 const SB_PATH = /^\/(my\/(home|grades|attendance)|assignments|materials|recordings|tutorials|timetable)(\?|$)/;
 const withBatch = (path, method) => (method === "GET" && S.user && (S.user.role === "student" || S.user.role === "teacher") && S.sb && SB_PATH.test(path) && !/[?&]batch_id=/.test(path)) ? path + (path.includes("?") ? "&" : "?") + "batch_id=" + S.sb : path;
+// fetch with a time limit; a dropped connection or a timeout becomes a plain message instead of "Failed to fetch"
+async function send(url, opts, ms = API_TIMEOUT) {
+  const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), ms);
+  try { return await fetch(url, {...opts, signal: ctl.signal}); }
+  catch (x) { throw new Error(t(x && x.name === "AbortError" ? "network_timeout" : "network_error")); }
+  finally { clearTimeout(tm); }
+}
 async function api(path, method = "GET", body) {
   path = withBatch(path, method);
-  const r = await fetch(API + "/api" + path, {method, headers: {"Content-Type": "application/json", ...(S.token ? {Authorization: "Bearer " + S.token} : {})}, body: body ? JSON.stringify(body) : undefined});
+  const r = await send(API + "/api" + path, {method, headers: {"Content-Type": "application/json", ...(S.token ? {Authorization: "Bearer " + S.token} : {})}, body: body ? JSON.stringify(body) : undefined});
   const j = await r.json().catch(() => ({}));
   if (!r.ok && !j.error && r.status === 413) j.error = t("file_too_large_server");
   if (r.status === 403 && j.code === "password_change_required" && S.user) { S.user.must_change_password = 1; render(); }   // the server will not serve anything else until it is changed
-  if (r.status === 401 && S.token) { signout(); throw new Error(j.error); }
+  if (r.status === 401 && S.token) { signout(); throw new Error(j.error || t("signed_out")); }
   if (r.status === 403 && /permission/i.test(j.error || "") && S.user) S.user = null;   // permissions changed: fetch the tab list again on the next draw
-  if (!r.ok) throw new Error(j.error || "Something went wrong");
+  if (!r.ok) throw new Error(j.error || t("Something went wrong"));
   return j;
 }
 // ---- files: one helper for every document the portal serves (ID copies, slips, submissions, materials, tutorials, receipts, CSV) ----
@@ -237,7 +330,7 @@ async function fetchFile(path, opts = {}) {
   const win = opts.preview ? window.open("", "_blank") : null;   // opened right at the click so the browser does not block it
   const done = () => { if (win && !win.closed) win.close(); };
   try {
-    const r = await fetch(API + "/api" + path, {headers: {Authorization: "Bearer " + S.token}});
+    const r = await send(API + "/api" + path, {headers: {Authorization: "Bearer " + S.token}}, 120000);
     if (r.status === 401) { done(); signout(); throw new Error(await readError(r)); }
     if (!r.ok) throw new Error(await readError(r));
     const type = (r.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
@@ -253,73 +346,92 @@ async function fetchFile(path, opts = {}) {
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   } catch (x) { done(); throw x; }
 }
-async function loadText() { EN = await (await fetch(API + "/i18n/en.json")).json(); }
-function signout() { if (S.token) fetch("/api/auth/logout", {method: "POST", headers: {Authorization: "Bearer " + S.token}, keepalive: true}).catch(() => {});   // writes the log row only; sign-out works even if this fails
-  sessionStorage.removeItem("tok"); sessionStorage.removeItem("sb"); S = {token: null, user: null, view: null, shown: null, info: S.info}; render(); }
-const flash = (m, ok) => { S.note = {m, ok}; };
-const note = () => { const n = S.note; S.note = null; return n ? `<div class="msg ${n.ok ? "ok" : "err"}" role="status">${esc(n.m)}</div>` : ""; };
+async function loadText() { try { EN = await (await fetch(API + "/i18n/en.json")).json(); } catch (_) { EN = {}; } }
+function signout() {
+  if (S.token) fetch(API + "/api/auth/logout", {method: "POST", headers: {Authorization: "Bearer " + S.token}, keepalive: true}).catch(() => {});   // writes the log row only; sign-out works even if this fails
+  ["tok", "sb", "flt"].forEach(k => sessionStorage.removeItem(k));
+  S = {token: null, user: null, view: null, shown: null, info: S.info}; BADGE.n = {}; BADGE.at = 0; render();
+}
+
+// ---- messages (Session 19): the visible note is drawn at the top of the screen; screen readers hear it through ONE live region that never moves ----
+function announce(m) { const l = $("#live"); if (!l) return; l.textContent = ""; setTimeout(() => { l.textContent = m; }, 60); }
+const flash = (m, ok) => { S.note = {m, ok}; announce(m); };
+const note = () => { const n = S.note; S.note = null; return n ? `<div class="msg ${n.ok ? "ok" : "err"}">${esc(n.m)}</div>` : ""; };
+// Session 1: when a save fails the form is NOT redrawn (nothing typed is lost); the message appears right next to it.
+function showErr(anchor, msg) {
+  const main = $("#main") || $("#root");
+  main.querySelectorAll("[data-err]").forEach(x => x.remove());
+  const box = document.createElement("div");
+  box.className = "msg err"; box.setAttribute("role", "alert"); box.setAttribute("data-err", ""); box.tabIndex = -1; box.textContent = msg;
+  const near = anchor && anchor.isConnected && (anchor.closest("form, .sub, .cl") || anchor.closest("table") || anchor.closest(".panel"));
+  if (near && !near.matches(".panel")) near.before(box);
+  else if (near) { const h = near.querySelector(":scope > h2, :scope > h3"); h ? h.after(box) : near.prepend(box); }
+  else { const h = main.querySelector("h1"); h ? h.after(box) : main.prepend(box); }
+  box.scrollIntoView({block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
+  box.focus({preventScroll: true});
+}
+const busy = (b, on) => { if (!b) return; b.disabled = on; if (on) b.setAttribute("aria-busy", "true"); else b.removeAttribute("aria-busy"); };
 
 // Which tabs a person sees is decided by the server (S.user.tabs, from /auth/me and login). The page only draws them; the server also checks every request.
-const table = (cols, data, extra) => data.length ? `<table><thead><tr>${cols.map(c => `<th>${esc(t(c))}</th>`).join("")}${extra ? "<th></th>" : ""}</tr></thead><tbody>${data.map(r => `<tr>${cols.map(c => `<td>${esc(r[c])}</td>`).join("")}${extra ? `<td>${extra(r)}</td>` : ""}</tr>`).join("")}</tbody></table>` : `<p>${t("empty")}</p>`;
+// table(): a caption for screen readers (visually hidden) and column headers with scope (Session 19).
+const table = (cols, data, extra, caption) => data.length ? `<table>${caption ? `<caption class="sr-only">${esc(caption)}</caption>` : ""}<thead><tr>${cols.map(c => `<th scope="col">${esc(t(c))}</th>`).join("")}${extra ? `<th scope="col"><span class="sr-only">${esc(t("actions"))}</span></th>` : ""}</tr></thead><tbody>${data.map(r => `<tr>${cols.map(c => `<td>${esc(r[c])}</td>`).join("")}${extra ? `<td>${extra(r)}</td>` : ""}</tr>`).join("")}</tbody></table>` : `<p>${t("empty")}</p>`;
 const field = (id, label, type = "text", opts) => opts ? `<label>${esc(t(label))}<select id="${id}">${opts.map(o => `<option value="${esc(o[0])}">${esc(o[1])}</option>`).join("")}</select></label>` : `<label>${esc(t(label))}<input id="${id}" type="${type}"></label>`;
 const val = id => $("#" + id).value.trim();
 const form = (id, inner, btn) => `<form class="row" id="${id}">${inner}<button class="btn alt">${esc(t(btn || "add"))}</button></form>`;
-function onSubmit(id, fn) { const f = $("#" + id); if (f) f.onsubmit = async e => { e.preventDefault(); try { await fn(); flash(t("saved"), true); } catch (x) { flash(x.message); } render(); }; }
+// A collapsed "Add" panel around a create form (Sessions 10 and 11). `key` lets quick jump open it and put the cursor in it.
+const addPanel = (key, title, inner) => `<details class="panel addp" data-add="${esc(key)}"${S.openAdd === key ? " open" : ""}><summary>${esc(t(title))}</summary>${inner}</details>`;
+function onSubmit(id, fn) {
+  const f = $("#" + id); if (!f) return;
+  f.onsubmit = async e => {
+    e.preventDefault();
+    if (f.getAttribute("aria-busy") === "true") return;   // already sending
+    const b = e.submitter || f.querySelector("button:not([type=button])");
+    busy(b, true); f.setAttribute("aria-busy", "true");
+    let r; try { r = await fn(); }
+    catch (x) { busy(b, false); f.removeAttribute("aria-busy"); showErr(f, x.message); return; }
+    flash(typeof r === "string" ? r : t("saved"), true); staleBadges(); render();   // fn may return its own success message
+  };
+}
+// Session 7: views queue DOM wiring with mount(fn). The queue runs, in order, right after the new screen is in the page, and is emptied on every render.
+let MQ = [];
+const mount = fn => { MQ.push(fn); };
+// Session 10: whole MVR amounts only (the server stores integers)
+function wholeNum(id, label, {min = 0, empty = true} = {}) {
+  const v = val(id);
+  if (v === "" && empty) return "";
+  if (!/^\d+$/.test(v) || +v < min) { const el = $("#" + id); el.setAttribute("aria-invalid", "true"); el.focus(); throw new Error(t("whole_number").replace("{f}", t(label))); }
+  $("#" + id).removeAttribute("aria-invalid");
+  return v;
+}
+const moneyAttrs = 'min="0" step="1" inputmode="numeric"';
 
-const views = {
-  async dashboard() {
-    const d = await api("/dashboard");
-    return `<h1>${t("dashboard")}</h1><div class="stats">${["pending_applications", "students", "teachers", "batches_active", "active_enrollments", "waitlisted"].map(k => `<div class="stat"><b>${d[k]}</b>${esc(t(k))}</div>`).join("")}</div><div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
-  },
-  async admissions() {
-    const f = S.filter || "pending";
-    const [list, bs] = await Promise.all([api("/applications?status=" + f), api("/batches")]);
-    const a = S.sel ? list.find(x => x.id === S.sel) : null;
-    setTimeout(() => {
-      $("#af").onchange = e => { S.filter = e.target.value; S.sel = null; S.result = null; render(); };
-      document.querySelectorAll("[data-rev]").forEach(b => b.onclick = () => { S.sel = +b.dataset.rev; S.result = null; render(); });
-      const act = (id, fn) => { const el = $("#" + id); if (el) el.onclick = async () => { try { await fn(); } catch (x) { flash(x.message); } render(); }; };
-      const open = which => async () => { try { await fetchFile("/applications/" + a.id + "/file/" + which, {preview: true}); } catch (x) { flash(x.message); render(); } };
-      if (a) {
-        $("#vi") && ($("#vi").onclick = open("id")); $("#vg") && ($("#vg").onclick = open("guardian_id"));
-        act("ap", async () => { S.result = await api("/applications/" + a.id + "/approve", "POST", {batch_id: val("ab"), delete_files: $("#adel").checked}); S.filter = "approved"; });
-        act("rj", async () => { const r = prompt(t("reason_prompt")); if (!r) return; await api("/applications/" + a.id + "/reject", "POST", {reason: r}); S.sel = null; flash(t("saved"), true); });
-        act("wl", async () => { await api("/applications/" + a.id + "/waitlist", "POST"); S.sel = null; flash(t("saved"), true); });
-        act("df", async () => { await api("/applications/" + a.id + "/files", "DELETE"); flash(t("saved"), true); });
-      }
-    });
-    const R = S.result ? `<div class="msg ok"><b>${esc(t("temp_pw"))}:</b> ${esc(S.result.temp_password)}<br><a class="btn sm alt" href="${esc(S.result.whatsapp_link)}" target="_blank" rel="noopener">${t("send_whatsapp")}</a></div>` : "";
-    const D = a ? `<div class="panel"><h2>${esc(a.full_name)} · ${esc(a.ref)}</h2><p>${esc(a.course_name)} ${esc(a.batch_code || "")} · ${esc(a.phone)} · ${esc(a.email)} · ${esc(a.island || "")}<br>${esc(t("date_of_birth"))}: ${esc(a.date_of_birth)} ${a.is_minor ? '<span class="tag">&lt;18</span>' : ""}</p>${a.is_minor ? `<p>${esc(t("guardian_name"))}: ${esc(a.guardian_name)} (${esc(a.guardian_relationship)}) ${esc(a.guardian_phone)}</p>` : ""}${a.reject_reason ? `<p>${esc(a.reject_reason)}</p>` : ""}
-      <p>${a.has_id ? `<button class="btn sm" id="vi">${t("view_id")}</button> ` : ""}${a.has_guardian_id ? `<button class="btn sm" id="vg">${t("view_guardian_id")}</button> ` : ""}${a.has_id || a.has_guardian_id ? `<button class="btn sm" id="df">${t("delete_files")}</button>` : ""}</p>
-      ${["pending", "waitlist"].includes(a.status) ? `<div class="row" style="display:flex;flex-wrap:wrap;gap:.6rem;align-items:end">${field("ab", "assign_batch", "", bs.map(x => [x.id, x.course_name + " " + x.code]))}<label style="flex:0"><span><input type="checkbox" id="adel"> ${esc(t("delete_after"))}</span></label><button class="btn" id="ap">${t("approve")}</button>${a.status === "pending" ? `<button class="btn alt" id="wl">${t("put_waitlist")}</button>` : ""}<button class="btn alt" id="rj">${t("reject")}</button></div>` : ""}</div>` : "";
-    setTimeout(() => { if (a && $("#ab") && a.batch_id) $("#ab").value = a.batch_id; });
-    return `<h1>${t("admissions")}</h1>${R}<div class="panel"><label>${t("status")}<select id="af">${["pending", "waitlist", "approved", "rejected"].map(x => `<option value="${x}" ${x === f ? "selected" : ""}>${esc(t(x === "waitlist" ? "waitlist" : x))}</option>`).join("")}</select></label>${table(["ref", "full_name", "course_name", "batch_code", "phone", "created_at"], list, r => `<button class="btn sm" data-rev="${r.id}">${t("review")}</button>`)}</div>${D}`;
-  },
-  async courses() {
-    const c = await api("/courses");
-    setTimeout(() => onSubmit("fc", () => api("/courses", "POST", {name: val("cn"), level: val("cl"), monthly_fee_mvr: val("cf"), textbook: val("ct"), status: val("cs")})));
-    return `<h1>${t("courses")}</h1><div class="panel">${form("fc", field("cn", "name") + field("cl", "level") + field("cf", "fee", "number") + field("ct", "textbook") + field("cs", "status", "", [["open", "open"], ["upcoming", "upcoming"], ["closed", "closed"]]))}</div><div class="panel">${table(["name", "level", "monthly_fee_mvr", "status"], c)}</div>`;
-  },
-  async people() {
-    const u = await api("/users");
-    setTimeout(() => { onSubmit("fu", () => api("/users", "POST", {full_name: val("un"), email: val("ue"), password: val("up"), role: val("ur")}));
-      document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = async () => { try { await api("/users/" + b.dataset.toggle, "PATCH", {is_active: b.dataset.on !== "1"}); } catch (x) { flash(x.message); } render(); }); });
-    return `<h1>${t("people")}</h1><div class="panel">${form("fu", field("un", "name") + field("ue", "email", "email") + field("up", "password", "password") + field("ur", "role", "", [["student", "student"], ["teacher", "teacher"], ["admin", "admin"]]))}</div><div class="panel">${table(["full_name", "email", "role", "is_active"], u.map(x => ({...x, is_active: x.is_active ? "✓" : "✗"})), r => `<button class="btn sm" data-toggle="${r.id}" data-on="${r.is_active === "✓" ? 1 : 0}">${r.is_active === "✓" ? "Disable" : "Enable"}</button>`)}</div>`;
-  },
-  async enrollments() {
-    const [e, st, b] = await Promise.all([api("/enrollments"), api("/users?role=student"), api("/batches")]);
-    setTimeout(() => { onSubmit("fe", () => api("/enrollments", "POST", {student_id: val("es"), batch_id: val("eb")}));
-      document.querySelectorAll("[data-drop]").forEach(x => x.onclick = async () => { try { await api("/enrollments/" + x.dataset.drop, "PATCH", {status: "dropped"}); } catch (y) { flash(y.message); } render(); }); });
-    return `<h1>${t("enrollments")}</h1><div class="panel">${form("fe", field("es", "student", "", st.map(x => [x.id, x.full_name])) + field("eb", "batch", "", b.map(x => [x.id, x.course_name + " " + x.code])), "enroll")}</div><div class="panel">${table(["student_name", "course_name", "batch_code", "status"], e, r => ["active", "waitlist"].includes(r.status) ? `<button class="btn sm" data-drop="${r.id}">${t("drop")}</button>` : "")}</div>`;
-  },
-  async settings() {
-    const s = await api("/settings");
-    const keys = Object.keys(s);
-    setTimeout(() => { keys.forEach(k => $("#s_" + k).value = s[k]); onSubmit("fs", () => api("/settings", "PUT", Object.fromEntries(keys.map(k => [k, val("s_" + k)])))); });
-    return `<h1>${t("settings")}</h1><div class="panel">${form("fs", keys.map(k => field("s_" + k, k)).join(""), "save")}</div>`;
-  },
-  async audit() { return `<h1>${t("audit")}</h1><div class="panel">${table(["at", "user_name", "action", "entity", "detail"], await api("/audit"))}</div>`; },
-};
+// ---- Session 21: file checks before anything is uploaded ----
+// Limits come from /public/info (they differ on Vercel); without it the safe 4 MB is used.
+const upMb = () => (S.info && S.info.upload_max_mb) || 4;
+const learnMb = () => (S.info && S.info.learning_max_mb) || 4;
+// Returns "" when the file is fine, otherwise the message to show. types: the accept list (".pdf,.jpg,image/png"); empty = any type.
+function checkFile(input, maxMb, types) {
+  const f = input && input.files && input.files[0]; if (!f) return "";
+  const list = String(types ?? input.accept ?? "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+  const name = f.name.toLowerCase(), ext = name.includes(".") ? name.slice(name.lastIndexOf(".")) : "", mime = (f.type || "").toLowerCase();
+  const exts = list.filter(x => x.startsWith("."));
+  const okType = !list.length || list.some(x => x.startsWith(".") ? x === ext : x.endsWith("/*") ? mime.startsWith(x.slice(0, -1)) : x === mime && (!exts.length || exts.includes(ext)));
+  if (!okType) return t("file_wrong_type").replace("{types}", (exts.length ? exts : list).map(x => x.replace(".", "").toUpperCase()).filter((x, i, a) => a.indexOf(x) === i).join(", "));
+  if (maxMb && f.size > maxMb * 1024 * 1024) return t("file_too_big").replace("{mb}", maxMb);
+  if (!f.size) return t("file_empty");
+  return "";
+}
+// Every file input in the portal is checked as soon as a file is picked. data-max overrides the limit; learning files (Office, audio, video) get the learning limit.
+document.addEventListener("change", e => {
+  const el = e.target; if (!el.matches || !el.matches("input[type=file]")) return;
+  const lim = el.dataset.max ? +el.dataset.max : /\.(docx|pptx|xlsx|mp3|m4a|mp4)/.test(el.accept || "") ? learnMb() : /\.csv/.test(el.accept || "") ? 0 : upMb();
+  const msg = checkFile(el, lim);
+  const old = el.parentElement.querySelector(":scope > .fileerr"); if (old) old.remove();
+  el.removeAttribute("aria-invalid");
+  if (msg) { el.value = ""; el.setAttribute("aria-invalid", "true"); const m = document.createElement("span"); m.className = "msg err fileerr"; m.setAttribute("role", "alert"); m.textContent = msg; el.after(m); }
+});
+
+const views = {};   // Session 5: every screen now lives in learning.js, fees.js or admin.js (the old copies here were all replaced by later files)
 
 // ---- app shell: icons, grouped navigation, phone menu, URL hash, labelled tables ----
 const IC = {
@@ -347,6 +459,10 @@ const IC = {
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
   more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
   out: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  chev: '<path d="m6 9 6 6 6-6"/>',
   dot: '<circle cx="12" cy="12" r="3"/>',
 };
 const icon = k => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${IC[k] || IC.dot}</svg>`;
@@ -354,31 +470,129 @@ const icon = k => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"
 const NAV_GROUP = {dashboard: "nav_overview", admissions: "nav_overview", courses: "nav_teaching", batches: "nav_teaching", classroom: "nav_teaching", tutorials: "nav_teaching",
   people: "nav_people", student_information: "nav_people", teacher_information: "nav_people", enrollments: "nav_people", fees: "nav_money", finance: "nav_money", settings: "nav_system", audit: "nav_system"};
 const BAR_SLOTS = 4;   // tabs shown in the phone's bottom bar; the rest sit behind "More"
+// Session 9: which tabs a role wants in the phone bar. Only the bar changes; the computer sidebar and the More sheet keep the server order.
+const BAR_PREFS = {student: ["home", "assignments", "fees", "progress"]};
+const store = {   // localStorage can be off or full; navigation must still work
+  get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} },
+};
+const navClosed = () => { try { return JSON.parse(store.get("navClosed:" + S.user.id) || "[]"); } catch (_) { return []; } };
 
-function navHtml(tabs) {
-  const grouped = S.user.role === "admin";
-  const one = v => `<button type="button" class="tab" data-v="${v}" ${v === S.view ? 'aria-current="page"' : ""}>${icon(v)}<span class="tl">${esc(t(v))}</span></button>`;
-  const run = (list, repeat) => { let last = repeat ? null : "", out = ""; list.forEach((v, i) => { const g = grouped && NAV_GROUP[v];
-    if (g && g !== last) out += `<div class="grp${repeat && i === 0 ? " rep" : ""}" role="presentation">${esc(t(g))}</div>`; if (g) last = g; out += one(v); }); return out; };
-  const bar = tabs.slice(0, BAR_SLOTS), rest = tabs.slice(BAR_SLOTS);
+// ---- Session 9: navigation state. go(patch) changes S and adds a browser history entry, so Back closes a detail screen before it leaves the tab. ----
+const NAV_KEYS = ["view", "eu", "em", "ec", "eb", "si", "ti", "aid", "sel"];
+// the S key that holds the open detail screen of each tab (student or teacher record, an editor, an open assignment, an application being reviewed)
+const DETAIL_KEY = {people: "eu", enrollments: "em", courses: "ec", batches: "eb", student_information: "si", teacher_information: "ti", assignments: "aid", classroom: "aid", admissions: "sel"};
+// Session 1: what a tab click clears (S.sb, the chosen course, stays)
+const TAB_RESET = {eu: null, em: null, ec: null, eb: null, si: null, ti: null, aid: null, sel: null, result: null, tmp: null};
+const navState = () => Object.fromEntries(NAV_KEYS.map(k => [k, S[k] ?? null]));
+const detailOpen = () => { const k = DETAIL_KEY[S.view]; return !!(k && S[k]); };
+function go(patch = {}, {replace = false} = {}) {
+  setMenu(false);
+  const st = history.state || {};
+  const leaving = patch.view != null && patch.view !== S.view;
+  if (!replace) try { history.replaceState({...st, scroll: window.scrollY}, "", location.hash || "#" + S.view); } catch (_) {}   // remember where the list was
+  Object.assign(S, patch);
+  const ns = {...navState(), back: replace ? !!st.back : !leaving};   // back: the entry before this one is the same tab, so in-app Back can use history.back()
+  try { history[replace ? "replaceState" : "pushState"](ns, "", "#" + S.view); } catch (_) {}
+  S.navFwd = !replace;
+  return render();
+}
+// in-app Back (phone top bar, Back buttons, crumbs): the browser's Back when the list is the entry before, otherwise just close the detail
+function navBack(patch) {
+  const k = DETAIL_KEY[S.view];
+  if (history.state && history.state.back) history.back();
+  else go(patch || (k ? {[k]: null} : {}), {replace: true});
+}
+// after Save, Cancel or Delete in an editor: back to the list, and the editor's history entry is left behind
+function closeDetail(patch) {
+  Object.assign(S, patch);
+  if (history.state && history.state.back) { S.skipPop = true; history.back(); }
+  else try { history.replaceState({...navState(), back: false}, "", "#" + S.view); } catch (_) {}
+}
+function openTab(v, extra = {}) {
+  setMenu(false);
+  if (v === S.view && !detailOpen() && !Object.keys(extra).length) return render();
+  return go({view: v, ...TAB_RESET, ...extra}, {replace: v === S.view && !detailOpen()});
+}
+window.addEventListener("popstate", e => {
+  if (!S.token || !S.user) return;
+  const st = e.state;
+  if (S.skipPop) { S.skipPop = false; return; }
+  if (!st || !st.view) {   // a plain #name typed in the address bar or followed from a link
+    const v = location.hash.slice(1);
+    if (v !== S.view && (S.user.tabs || []).includes(v) && views[v]) { Object.assign(S, TAB_RESET, {view: v}); try { history.replaceState({...navState(), back: false}, "", "#" + v); } catch (_) {} S.navFwd = true; render(); }
+    return;
+  }
+  if (st.view !== S.view) { S.result = null; S.tmp = null; }
+  NAV_KEYS.forEach(k => { S[k] = st[k] ?? null; });
+  S.restoreY = st.scroll || 0;   // Back to a list lands where you were
+  render();
+});
+window.addEventListener("hashchange", () => { const v = location.hash.slice(1); if (S.token && S.user && v !== S.view && (S.user.tabs || []).includes(v) && views[v]) { Object.assign(S, TAB_RESET, {view: v}); S.navFwd = true; render(); } });
+// Session 9: list filters survive a refresh (this browser tab only)
+const FLT_KEYS = ["sif", "tif", "al", "pf", "fn"];
+function saveFilters() { try { const o = {}; FLT_KEYS.forEach(k => { if (S[k] != null) o[k] = k === "fn" ? {page: S.fn.page, f: S.fn.f} : S[k]; }); sessionStorage.setItem("flt", JSON.stringify(o)); } catch (_) {} }
+function loadFilters() { try { const o = JSON.parse(sessionStorage.getItem("flt") || "{}"); FLT_KEYS.forEach(k => { if (o[k] != null) S[k] = o[k]; }); if (S.fn) S.fn.edit = null; } catch (_) {} }
+
+// Session 9A: breadcrumb above the h1 on a computer (hidden on a phone, where the top bar has a Back arrow). items: [{label, patch}, ..., {label}]
+function crumb(items) {
+  return `<div class="crumb" role="navigation" aria-label="${esc(t("breadcrumb"))}"><ol>${items.map((x, i) => i < items.length - 1
+    ? `<li><a href="#${esc(S.view)}" data-go="${esc(JSON.stringify(x.patch || {}))}">${esc(x.label)}</a></li>`
+    : `<li aria-current="page">${esc(x.label)}</li>`).join("")}</ol></div>`;
+}
+const crumbFor = (label, close) => crumb([{label: t(S.view), patch: close}, {label}]);
+
+// ---- Session 12: sub-tabs. role=tablist/tab, aria-selected, arrow keys move, Enter or Space opens. onSelect(key) may return a Promise; false = stay. ----
+const TABSEL = {};
+function tabs({id, items, current, onSelect, label}) {
+  if (onSelect) TABSEL[id] = onSelect;
+  return `<div class="subtabs" role="tablist" data-tabs="${esc(id)}" aria-label="${esc(label || t("sections"))}">${items.map(([k, l]) => `<button type="button" role="tab" id="tab_${esc(id)}_${esc(k)}" data-key="${esc(k)}" aria-selected="${k === current}" tabindex="${k === current ? 0 : -1}">${esc(l)}</button>`).join("")}</div>`;
+}
+document.addEventListener("click", async e => {
+  const b = e.target.closest && e.target.closest("[data-tabs] [role=tab]"); if (!b) return;
+  const id = b.parentElement.dataset.tabs, fn = TABSEL[id];
+  if (!fn || b.getAttribute("aria-selected") === "true") return;
+  if ((await fn(b.dataset.key)) === false) return;
+  S.tabFocus = id; render();
+});
+document.addEventListener("keydown", e => {
+  const b = e.target.closest && e.target.closest("[data-tabs] [role=tab]"); if (!b) return;
+  const list = [...b.parentElement.querySelectorAll("[role=tab]")]; let i = list.indexOf(b);
+  const rtl = getComputedStyle(b).direction === "rtl", step = {ArrowRight: rtl ? -1 : 1, ArrowLeft: rtl ? 1 : -1}[e.key];
+  if (step) i = (i + step + list.length) % list.length; else if (e.key === "Home") i = 0; else if (e.key === "End") i = list.length - 1; else return;
+  e.preventDefault(); list.forEach(x => { x.tabIndex = -1; }); list[i].tabIndex = 0; list[i].focus();
+});
+
+function navHtml(tabList) {
+  const role = S.user.role, grouped = role === "admin", closed = grouped ? navClosed() : [], curG = grouped ? NAV_GROUP[S.view] : null;
+  const pref = BAR_PREFS[role];
+  const barOrder = pref ? [...pref.filter(v => tabList.includes(v)), ...tabList.filter(v => !pref.includes(v))] : tabList;
+  const bar = barOrder.slice(0, BAR_SLOTS), rest = tabList.filter(v => !bar.includes(v));   // the More sheet keeps the server order
+  const one = v => { const g = grouped && NAV_GROUP[v], hid = g && g !== curG && closed.includes(g);
+    return `<a href="#${v}" class="tab${hid ? " gc" : ""}" data-v="${v}"${g ? ` data-g="${g}"` : ""}${pref ? ` style="--o:${tabList.indexOf(v) + 1}"` : ""} ${v === S.view ? 'aria-current="page"' : ""}>${icon(v)}<span class="tl">${esc(t(v))}</span><span class="bdg" hidden></span></a>`; };
+  const head = (g, rep) => `<div class="grp${rep ? " rep" : ""}${g === curG ? " cur" : ""}" role="presentation"><span class="glbl">${esc(t(g))}</span><button type="button" class="gbtn" data-grp="${g}" aria-expanded="${!closed.includes(g) || g === curG}"${g === curG ? ' aria-disabled="true"' : ""}>${esc(t(g))}${icon("chev")}</button></div>`;
+  const run = list => { let last = "", out = ""; list.forEach(v => { const g = grouped && NAV_GROUP[v]; if (g && g !== last) out += head(g, false); if (g) last = g; out += one(v); }); return out; };
   const lastBarGroup = grouped ? NAV_GROUP[bar[bar.length - 1]] : null;
   const restHtml = (() => { let last = lastBarGroup, out = "", first = true; rest.forEach(v => { const g = grouped && NAV_GROUP[v];
-    if (g && g !== last) out += `<div class="grp" role="presentation">${esc(t(g))}</div>`;
-    else if (g && first) out += `<div class="grp rep" role="presentation">${esc(t(g))}</div>`;   // shown only inside the phone menu
+    if (g && g !== last) out += head(g, false);
+    else if (g && first) out += head(g, true);   // shown only inside the phone menu
     first = false; if (g) last = g; out += one(v); }); return out; })();
   const u = S.user, initials = String(u.full_name || "?").trim().split(/\s+/).slice(0, 2).map(w => w[0]).join("").toUpperCase();
-  return `<nav aria-label="${esc(t("main_menu"))}"><div class="brand"><span class="mark" aria-hidden="true">ب</span><span class="bname">${esc(t("app"))}</span></div>`
+  const back = detailOpen() ? `<button type="button" class="topback" id="topBack" aria-label="${esc(t("back"))}">${icon("back")}</button>` : "";
+  return `<nav class="${grouped ? "grouped" : ""}${pref ? " reord" : ""}" aria-label="${esc(t("main_menu"))}"><div class="brand">${back}<span class="mark" aria-hidden="true">ب</span><span class="bname">${esc(t("app"))}</span><span class="btitle">${esc(t(S.view))}</span></div>`
     + `<button type="button" id="bell" aria-label="${esc(t("Notifications"))}">${icon("bell")}<span class="lbl">${esc(t("Notifications"))}</span><span class="n" id="bellN" hidden></span></button>`
-    + `<div class="pri">${run(bar, false)}</div><button type="button" class="tab" id="moreBtn" aria-expanded="false" aria-controls="sheet">${icon("more")}<span class="tl">${esc(t("menu_more"))}</span></button>`
-    + `<div class="sheet" id="sheet" role="group" aria-label="${esc(t("all_sections"))}"><div class="ovf">${restHtml}</div><div class="foot"><div class="me"><span class="av" aria-hidden="true">${esc(initials)}</span><span class="who"><b>${esc(u.full_name)}</b><small>${esc(t(u.role))}</small></span></div><button type="button" class="tab" id="so" title="${esc(t("signout"))}">${icon("out")}<span class="tl">${esc(t("signout"))}</span></button></div></div></nav>`;
+    + `<button type="button" class="tab qj" id="qjTop" aria-keyshortcuts="Control+K">${icon("search")}<span class="tl">${esc(t("qj_search"))}</span><kbd>Ctrl K</kbd></button>`
+    + `<div class="pri">${run(bar)}</div><button type="button" class="tab" id="moreBtn" aria-expanded="false" aria-controls="sheet">${icon("more")}<span class="tl">${esc(t("menu_more"))}</span></button>`
+    + `<div class="sheet" id="sheet" role="group" aria-label="${esc(t("all_sections"))}"><button type="button" class="tab qj" id="qjSheet">${icon("search")}<span class="tl">${esc(t("qj_search"))}</span></button><div class="ovf">${restHtml}</div><div class="foot"><div class="me"><span class="av" aria-hidden="true">${esc(initials)}</span><span class="who"><b>${esc(u.full_name)}</b><small>${esc(t(u.role))}</small></span></div><button type="button" class="tab" id="so" title="${esc(t("signout"))}">${icon("out")}<span class="tl">${esc(t("signout"))}</span></button></div></div></nav>`;
 }
 // Cards on a phone need each cell to know its column title, so copy the header text onto the cells (and keep screen readers happy).
 function labelTables(root) {
   root.querySelectorAll("table").forEach(tb => {
     const hr = tb.tHead && tb.tHead.rows[0]; if (!hr || tb.classList.contains("nostack")) return;
     const heads = [...hr.cells].map(c => c.textContent.trim());
-    tb.classList.add("st"); tb.setAttribute("role", "table"); tb.tHead.setAttribute("role", "rowgroup"); hr.setAttribute("role", "row"); [...hr.cells].forEach(c => c.setAttribute("role", "columnheader"));
-    [...tb.tBodies].forEach(b => { b.setAttribute("role", "rowgroup"); [...b.rows].forEach(r => { r.setAttribute("role", "row"); [...r.cells].forEach((c, i) => { c.setAttribute("data-label", heads[i] || ""); c.setAttribute("role", "cell"); }); }); });
+    tb.classList.add("st"); tb.setAttribute("role", "table"); tb.tHead.setAttribute("role", "rowgroup"); hr.setAttribute("role", "row");
+    [...hr.cells].forEach(c => { c.setAttribute("role", "columnheader"); if (c.tagName === "TH" && !c.hasAttribute("scope")) c.setAttribute("scope", "col"); });
+    [...tb.tBodies].forEach(b => { b.setAttribute("role", "rowgroup"); [...b.rows].forEach(r => { r.setAttribute("role", "row"); [...r.cells].forEach((c, i) => { if (!c.hasAttribute("data-label")) c.setAttribute("data-label", heads[i] || ""); c.setAttribute("role", "cell"); }); }); });
   });
 }
 function authShell(inner) {
@@ -386,66 +600,200 @@ function authShell(inner) {
   return `<div class="auth"><header class="hero"><span class="mark" aria-hidden="true">ب</span><div><h1>${esc(name)}</h1>${S.info && S.info.tagline ? `<p>${esc(S.info.tagline)}</p>` : ""}</div></header><main class="authcard" id="main"><div class="box panel">${inner}</div></main></div>`;
 }
 const setTitle = () => { document.title = (S.token && S.user && S.view ? t(S.view) + " · " : "") + ((S.info && S.info.academy_name) || t("app")); };
+const skeleton = () => `<div class="skel" aria-hidden="true"><div class="sk h"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div></div><p class="sr-only">${esc(t("Loading..."))}</p>`;
 
+// ---- phone More sheet (Session 9A): focus stays inside while open, Escape closes it and returns to More ----
+let menuRelease = null;
+function setMenu(open) {
+  const app = $(".app"), more = $("#moreBtn"), sheet = $("#sheet");
+  if (menuRelease) { menuRelease(); menuRelease = null; }
+  if (!app || !more) return;
+  app.classList.toggle("menu", open); more.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open && sheet) { menuRelease = ui.trap(sheet, {onEscape: () => { setMenu(false); more.focus(); }}); const f = sheet.querySelector(".tab"); if (f) f.focus(); }
+}
+matchMedia("(max-width: 880px)").addEventListener("change", e => { if (!e.matches) setMenu(false); });   // the window grew into the computer layout
+
+// ---- Session 9B: tab badges (pending applications, slips waiting, open assignments). Fetched after a render, kept 60 s, refreshed when the window gets focus. ----
+const BADGE = {at: 0, n: {}, loading: null};
+const staleBadges = () => { BADGE.at = 0; };
+function applyBadges() {
+  document.querySelectorAll("nav a.tab[data-v]").forEach(a => {
+    const n = +BADGE.n[a.dataset.v] || 0, b = a.querySelector(".bdg"); if (!b) return;
+    b.hidden = !n; b.textContent = n > 99 ? "99+" : n ? String(n) : "";
+    if (n) a.setAttribute("aria-label", `${t(a.dataset.v)} (${n})`); else a.removeAttribute("aria-label");
+  });
+}
+function loadBadges(force) {
+  if (!S.user || !S.token) return;
+  if (!force && Date.now() - BADGE.at < 60000) return applyBadges();
+  if (BADGE.loading) return BADGE.loading;
+  BADGE.loading = (async () => {
+    const n = {}, tl = S.user.tabs || [];
+    try {
+      if (S.user.role === "admin" && (tl.includes("admissions") || tl.includes("fees"))) {
+        const d = await api("/dashboard");
+        if (tl.includes("admissions")) n.admissions = d.pending_applications;
+        if (tl.includes("fees") && "slips_pending" in d) n.fees = d.slips_pending;   // only admins with the Fees area get this number
+      }
+      if (S.user.role === "student" && tl.includes("assignments")) n.assignments = ((await api("/my/home")).todo || []).length;
+    } catch (_) { /* badges are extras: a failure leaves them hidden */ }
+    BADGE.n = n; BADGE.at = Date.now(); BADGE.loading = null; applyBadges();
+  })();
+  return BADGE.loading;
+}
+let focusAt = 0;
+window.addEventListener("focus", () => { if (Date.now() - focusAt > 5000) { focusAt = Date.now(); loadBadges(true); } });
+
+// ---- Session 9B: quick jump (Ctrl/Cmd+K or "/"), Alt+1..9, "?" for help ----
+const QUICK = [{label: "qa_add_course", view: "courses", add: "course"}, {label: "qa_add_person", view: "people", add: "person"}, {label: "qa_add_enrollment", view: "enrollments", add: "enrollment"}];
+const tabsNow = () => (S.user && S.user.tabs || []).filter(v => views[v]);
+async function quickJump() {
+  if (!S.user || document.querySelector("dialog[open]")) return;
+  setMenu(false);
+  const tl = tabsNow();
+  const items = tl.map((v, i) => ({label: t(v), view: v, icon: icon(v), hint: i < 9 ? "Alt+" + (i + 1) : "", keys: v.replace(/_/g, " ")}));
+  if (S.user.role === "admin") QUICK.filter(q => tl.includes(q.view)).forEach(q => items.push({label: t(q.label), view: q.view, add: q.add, icon: icon("plus"), hint: t(q.view)}));
+  const r = await ui.pick(t("qj_title"), items);
+  if (r) openTab(r.view, r.add ? {openAdd: r.add} : {});
+}
+function shortcutsHelp() {
+  const rows = [["Ctrl / ⌘ + K", t("sc_quick")], ["/", t("sc_quick")], ["Alt + 1 … 9", t("sc_tab")], ["?", t("sc_help")], ["Esc", t("sc_close")]];
+  return ui.show(t("sc_title"), `<table class="kv nostack"><tbody>${rows.map(([k, v]) => `<tr><th scope="row"><kbd>${esc(k)}</kbd></th><td>${esc(v)}</td></tr>`).join("")}</tbody></table>`);
+}
+document.addEventListener("keydown", e => {
+  if (!S.token || !S.user || !$(".app") || e.defaultPrevented) return;
+  if (document.querySelector("dialog[open]")) return;
+  const typing = e.target.closest && e.target.closest("input, textarea, select, [contenteditable=''], [contenteditable=true]");
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") { e.preventDefault(); quickJump(); return; }
+  if (typing || e.ctrlKey || e.metaKey) return;
+  if (e.key === "/" && !e.altKey) { e.preventDefault(); quickJump(); }
+  else if (e.key === "?" && !e.altKey) { e.preventDefault(); shortcutsHelp(); }
+  else if (e.altKey && /^Digit[1-9]$/.test(e.code)) { const v = tabsNow()[+e.code.slice(5) - 1]; if (v) { e.preventDefault(); openTab(v); } }
+});
+
+// ---- delegated navigation clicks: tabs are real links (middle-click, Ctrl/Cmd-click and "open in new tab" work); plain clicks stay in the page ----
+document.addEventListener("click", e => {
+  const plain = e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+  const a = e.target.closest && e.target.closest("a.tab[data-v]");
+  if (a && plain) { e.preventDefault(); openTab(a.dataset.v); return; }
+  const c = e.target.closest && e.target.closest("a[data-go]");
+  if (c && plain) { e.preventDefault(); try { const p = JSON.parse(c.dataset.go); history.state && history.state.back ? navBack(p) : go(p); } catch (_) {} return; }
+  const g = e.target.closest && e.target.closest(".gbtn[data-grp]");
+  if (g && g.getAttribute("aria-disabled") !== "true") {   // Session 9A: collapsible admin groups, remembered per person
+    const k = g.dataset.grp, cl = navClosed(), open = cl.includes(k), next = open ? cl.filter(x => x !== k) : [...cl, k];
+    store.set("navClosed:" + S.user.id, JSON.stringify(next));
+    document.querySelectorAll(`nav .tab[data-g="${k}"]`).forEach(x => x.classList.toggle("gc", !open));
+    document.querySelectorAll(`nav .gbtn[data-grp="${k}"]`).forEach(x => x.setAttribute("aria-expanded", open ? "true" : "false"));
+  }
+});
+
+let RSEQ = 0;   // Session 1: each render gets a number; an older one that finishes late is thrown away
 async function render() {
+  const seq = ++RSEQ, stale = () => seq !== RSEQ;
+  MQ = [];
+  S.rendering = true;
   const root = $("#root");
   const prev = $(".app"); if (prev) prev.classList.add("busy");   // thin progress bar while the next screen loads
+  const fatal = (msg, retry) => {   // something needed before any screen failed: say so and offer Retry instead of an empty page
+    root.innerHTML = authShell(`<div class="msg err" role="alert">${esc(msg)}</div><div class="stack"><button class="btn block" id="retry">${esc(t("Retry"))}</button><button class="btn alt block" id="so">${esc(t("signout"))}</button></div>`);
+    $("#retry").onclick = retry || (() => render()); $("#so").onclick = signout; S.rendering = false; setTitle();
+  };
   if (!S.token) {
     root.innerHTML = authShell(`<h2>${esc(t("signin"))}</h2>${S.info && S.info.banner ? `<div class="banner" role="note">${esc(S.info.banner)}</div>` : ""}${note()}<form id="fl" class="stack"><label>${t("Login ID")}<input id="le" type="text" autocomplete="username" autocapitalize="characters" spellcheck="false" placeholder="BAL/AL1/001" required></label><label>${t("password")}<input id="lp" type="password" autocomplete="current-password" required></label><label class="chk"><input type="checkbox" id="lps"><span>${esc(t("show_password"))}</span></label><button class="btn block">${t("signin")}</button></form>`);
     $("#lps").onchange = e => { $("#lp").type = e.target.checked ? "text" : "password"; };
-    $("#fl").onsubmit = async e => { e.preventDefault(); try { const r = await api("/auth/login", "POST", {login: val("le"), password: val("lp")}); S.token = r.token; sessionStorage.setItem("tok", r.token); S.user = r.user; S.view = null; } catch (x) { flash(x.message); } render(); };
-    setTitle(); return;
+    $("#fl").onsubmit = async e => { e.preventDefault(); const b = $("#fl button"); busy(b, true);
+      try { const r = await api("/auth/login", "POST", {login: val("le"), password: val("lp")}); S.token = r.token; sessionStorage.setItem("tok", r.token); S.user = r.user; S.view = null; loadFilters(); }
+      catch (x) { busy(b, false); showErr($("#fl"), x.message); return; }
+      render(); };
+    S.rendering = false; setTitle(); return;
   }
-  if (!S.user) S.user = (await api("/auth/me")).user;
+  if (!S.user) {
+    let u; try { u = (await api("/auth/me")).user; } catch (x) { if (stale() || !S.token) return; return fatal(x.message); }
+    if (stale()) return;
+    S.user = u; loadFilters();
+  }
+  setLang(S.user.lang || (S.info && S.info.language) || "en");
   if (S.user.must_change_password) {   // first sign-in with a temporary password: only this screen, until a new password is saved
     root.innerHTML = authShell(`<h2>${esc(t("Choose your own password"))}</h2><p class="hint">${esc(t("You signed in with a temporary password. Choose a new one to continue."))}</p>${note()}<form id="fcp" class="stack"><label>${esc(t("Temporary password"))}<input id="cp0" type="password" autocomplete="current-password" required></label><label>${esc(t("New password"))}<input id="cp1" type="password" autocomplete="new-password" required></label><label>${esc(t("Repeat new password"))}<input id="cp2" type="password" autocomplete="new-password" required></label><button class="btn block">${esc(t("save"))}</button><button type="button" class="btn alt block" id="cpo">${t("signout")}</button></form>`);
     $("#cpo").onclick = signout;
-    $("#fcp").onsubmit = async e => { e.preventDefault(); try {
+    $("#fcp").onsubmit = async e => { e.preventDefault(); const b = $("#fcp button:not([type=button])"); busy(b, true); try {
       if (val("cp1") !== val("cp2")) throw new Error(t("The two new passwords are not the same"));
       await api("/auth/change-password", "POST", {current_password: val("cp0"), new_password: val("cp1")});
       S.user = null; flash(t("saved"), true);
-    } catch (x) { flash(x.message); } render(); };
-    setTitle(); return;
+    } catch (x) { busy(b, false); showErr($("#fcp"), x.message); return; } render(); };
+    S.rendering = false; setTitle(); return;
   }
   if (S.user.role === "student" || S.user.role === "teacher") {   // course / batch selection (Session 14 students, Session 15 teachers)
-    if (!S.mine) { try { S.mine = await api("/my/batches"); } catch (x) { S.mine = []; } }
+    if (!S.mine) {   // Session 1: a failed load is not remembered as "no courses"; the person gets Retry
+      let mine; try { mine = await api("/my/batches"); } catch (x) { if (stale() || !S.token) return; return fatal(t("courses_load_failed") + " " + x.message); }
+      if (stale()) return;
+      S.mine = mine;
+    }
     const ids = S.mine.map(b => b.id), saved = +sessionStorage.getItem("sb") || null;
     S.sb = ids.includes(S.sb) ? S.sb : ids.includes(saved) ? saved : ids.length === 1 ? ids[0] : null;
     if (S.sb) sessionStorage.setItem("sb", S.sb); else sessionStorage.removeItem("sb");
     if (S.mine.length > 1 && !S.sb) {   // several enrolments and none chosen yet: ask first
       root.innerHTML = authShell(`<h2>${esc(t("Choose your course"))}</h2><p class="hint">${esc(t(S.user.role === "teacher" ? "You teach more than one. You can switch at any time from the top of the page." : "You are enrolled in more than one. You can switch at any time from the top of the page."))}</p><div class="stack">${S.mine.map(b => `<button class="btn block" data-sb="${b.id}">${esc(b.course_name)} · ${esc(b.code)}${b.substitute_until ? esc(" (" + t("substitute until") + " " + b.substitute_until + ")") : ""}</button>`).join("")}<button class="btn alt block" id="so">${t("signout")}</button></div>`);
-      root.querySelectorAll("[data-sb]").forEach(x => x.onclick = () => { S.sb = +x.dataset.sb; S.aid = null; render(); });
-      $("#so").onclick = signout; setTitle();
+      root.querySelectorAll("[data-sb]").forEach(x => x.onclick = () => { S.sb = +x.dataset.sb; S.aid = null; staleBadges(); render(); });
+      $("#so").onclick = signout; S.rendering = false; setTitle();
       return;
     }
   }
-  const tabs = (S.user.tabs || []).filter(v => views[v]);
-  const fromUrl = location.hash.slice(1);
-  if (!S.view && tabs.includes(fromUrl)) S.view = fromUrl;   // opening a link such as /#fees
-  if (!tabs.includes(S.view)) S.view = tabs[0];
-  let html; try { html = await views[S.view](); } catch (x) { html = `<div class="msg err">${esc(x.message)}</div>`; }
+  const tabList = tabsNow();
+  if (!S.view) {   // first screen: the #name in the address, else this person's last tab (Session 9A), else their first tab
+    const h = location.hash.slice(1), last = store.get("lastTab:" + S.user.id);
+    S.view = tabList.includes(h) ? h : (!h && tabList.includes(last)) ? last : null;
+    const st = history.state;
+    if (S.view && st && st.view === S.view) NAV_KEYS.forEach(k => { if (k !== "view" && st[k] != null) S[k] = st[k]; });   // a refresh keeps the open detail
+  }
+  if (!tabList.includes(S.view)) S.view = tabList[0];
+  const skel = setTimeout(() => { const m = $("#main"); if (!stale() && m && $(".app")) { m.innerHTML = skeleton(); m.setAttribute("aria-busy", "true"); } }, 300);   // Session 9B
+  let html; try { html = await views[S.view](); }
+  catch (x) { html = `<div class="msg err" role="alert">${esc(x.message)} <button type="button" class="btn sm" id="viewRetry">${esc(t("Retry"))}</button></div>`; }
+  finally { clearTimeout(skel); }
+  if (stale()) return;
+  if (!S.user) return render();   // the screen found that permissions changed: load the tab list again
   const ctx = S.mine && S.mine.length > 1 ? `<div class="ctx"><label>${esc(t("Course"))}<select id="sbsel" aria-label="${esc(t("Course"))}">${S.mine.map(b => `<option value="${b.id}" ${b.id === S.sb ? "selected" : ""}>${esc(b.course_name)} · ${esc(b.code)}${b.substitute_until ? esc(" (" + t("substitute until") + " " + b.substitute_until + ")") : ""}</option>`).join("")}</select></label></div>` : "";
-  root.innerHTML = `<a class="skip" href="#main" id="skip">${esc(t("skip_to_content"))}</a><div class="app">${navHtml(tabs)}<div class="scrim" id="scrim"></div><main id="main" tabindex="-1">${note()}${ctx}${html}</main></div>`;
-  labelTables($("main"));
-  const app = $(".app"), more = $("#moreBtn");
-  const setMenu = open => { app.classList.toggle("menu", open); more.setAttribute("aria-expanded", open ? "true" : "false"); };
-  if ($("#sheet .tab[aria-current=page]")) more.classList.add("has-current");
-  more.onclick = () => { const open = !app.classList.contains("menu"); setMenu(open); if (open) { const f = $("#sheet .tab"); if (f) f.focus(); } };
+  setMenu(false);
+  root.innerHTML = `<a class="skip" href="#main" id="skip">${esc(t("skip_to_content"))}</a><div class="app${detailOpen() ? " detail" : ""}">${navHtml(tabList)}<div class="scrim" id="scrim"></div><main id="main" tabindex="-1">${note()}${ctx}${html}</main></div>`;
+  const main = $("#main");
+  labelTables(main);
+  const more = $("#moreBtn");
+  if ($("#sheet a.tab[aria-current=page]")) more.classList.add("has-current");
+  more.onclick = () => setMenu(!$(".app").classList.contains("menu"));
   $("#scrim").onclick = () => setMenu(false);
-  app.addEventListener("keydown", e => { if (e.key === "Escape" && app.classList.contains("menu")) { setMenu(false); more.focus(); } });
-  $("#skip").onclick = e => { e.preventDefault(); $("#main").focus(); };
-  document.querySelectorAll("nav [data-v]").forEach(b => b.onclick = () => { S.view = b.dataset.v; render(); });
+  $(".app").addEventListener("keydown", e => { if (e.key === "Escape" && $(".app").classList.contains("menu")) { setMenu(false); more.focus(); } });
+  $("#skip").onclick = e => { e.preventDefault(); main.focus(); };
   $("#so").onclick = signout;
+  $("#qjTop").onclick = quickJump; $("#qjSheet").onclick = quickJump;
+  if ($("#topBack")) $("#topBack").onclick = () => navBack();
+  if ($("#viewRetry")) $("#viewRetry").onclick = () => render();
   if (window.initBell) initBell();   // Session 28
-  if ($("#sbsel")) $("#sbsel").onchange = e => { S.sb = +e.target.value; S.aid = null; S.topen = null; S.adate = null; render(); };   // switch course without signing out
-  // The address bar follows the tab, so Back, Forward, refresh and bookmarks work. Only a plain #name is used.
-  if (location.hash.slice(1) !== S.view) history[S.shown ? "pushState" : "replaceState"](null, "", "#" + S.view);
-  if (S.shown !== S.view) { window.scrollTo(0, 0); if (S.shown) $("#main").focus({preventScroll: true}); }   // a new screen starts at the top, and screen readers land on it
-  S.shown = S.view; setTitle();
+  if ($("#sbsel")) $("#sbsel").onchange = e => { S.sb = +e.target.value; S.aid = null; S.topen = null; S.adate = null; staleBadges(); render(); };   // switch course without signing out
+  // The address bar follows the tab, so Back, Forward, refresh and bookmarks work. Only a plain #name is used; the open detail is kept in history.state.
+  if (!S.skipPop) try {
+    if (location.hash.slice(1) !== S.view) history[S.shown ? "pushState" : "replaceState"]({...navState(), back: false}, "", "#" + S.view);
+    else history.replaceState({...(history.state || {}), ...navState()}, "", "#" + S.view);
+  } catch (_) {}
+  // Session 9A: forward to a new screen starts at the top; Back to a list goes back to where it was
+  const changed = S.shown !== S.view;
+  if (S.restoreY != null) { const y = S.restoreY; S.restoreY = null; requestAnimationFrame(() => window.scrollTo(0, y)); }
+  else if (changed || S.navFwd) window.scrollTo(0, 0);
+  if (changed && S.shown) main.focus({preventScroll: true});   // a new screen: screen readers land on it
+  else if (S.navFwd && !changed) { const p = main.querySelector("[data-detail]") || main.querySelector(".panel"); if (p) { if (!p.hasAttribute("tabindex")) p.tabIndex = -1; p.focus({preventScroll: true}); } }   // Session 19: a new panel inside the same section
+  S.navFwd = false; S.shown = S.view; S.rendering = false; setTitle();
+  store.set("lastTab:" + S.user.id, S.view); saveFilters();
+  const q = MQ; MQ = [];
+  q.forEach(fn => { try { fn(); } catch (x) { console.error(x); } });
+  if (S.tabFocus) { const b = main.querySelector(`[data-tabs="${S.tabFocus}"] [aria-selected=true]`); S.tabFocus = null; if (b) b.focus(); }
+  if (S.refocus) { const r = S.refocus; S.refocus = null; const el = [...main.querySelectorAll(`[data-do="${r.do}"]`)].find(x => (x.dataset.id || "") === (r.id || "")); if (el && document.activeElement === document.body) el.focus({preventScroll: true}); }
+  main.querySelectorAll(".subtabs").forEach(st => { const a = st.querySelector("[aria-selected=true]"); const r = st.getBoundingClientRect(); if (a && st.scrollWidth > st.clientWidth && r.top >= 0 && r.bottom <= innerHeight) a.scrollIntoView({block: "nearest", inline: "center"}); });   // Session 9B
+  if (S.openAdd) { const d = main.querySelector(`details.addp[data-add="${S.openAdd}"]`); S.openAdd = null; if (d) { d.open = true; d.scrollIntoView({block: "start"}); const f = d.querySelector("input, select, textarea"); if (f) f.focus(); } }
+  loadBadges();
 }
-window.addEventListener("hashchange", () => { const v = location.hash.slice(1); if (S.token && S.user && v !== S.view && (S.user.tabs || []).includes(v) && views[v]) { S.view = v; render(); } });
 window.addEventListener("DOMContentLoaded", () => loadText().then(() => api("/public/info").then(i => { S.info = i; }).catch(() => {})).then(render));
 </script>
+<script src="ui.js"></script>
 <script src="learning.js"></script>
 <script src="fees.js"></script>
 <script src="admin.js"></script>
