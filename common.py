@@ -15,6 +15,18 @@ def cap_mb(mb):
     return min(mb, VERCEL_MAX_MB) if ON_VERCEL else mb
 
 
+EXAMPLE_SECRETS = ("dev-only-change-me", "change-me-to-a-long-random-string", "change-me", "secret", "changeme")
+
+
+def weak_secret(key):
+    """Why this SECRET_KEY must not be used on a real portal, or None when it is fine (v0.8.39)."""
+    key = str(key or "")
+    if not key.strip(): return "is not set"
+    if key.strip().lower() in EXAMPLE_SECRETS: return "is still the example value, which is written in the public code"
+    if len(key) < 16: return "is too short (use at least 32 characters)"
+    return None
+
+
 def digits_intl(phone):
     """Digits only; Maldives 7-digit local numbers get the 960 prefix."""
     d = re.sub(r"\D", "", phone or "")

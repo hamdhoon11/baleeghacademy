@@ -10,6 +10,7 @@ WhatsApp link with the new password, so the admin can send it in one tap.
 """
 import datetime as dt
 import time
+import ratelimit
 from urllib.parse import quote
 
 from flask import g, jsonify, request
@@ -30,23 +31,22 @@ def wa_link(phone, text):
 
 
 def register(app, c):
-    hits = {}
-
     @app.post("/api/auth/forgot")
     def forgot():
         d = request.get_json(silent=True) or {}
         login = str(d.get("login") or "").strip()[:120]
         contact = str(d.get("contact") or "").strip()[:40] or None
         if not login: return c.err("Type your login ID or email")
-        ip = request.remote_addr or "?"
+        ip = c.ip_of()
         now = time.time()
-        hits[ip] = [x for x in hits.get(ip, []) if now - x < 3600]
-        if len(hits[ip]) >= app.config.get("FORGOT_LIMIT", PER_IP_HOUR):
+        key = "forgot:" + ip   # v0.8.39: counted in the database (ratelimit.py), so the limit holds across every copy of the app
+        if ratelimit.count(c.db(), key, 3600, now) >= app.config.get("FORGOT_LIMIT", PER_IP_HOUR):
             return jsonify(ok=True, message=ANSWER)   # same answer: nothing to learn from the limit either
-        hits[ip].append(now)
+        ratelimit.hit(c.db(), key, now)
         u = c.one("SELECT id, full_name, login_id, role, is_active FROM users WHERE UPPER(login_id)=UPPER(?) OR LOWER(email)=LOWER(?)", (login, login))
         uid = u["id"] if u and u["is_active"] else None
         if uid and c.one("SELECT 1 x FROM password_help WHERE user_id=? AND status='pending'", (uid,)):
+            c.db().commit()   # keeps the counted attempt
             return jsonify(ok=True, message=ANSWER)   # one open request per person is enough
         c.db().execute("INSERT INTO password_help(user_id,login_text,contact,status,ip,created_at) VALUES(?,?,?,'pending',?,?)", (uid, login, contact, ip, stamp()))
         c.audit("forgot_request", "user", uid, ("matched " if uid else "no match: ") + login)

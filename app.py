@@ -6,7 +6,7 @@ from flask import Flask, g, jsonify, request, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 import settings_schema as SS
 import idcodes
-import common, dbx, storage, transfers
+import common, dbx, storage, transfers, ratelimit
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 ON_VERCEL = bool(os.environ.get("VERCEL"))
@@ -33,15 +33,23 @@ def create_app(config=None):
         MAX_CONTENT_LENGTH=25 * 1024 * 1024,
         SKIP_FORCED_CHANGE=os.environ.get("PORTAL_SKIP_FORCED_CHANGE") == "1",   # TESTS ONLY: never set this on a real server
         ALLOW_EMAIL_LOGIN=os.environ.get("ALLOW_EMAIL_LOGIN", "1") != "0",   # Session 11: set to 0 once everyone has confirmed they can sign in by ID
+        TRUST_PROXY=ON_VERCEL or os.environ.get("TRUST_PROXY") == "1",        # v0.8.39: read the person's address from the proxy's header (see ratelimit.py)
     )
     if config:
         app.config.update(config)
     app.config["USE_POSTGRES"] = dbx.is_postgres(app.config["DATABASE_URL"])
+    # v0.8.39: sign-in tokens are signed with SECRET_KEY. The code is public, so with a missing or example key anyone could make themselves
+    # an admin token. A real (hosted) portal therefore refuses to start until a proper key is set; a local SQLite copy still starts without one.
+    if app.config["ON_VERCEL"] or app.config["USE_POSTGRES"]:
+        problem = common.weak_secret(app.config["SECRET_KEY"])
+        if problem:
+            raise RuntimeError("SECRET_KEY " + problem + ". Set SECRET_KEY to a long random text (for example the output of: "
+                               "python -c \"import secrets; print(secrets.token_urlsafe(48))\") in the host's environment variables, then deploy again.")
     if not app.config["USE_POSTGRES"]:
         os.makedirs(os.path.dirname(app.config["DATABASE_PATH"]), exist_ok=True)
     id_tables = dbx.id_tables_of(dbx.read_schema(BASE))
     DUMMY_HASH = generate_password_hash("not-a-real-password")
-    fails = {}  # ip -> [timestamps]; simple in-memory login rate limit
+    ip_of = lambda: ratelimit.client_ip(request, app.config["TRUST_PROXY"])   # v0.8.39: the person's address, also behind Vercel
 
     # ---------- db ----------
     def connect():
@@ -106,7 +114,7 @@ def create_app(config=None):
         if batch_id is not None and course_id is None:
             b = one("SELECT course_id FROM batches WHERE id=?", (batch_id,))
             course_id = b["course_id"] if b else None
-        try: ip = request.remote_addr
+        try: ip = ip_of()
         except RuntimeError: ip = None   # scheduled runs have no request
         val = lambda x: None if x is None else str(int(x) if isinstance(x, float) and x.is_integer() else x)[:300]   # 6.0 is stored as 6
         db().execute("INSERT INTO audit_log(user_id,action,entity,entity_id,detail,user_role,login_id,course_id,batch_id,old_value,new_value,ip) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -147,6 +155,11 @@ def create_app(config=None):
 
     MVT = dt.timezone(dt.timedelta(hours=5))   # Maldives time, no daylight saving
 
+    def mv_today():
+        """Today's date in the Maldives (v0.8.39). The server's own date is UTC, which is still yesterday from 00:00 to 05:00 Maldives time."""
+        fn = app.config.get("NOW")
+        return (fn() if fn else dt.datetime.now(MVT)).astimezone(MVT).date()
+
     def utc_stamp():
         """Current time as UTC 'YYYY-MM-DD HH:MM:SS' (same format as SQLite's datetime('now')), honouring an injected test clock."""
         fn = app.config.get("NOW")
@@ -165,7 +178,8 @@ def create_app(config=None):
     # ---------- auth ----------
     def make_token(u):
         exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=saved_int("session_hours", app.config["TOKEN_HOURS"]))
-        return jwt.encode({"sub": str(u["id"]), "role": u["role"], "exp": exp}, app.config["SECRET_KEY"], "HS256")
+        # tv (v0.8.39): the account's token_version when the token was made; auth() refuses a token whose tv is no longer the account's
+        return jwt.encode({"sub": str(u["id"]), "role": u["role"], "tv": int(u.get("token_version") or 0), "exp": exp}, app.config["SECRET_KEY"], "HS256")
 
     def perm_list(u):
         """None for a full admin, else the list of allowed areas."""
@@ -202,9 +216,12 @@ def create_app(config=None):
                     p = jwt.decode(h[7:], app.config["SECRET_KEY"], algorithms=["HS256"])
                 except jwt.PyJWTError:
                     return err("Session expired. Sign in again.", 401)
-                u = one("SELECT id,login_id,email,full_name,role,is_active,must_change_password,permissions FROM users WHERE id=?", (p["sub"],))
+                u = one("SELECT id,login_id,email,full_name,role,is_active,must_change_password,permissions,token_version FROM users WHERE id=?", (p["sub"],))
                 if not u or not u["is_active"]:
                     return err("Account disabled", 403)
+                # v0.8.39: signed out, or the password was changed, after this token was made (tokens from before v0.8.39 have no tv and count as 0)
+                if int(p.get("tv") or 0) != int(u["token_version"] or 0):
+                    return err("Session expired. Sign in again.", 401)
                 g.user = u
                 # Session 11: until the temporary password is replaced, nothing works except changing it (and asking who I am). Enforced here, not in the page.
                 if u["must_change_password"] and not app.config["SKIP_FORCED_CHANGE"] and request.path not in ("/api/auth/change-password", "/api/auth/me"):
@@ -266,14 +283,13 @@ def create_app(config=None):
 
     @app.post("/api/auth/login")
     def login():
-        ip = request.remote_addr or "?"
         now = time.time()
         d = request.get_json(silent=True) or {}
         who = str(d.get("login") or d.get("login_id") or d.get("email") or "").strip()
-        key = "acct:" + who.lower()   # guessing one account's password is limited too, because IDs follow a pattern anyone can guess
-        for k in (ip, key):
-            fails[k] = [t for t in fails.get(k, []) if now - t < 300]
-        if len(fails[ip]) >= 8 or len(fails[key]) >= 8:
+        # guessing one account's password is limited too, because IDs follow a pattern anyone can guess.
+        # v0.8.39: counted in the database (ratelimit.py), so the limit holds across every copy of the app on Vercel.
+        keys = ("login:ip:" + ip_of(), "login:acct:" + who.lower())
+        if any(ratelimit.count(db(), k, 300, now) >= 8 for k in keys):
             return err("Too many attempts. Try again in a few minutes.", 429)
         if "@" in who:
             u = one("SELECT * FROM users WHERE email=?", (who.lower(),)) if app.config["ALLOW_EMAIL_LOGIN"] else None   # old way, switch off with ALLOW_EMAIL_LOGIN=0
@@ -282,7 +298,7 @@ def create_app(config=None):
         # the password is always checked (against a dummy hash if nobody matched) so the answer time does not reveal whether the ID exists
         ok = check_password_hash(u["password_hash"] if u else DUMMY_HASH, str(d.get("password", "")))
         if not u or not ok or not u["is_active"]:
-            fails[ip].append(now); fails[key].append(now)
+            for k in keys: ratelimit.hit(db(), k, now)
             audit("failed_login", "user", u["id"] if u else None, "account disabled" if u and ok else ("wrong password" if u else "unknown ID"),
                   role="anonymous", login_id=who[:60] or None); db().commit()   # what was typed as the ID is kept; the password never is
             return err("Wrong ID or password", 401)
@@ -293,7 +309,9 @@ def create_app(config=None):
     @app.post("/api/auth/logout")
     @auth()
     def logout():
-        """Tokens are stateless, so this only writes the log row; the browser forgets the token itself."""
+        """v0.8.39: raises the account's token_version, so the token just used (and any other sign-in of this account, on any device)
+        stops working at once instead of staying valid until it expires."""
+        db().execute("UPDATE users SET token_version=token_version+1 WHERE id=?", (g.user["id"],))
         audit("logout", "user", g.user["id"]); db().commit()
         return jsonify(ok=True)
 
@@ -312,10 +330,14 @@ def create_app(config=None):
         new = str(d.get("new_password", ""))
         if len(new) < setting_int("min_password_length"):
             return err(f"New password must be at least {setting_int('min_password_length')} characters")
-        db().execute("UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?",
+        db().execute("UPDATE users SET password_hash=?, must_change_password=0, token_version=token_version+1 WHERE id=?",
                      (generate_password_hash(new), g.user["id"]))
         audit("change_password", "user", g.user["id"]); db().commit()
-        return jsonify(ok=True)
+        # v0.8.39: every older sign-in of this account stops working; this browser gets a fresh token so the person stays signed in
+        u = one("SELECT * FROM users WHERE id=?", (g.user["id"],))
+        resp = jsonify(ok=True, token=make_token(u))
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     # ---------- users ----------
     STUDENT_FIELDS = ("date_of_birth", "grade", "island", "guardian_name", "guardian_relationship", "guardian_phone")
@@ -453,7 +475,7 @@ def create_app(config=None):
             changed.append("permissions")
         if d.get("password"):
             if len(d["password"]) < setting_int("min_password_length"): return err(f"Password must be at least {setting_int('min_password_length')} characters")
-            sets += ["password_hash=?", "must_change_password=1"]; args.append(generate_password_hash(d["password"])); changed.append("password")
+            sets += ["password_hash=?", "must_change_password=1", "token_version=token_version+1"]; args.append(generate_password_hash(d["password"])); changed.append("password")   # v0.8.39: their old sign-ins stop
         if "must_change_password" in d and not d.get("password"):
             sets.append("must_change_password=?"); args.append(1 if d["must_change_password"] else 0); changed.append("must_change_password")
         prof = {}
@@ -489,7 +511,7 @@ def create_app(config=None):
         if uid == g.user["id"]: return err("Use Change password for your own account")
         if u["role"] == "admin" and g.user["permissions"] is not None: return err("Only a full admin can reset an admin's password", 403)
         pw = temp_password()
-        db().execute("UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?", (generate_password_hash(pw), uid))
+        db().execute("UPDATE users SET password_hash=?, must_change_password=1, token_version=token_version+1 WHERE id=?", (generate_password_hash(pw), uid))   # v0.8.39: their old sign-ins stop
         ph = app.extensions.get("passhelp")
         if ph: ph["close_for"](uid)   # v0.8.35: a "Forgot password" request from this person is now handled
         audit("reset_password", "user", uid, u["login_id"] or ""); db().commit()
@@ -785,7 +807,7 @@ def create_app(config=None):
         d = request.get_json(silent=True) or {}
         e = one("SELECT * FROM enrollments WHERE id=?", (eid,))
         if not e: return err("Enrollment not found", 404)
-        try: eff = transfers.clean_date(d.get("effective_date"), utc_stamp()[:10])
+        try: eff = transfers.clean_date(d.get("effective_date"), mv_today().isoformat())   # v0.8.39: today in the Maldives (was the UTC date: yesterday until 05:00)
         except ValueError as x: return err(str(x))
         if d.get("transfer_to_batch_id"):  # move student to another batch
             nb = one("SELECT b.id,b.capacity,c.is_active FROM batches b JOIN courses c ON c.id=b.course_id WHERE b.id=?", (d["transfer_to_batch_id"],))
@@ -821,7 +843,6 @@ def create_app(config=None):
     UPLOADS = os.path.join(os.path.dirname(app.config["DATABASE_PATH"]), "uploads")   # used only when files are kept on local disk
     store = storage.make(app.config, UPLOADS, conn=db)   # on Vercel without a bucket the files go into the database (v0.8.34)
     app.extensions["store"] = store
-    apply_hits = {}
     MAGIC = {".pdf": b"%PDF", ".jpg": b"\xff\xd8\xff", ".jpeg": b"\xff\xd8\xff", ".png": b"\x89PNG"}
     MAX_FILE = common.MAX_FILE
 
@@ -831,7 +852,7 @@ def create_app(config=None):
 
     def age_from(dob):
         b = dt.date.fromisoformat(dob)
-        t = dt.date.today()
+        t = mv_today()   # v0.8.39: Maldives date
         return t.year - b.year - ((t.month, t.day) < (b.month, b.day))
 
     def save_upload(f):
@@ -873,10 +894,9 @@ def create_app(config=None):
 
     @app.post("/api/public/apply")
     def apply():
-        ip = request.remote_addr or "?"
         now = time.time()
-        apply_hits[ip] = [x for x in apply_hits.get(ip, []) if now - x < 3600]
-        if len(apply_hits[ip]) >= app.config.get("APPLY_LIMIT", 5):
+        apply_key = "apply:" + ip_of()   # v0.8.39: counted in the database (ratelimit.py)
+        if ratelimit.count(db(), apply_key, 3600, now) >= app.config.get("APPLY_LIMIT", 5):
             return err("Too many applications from this connection. Try again later or contact us on WhatsApp.", 429)
         if setting("applications_open") == "0":
             return err(setting("applications_closed_message") or "Applications are closed at the moment. Please contact us on WhatsApp.", 403)
@@ -917,8 +937,8 @@ def create_app(config=None):
                      "guardian_name,guardian_relationship,guardian_phone,guardian_id_file) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                      (ref, f["full_name"].strip(), f["date_of_birth"], int(minor), f.get("grade"), f["phone"].strip(), email, f.get("island"),
                       course["id"], batch_id, id_file, f.get("guardian_name"), f.get("guardian_relationship"), f.get("guardian_phone"), g_file))
+        ratelimit.hit(db(), apply_key, now)
         db().commit()
-        apply_hits[ip].append(now)
         return jsonify(ref=ref, is_minor=minor), 201
 
     @app.post("/api/public/apply/status")
@@ -1159,7 +1179,7 @@ def create_app(config=None):
     # ---------- Phase 3: learning tools (timetable, attendance, assignments, grades, materials) ----------
     from types import SimpleNamespace
     import learning
-    ns = SimpleNamespace(db=db, rows=rows, one=one, raw_setting=raw_setting, audit=audit, err=err, auth=auth, need=need, UPLOADS=UPLOADS, store=store, has_perm=has_perm)
+    ns = SimpleNamespace(ip_of=ip_of, db=db, rows=rows, one=one, raw_setting=raw_setting, audit=audit, err=err, auth=auth, need=need, UPLOADS=UPLOADS, store=store, has_perm=has_perm)
     import notify
     notify.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 28: notifications (must come first: the modules below call ns.notify)
     learning.register(app, ns)

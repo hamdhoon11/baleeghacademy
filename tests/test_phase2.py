@@ -70,7 +70,8 @@ class P2(unittest.TestCase):
     def test_06_rate_limit(self):
         app = self.mk({"DATABASE_PATH": os.environ["DATABASE_PATH"], "APPLY_LIMIT": 2}); c = app.test_client()
         codes = [c.post("/api/public/apply", data={"full_name": "R", "date_of_birth": dob(30), "phone": "7", "email": f"rl{i}@x.test", "course_id": "1",
-                                                   "id_card": (io.BytesIO(PDF), "i.pdf")}, content_type="multipart/form-data").status_code for i in range(3)]
+                                                   "id_card": (io.BytesIO(PDF), "i.pdf")}, content_type="multipart/form-data",
+                         environ_base={"REMOTE_ADDR": "10.9.9.9"}).status_code for i in range(3)]   # v0.8.39: the count is in the database now, so this test uses its own address
         self.assertEqual(codes, [201, 201, 429])
 
     def test_07_files_admin_only(self):

@@ -39,7 +39,7 @@ class WarmConnection(unittest.TestCase):
         dbx.Conn = FakePG
         try:
             import app as appmod
-            app = appmod.create_app({"DATABASE_URL": "postgresql://fake/db", "DATABASE_PATH": path})
+            app = appmod.create_app({"DATABASE_URL": "postgresql://fake/db", "DATABASE_PATH": path, "SECRET_KEY": "warm-test-key-" + "k" * 30})   # v0.8.39: a hosted database needs a real key
             opened.clear()
             c = app.test_client()
             tok = c.post("/api/auth/login", json={"email": "a@w.test", "password": "AdminPass123"}).get_json()["token"]

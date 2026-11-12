@@ -8,7 +8,8 @@ app = create_app()
 db = dbx.connect(app.config, os.path.dirname(os.path.abspath(__file__)))
 # Demo teacher/student accounts have passwords that are written in the README, so on a real hosted database they are NOT created
 # unless you ask for them (SEED_DEMO=1). On a local SQLite file they are created as before (SEED_DEMO=0 turns them off).
-DEMO = os.environ.get("SEED_DEMO", "0" if app.config["USE_POSTGRES"] else "1") == "1"
+HOSTED = app.config["USE_POSTGRES"] or app.config.get("ON_VERCEL")   # v0.8.39: Vercel counts as hosted even without PostgreSQL
+DEMO = os.environ.get("SEED_DEMO", "0" if HOSTED else "1") == "1"
 
 def user(email, pw, name, role):
     r = db.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
@@ -20,8 +21,15 @@ def user(email, pw, name, role):
     return uid
 
 admin_email = os.environ.get("ADMIN_EMAIL", "admin@baleegh.test")
-admin_pw = os.environ.get("ADMIN_PASSWORD", "ChangeMe-Admin1")
-user(admin_email, admin_pw, "Academy Admin", "admin")
+admin_pw = os.environ.get("ADMIN_PASSWORD", "")
+# v0.8.39: the example admin password is written in the public code, so a real (hosted) portal never creates an admin with it.
+# Only matters on an empty database: an admin that already exists is never touched.
+if HOSTED and not db.execute("SELECT id FROM users WHERE email=?", (admin_email,)).fetchone():
+    if len(admin_pw) < 10 or admin_pw.startswith("ChangeMe-"):
+        db.close()
+        raise RuntimeError("The database has no admin yet. Set ADMIN_EMAIL and ADMIN_PASSWORD (your own, at least 10 characters) in the host's "
+                           "environment variables, then start again. You will be asked to change the password at the first sign-in.")
+user(admin_email, admin_pw or "ChangeMe-Admin1", "Academy Admin", "admin")
 t = user("teacher@baleegh.test", "ChangeMe-Teach1", "Demo Teacher", "teacher") if DEMO else None
 s = user("student@baleegh.test", "ChangeMe-Stud1", "Demo Student", "student") if DEMO else None
 
