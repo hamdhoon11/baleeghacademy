@@ -24,6 +24,7 @@ import datetime as dt
 import re
 from flask import Response, g, jsonify, request
 import settings_schema as SS
+import dbx
 
 MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
@@ -95,7 +96,7 @@ def register(app, c, today):
         except ValueError as x: return err(str(x))
         dry = str(d.get("dry_run", request.args.get("dry_run", "0"))).lower() in ("1", "true", "yes")
         p = pct()
-        q = lambda s, a=(): [tuple(r) for r in db().execute(s, a).fetchall()]
+        q = lambda s, a=(): [dbx.values(r) for r in db().execute(s, a).fetchall()]   # v0.8.40: was tuple(r), which is the column names on PostgreSQL
         x = lambda s, a=(): db().execute(s, a)
         res, locked = run_month(q, x, m, p, g.user["id"], now_s(), apply=not dry)
         if locked: return err(f"{m} is already approved and cannot be recalculated", 409)
@@ -154,7 +155,7 @@ def register(app, c, today):
         except ValueError as x: return err(str(x))
         if m >= today().isoformat()[:7]: return err("A month can only be approved after it has ended")
         if one("SELECT 1 x FROM teacher_earnings WHERE period=? AND status='approved' LIMIT 1", (m,)): return err(f"{m} is already approved", 409)
-        q = lambda s, a=(): [tuple(r) for r in db().execute(s, a).fetchall()]
+        q = lambda s, a=(): [dbx.values(r) for r in db().execute(s, a).fetchall()]   # v0.8.40: was tuple(r), which is the column names on PostgreSQL
         run_month(q, lambda s, a=(): db().execute(s, a), m, pct(), g.user["id"], now_s(), apply=True)
         tot = int(one("SELECT COALESCE(SUM(teacher_share_mvr),0) s FROM teacher_earnings WHERE period=?", (m,))["s"])
         n = int(one("SELECT COUNT(*) n FROM teacher_earnings WHERE period=?", (m,))["n"])

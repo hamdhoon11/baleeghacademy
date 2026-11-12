@@ -521,17 +521,24 @@ const feMonth = () => (S.fe && S.fe.month) || prevMonth();
 async function feEarnPanel() {
   S.fe = S.fe || {month: feMonth()};
   const m = S.fe.month;
-  const [r, tt, pays] = await Promise.all([api("/earnings?month=" + m), api("/earnings/teachers"), api("/earnings/payments")]);
+  // v0.8.40: a month the server refuses (not started yet, or typed in another form) no longer breaks the whole Finance tab:
+  // the message is shown in this panel and the month goes back to last month.
+  let monthErr = "";
+  const [r, tt, pays] = await Promise.all([
+    api("/earnings?month=" + encodeURIComponent(m)).catch(x => { monthErr = x.message; S.fe = null; return {items: [], totals: {collected_mvr: 0, teacher_share_mvr: 0, academy_share_mvr: 0}}; }),
+    api("/earnings/teachers"), api("/earnings/payments")]);
   const approved = r.items.length && r.items.every(x => x.status === "approved");
   const rowsHtml = r.items.map(x => `<tr><td>${esc(x.teacher_name || "-")}</td><td>${esc(x.course_name)} ${esc(x.batch_code)}</td><td>${fnMoney(x.collected_mvr)}</td><td>${x.share_percent}%</td><td>${fnMoney(x.teacher_share_mvr)}</td><td>${fnMoney(x.academy_share_mvr)}</td><td>${esc(t(x.status))}</td></tr>`).join("");
   const tRows = tt.items.map(x => `<tr><td>${esc(x.teacher_name)}</td><td>${fnMoney(x.earned_mvr)}</td><td>${fnMoney(x.paid_mvr)}</td><td><b>${fnMoney(x.outstanding_mvr)}</b></td><td><button class="btn sm" data-do="fePay" data-id="${x.teacher_id}" data-name="${esc(x.teacher_name)}" data-owed="${esc(x.outstanding_mvr)}">${esc(t("Record payment"))}</button></td></tr>`).join("");
   const pRows = pays.map(x => `<tr${x.voided_at ? ' style="opacity:.5"' : ""}><td>${esc(x.paid_on)}</td><td>${esc(x.teacher_name)}</td><td>${fnMoney(x.amount_mvr)}</td><td>${esc(t("fx_m_" + x.method))} ${esc(x.reference || "")}</td><td>${x.voided_at ? esc(t("Voided")) : `<button class="btn sm danger" data-do="feVoid" data-id="${x.id}" data-name="${esc(x.teacher_name + " · MVR " + x.amount_mvr + " · " + x.paid_on)}">${esc(t("Void"))}</button>`}</td></tr>`).join("");
   mount(() => { const el = $("#fe_month"); if (el) el.value = m; });
   return `<div class="panel"><h2>${t("Teacher earnings")}</h2><p class="hint">${esc(t("Share of the fees actually collected each month (registration fees are not included). Approve a finished month to lock it."))}</p>
-    <div class="rowflex row"><label>${esc(t("Month"))}<input type="month" id="fe_month"></label>
+    <div class="rowflex row"><label>${esc(t("Month"))}<input type="month" id="fe_month" placeholder="YYYY-MM" pattern="\\d{4}-\\d{2}"></label>
     <button class="btn" data-do="feShow">${esc(t("Show"))}</button><button class="btn alt" data-do="feCalc" ${approved ? "disabled" : ""}>${esc(t("Calculate"))}</button>
     <button class="btn" data-do="feApprove" data-total="${r.totals.teacher_share_mvr}" ${approved || !r.items.length ? "disabled" : ""}>${esc(t("Approve month"))}</button>
     <button class="btn" data-do="feCsv">CSV</button><button class="btn" data-do="feXlsx">Excel</button></div>
+    ${monthErr ? `<p class="msg err" role="alert">${esc(m)}: ${esc(monthErr)}</p>` : ""}
+    ${!monthErr && !r.items.length ? `<p class="hint">${esc(t("fe_empty_hint"))}</p>` : ""}
     ${fnTable(["Teacher", "Batch", "Collected", "Share", "Teacher share", "Academy share", "status"], rowsHtml)}
     <p>${t("Total")}: ${fnMoney(r.totals.collected_mvr)} → ${fnMoney(r.totals.teacher_share_mvr)} / ${fnMoney(r.totals.academy_share_mvr)}</p>
     <h3>${t("Owed to teachers (approved months)")}</h3>${fnTable(["Teacher", "Earned", "Paid", "Outstanding", ""], tRows)}

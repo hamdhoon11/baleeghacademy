@@ -22,9 +22,9 @@ DEFAULT_DB = os.path.join(BASE, "instance", "portal.db")
 def fingerprint(conn):
     """Counts and a hash of every existing answer and tutorial: what must be identical after the change."""
     h = hashlib.sha256()
-    for r in conn.execute("SELECT id,tutorial_id,student_id,text_answer,file,submitted_at FROM tutorial_submissions ORDER BY id").fetchall(): h.update(repr(tuple(r)).encode())
-    for r in conn.execute("SELECT id,title,body,course_id,file,uploaded_by FROM tutorials ORDER BY id").fetchall(): h.update(repr(tuple(r)).encode())
-    for r in conn.execute("SELECT id,expense_date,amount_mvr,category_id,description FROM expenses ORDER BY id").fetchall(): h.update(repr(tuple(r)).encode())
+    for r in conn.execute("SELECT id,tutorial_id,student_id,text_answer,file,submitted_at FROM tutorial_submissions ORDER BY id").fetchall(): h.update(repr(dbx.values(r)).encode())
+    for r in conn.execute("SELECT id,title,body,course_id,file,uploaded_by FROM tutorials ORDER BY id").fetchall(): h.update(repr(dbx.values(r)).encode())
+    for r in conn.execute("SELECT id,expense_date,amount_mvr,category_id,description FROM expenses ORDER BY id").fetchall(): h.update(repr(dbx.values(r)).encode())
     n = lambda t: conn.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"]
     return {"tutorials": n("tutorials"), "answers": n("tutorial_submissions"), "expenses": n("expenses"), "users": n("users"), "hash": h.hexdigest()}
 
