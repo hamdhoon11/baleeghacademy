@@ -30,13 +30,13 @@ OPEN = {
  ("GET", "/api/tutorials/<int:tid>/submission"): ("student",), ("GET", "/api/tutorials/<int:tid>/submissions"): AT,
 }
 # admin-only routes with no permission area: each checks inside the route, and test_03 / test_04 prove it.
-NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "/api/users"), ("POST", "/api/whatsapp/prepare"), ("POST", "/api/whatsapp/sent")}
+NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "/api/admin/todo"), ("GET", "/api/users"), ("POST", "/api/whatsapp/prepare"), ("POST", "/api/whatsapp/sent")}
 AREA = [("/api/applications", "admissions"), ("/api/announcements", "classroom"), ("/api/audit", "audit"), ("/api/discounts", "fees"), ("/api/families", "fees"), ("/api/fees", "fees"),
         ("/api/invoices", "fees"), ("/api/payments", "fees"), ("/api/slips", "fees"), ("/api/earnings", "finance"), ("/api/expense", "finance"), ("/api/finance", "finance"),
         ("/api/enrollments/<int:eid>/void-open-invoices", "fees"), ("/api/enrollment", "enrollments"), ("/api/import/enrolments", "enrollments"), ("/api/import", "people"),
-        ("/api/settings", "settings"), ("/api/admin/storage", "settings"), ("/api/notifications", "settings"), ("/api/student-information", "student_information"), ("/api/teacher-information", "teacher_information"),
+        ("/api/settings", "settings"), ("/api/admin/storage", "settings"), ("/api/password-help", "people"), ("/api/notifications", "settings"), ("/api/student-information", "student_information"), ("/api/teacher-information", "teacher_information"),
         ("/api/substitutions", "batches"), ("/api/users", "people"), ("/api/courses", "courses"), ("/api/batches", "batches")]
-PUBLIC = {"/", "/<path:filename>", "/api/auth/login", "/api/cron/generate-invoices", "/api/cron/reminders", "/api/health", "/api/public/apply",
+PUBLIC = {"/", "/<path:filename>", "/api/auth/login", "/api/auth/forgot", "/api/cron/generate-invoices", "/api/cron/reminders", "/api/health", "/api/public/apply",
           "/api/public/apply/status", "/api/public/batches", "/api/public/courses", "/api/public/info"}
 PARAM = {}
 
@@ -114,7 +114,8 @@ class S32(unittest.TestCase):
         W["J"]("post", "/api/substitutions", json={"batch_id": W["b1"], "substitute_teacher_id": W["t3"][0], "class_date": "2027-03-10", "ends_on": "2027-03-12", "reason": "x"})
         assert W["J"]("patch", f"/api/enrollments/{cls.ids['wd_enrollment']}", json={"status": "dropped"}).status_code == 200
         i = cls.ids
-        PARAM.update({"applications": i["application"], "assignments": i["assignment"], "batches": W["b1"], "courses": W["course"], "discounts": i["discount"], "enrollments": i["enrollment"],
+        W["c"].post("/api/auth/forgot", json={"login": "nobody-in-particular"})   # v0.8.35: a password help request, so its routes have an id to try
+        PARAM.update({"password-help": 1, "applications": i["application"], "assignments": i["assignment"], "batches": W["b1"], "courses": W["course"], "discounts": i["discount"], "enrollments": i["enrollment"],
             "expense-categories": i["exp_cat"], "expenses": i["expense"], "families": i["family"], "invoices": i["invoice"], "materials": i["material"], "notifications": 1, "payments": i["payment"],
             "recordings": i["recording"], "slips": i["slip"], "student-information": W["s1"][0], "submissions": i["submission"], "substitutions": 1, "teacher-information": W["t1"][0],
             "tutorial-submissions": i["tut_sub"], "tutorials": i["tutorial"], "users": W["s1"][0], "student-history": W["s1"][0], "members": W["s1"][0]})

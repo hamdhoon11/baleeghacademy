@@ -315,7 +315,10 @@ def register(app, c):
         if st == "overdue": w.append("i.status IN ('unpaid','slip_submitted') AND i.due_date<?"); a.append(t)
         elif st == "open": w.append("i.status IN ('unpaid','slip_submitted')")
         elif st in ("unpaid", "slip_submitted", "paid", "void", "waived"): w.append("i.status=?"); a.append(st)
+        elif st == "all": pass
         elif st: return err("Unknown status")
+        # v0.8.35: voided invoices are left out of the normal list; find them with status=void (or all), or by their exact number
+        elif not re.match(r"^INV-\d{6}-\d+$", (request.args.get("q") or "").strip().upper()): w.append("i.status<>'void'")
         if request.args.get("student_id"):
             if not request.args["student_id"].isdigit(): return err("Bad student id")
             w.append("i.student_id=?"); a.append(int(request.args["student_id"]))
@@ -871,7 +874,7 @@ def register(app, c):
         r = one("SELECT (SELECT COUNT(*) FROM invoices WHERE status IN ('unpaid','slip_submitted') AND amount_due_mvr-waived_mvr-paid_mvr>0) AS unpaid_invoices,"
                 " (SELECT COUNT(*) FROM invoices WHERE status IN ('unpaid','slip_submitted') AND amount_due_mvr-waived_mvr-paid_mvr>0 AND due_date<?) AS overdue_invoices,"
                 " (SELECT COUNT(*) FROM payment_slips WHERE status='pending') AS slips_pending,"
-                " (SELECT COALESCE(SUM(amount_mvr),0) FROM payments WHERE reversed_at IS NULL AND paid_on>=? AND paid_on<?) AS month_collection_mvr",
+                " (SELECT COALESCE(SUM(p.amount_mvr),0) FROM payments p JOIN invoices iv ON iv.id=p.invoice_id WHERE p.reversed_at IS NULL AND iv.status<>'void' AND p.paid_on>=? AND p.paid_on<?) AS month_collection_mvr",
                 (t.isoformat(), first.isoformat(), next_month_start(month_of(t)).isoformat()))
         return {k: r[k] for k in ("unpaid_invoices", "overdue_invoices", "slips_pending", "month_collection_mvr")}
 

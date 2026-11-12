@@ -1,0 +1,69 @@
+PortalSerif.ttf and PortalSerif-Bold.ttf are trimmed copies of GNU FreeSerif (GNU FreeFont), keeping only
+Latin, Arabic and Thaana letters, made with: pyftsubset FreeSerif.ttf --unicodes=U+0020-007E,U+00A0-00FF,U+2000-206F,U+0600-06FF,U+0750-077F,U+0780-07BF,U+FB50-FDFF,U+FE70-FEFF,U+25CC
+They are used only to draw Arabic and Dhivehi names on PDF receipts and invoices (receipts.py, rtltext.py).
+
+GNU FreeFont is free software under the GNU General Public License v3 or later, with the font exception:
+embedding the font in a document (such as a PDF) does not make that document subject to the GPL.
+Full licence text: https://www.gnu.org/licenses/gpl-3.0.html  Project: https://www.gnu.org/software/freefont/
+
+--- copyright file of the installed package ---
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: GNU FreeFont
+Upstream-Contact: Steve White <Stevan.White@gmail.com>
+Source: https://savannah.gnu.org/projects/freefont/
+
+Files: *
+Copyright: 2002-2012, GNU Freefont contributors
+  2009-2012, Steve White <Stevan.White@gmail.com>
+  2011, Emmanuel Vallois
+License: GPL-3+
+
+Files: */*.ttf */*.otf */*.woff
+Copyright: 2002-2012, GNU Freefont contributors
+License: GPL-3+ with Special Font Exception
+
+Files: debian/*
+Copyright: 2002-2003, Peter Hawkins <peterh@debian.org>
+  2004, Josh Triplett <josh.trip@verizon.net>
+  2004, Panayotis Katsaloulis <panayotis@panayotis.com>
+  2005-2006, Konstantinos Margaritis <markos@debian.org>
+  2006-2014, Christian Perrier <bubulle@debian.org>
+  2007-2011, Davide Viti <zinosat@tiscali.it>
+  2016-2023, Fabian Greffrath <fabian@debian.org>
+  2016, Adam Borowski <kilobyte@angband.pl>
+License: GPL-3+
+
+License: GPL-3+
+ GNU FreeFont is free software; you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the
+ Free Software Foundation; either version 3 of the License, or (at your option)
+ any later version.
+ .
+ The fonts are distributed in the hope that they will be useful, but
+ WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ for more details.
+ .
+ You should have received a copy of the GNU General Public License along
+ with this program; if not, write to the Free Software Foundation, Inc.,
+ 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+ .
+ On Debian systems, the complete text of the GNU General
+ Public License version 3 can be found in "/usr/share/common-licenses/GPL-3".
+
+License: GPL-3+ with Special Font Exception
+ GNU FreeFont is free software; you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the
+ Free Software Foundation; either version 3 of the License, or (at your option)
+ any later version.
+ .
+ The fonts are distributed in the hope that they will be useful, but
+ WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ for more details.
+ .
+ You should have received a copy of the GNU General Public License along
+ with this program; if not, write to the Free Software Foundation, Inc.,
+ 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+ .
+ * Regarding the use of built font files.

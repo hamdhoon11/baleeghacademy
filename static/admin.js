@@ -48,7 +48,10 @@ function fcWarn(id) {
   const el = $("#" + id); if (!el || el.dataset.warn) return; el.dataset.warn = "1";
   const w = document.createElement("div"); w.className = "msg err"; w.style.flex = "1 1 100%"; w.textContent = t("fee_zero_warn");
   el.closest("label").after(w);
-  const upd = () => { w.hidden = !(el.value === "" || +el.value <= 0); }; el.addEventListener("input", upd); upd();
+  // v0.8.35: an empty new form does not warn yet; it warns once the fee was touched, or when a saved course really has 0
+  let touched = el.value !== "";
+  const upd = () => { w.hidden = !(touched && (el.value === "" || +el.value <= 0)); };
+  el.addEventListener("input", () => { touched = true; upd(); }); el.addEventListener("blur", () => { touched = true; upd(); }); upd();
 }
 DO.ecEdit = d => { go({ec: +d.id}); return false; };
 DO.ecClose = () => { closeDetail({ec: null}); };
@@ -114,7 +117,7 @@ DO.subRemove = async d => { if (!await ui.confirm(t("End this substitution now? 
 views.people = async () => {
   const roleF = S.pf || "";
   const u = await api("/users" + (roleF ? "?role=" + roleF : ""));
-  const e = S.eu ? await api("/users/" + S.eu).catch(() => null) : null;
+  const [e, help] = await Promise.all([S.eu ? api("/users/" + S.eu).catch(() => null) : null, api("/password-help").catch(() => [])]);
   const self = S.user.id, full = !S.user.permissions;
   mount(() => {
     onSubmit("fu", async () => {   // no password typed = the server makes a random one; it is shown once below
@@ -153,7 +156,7 @@ views.people = async () => {
   const rows = found.slice(0, lim).map(x => `<tr><td>${esc(x.full_name)}</td><td>${esc(x.login_id || "")}</td><td>${esc(x.email)}</td><td>${esc(t(x.role))}${x.permissions !== null ? " " + tag(t("Limited"), "warn") : x.role === "admin" ? " " + tag(t("Full"), "ok") : ""}</td><td>${x.is_active ? "✓" : "✗"}<span class="sr-only">${esc(t(x.is_active ? "active" : "inactive"))}</span></td><td><button class="btn sm" data-do="euEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("");
   const listbar = `<form id="pqf" class="listbar" role="search"><label>${esc(t("role"))}<select id="pf"><option value="">${esc(t("all"))}</option>${roles.map(r => `<option value="${r[0]}" ${r[0] === roleF ? "selected" : ""}>${esc(r[1])}</option>`).join("")}</select></label><label>${esc(t("search"))}<input id="pq" type="search" value="${esc(S.pq || "")}" placeholder="${esc(t("people_search_hint"))}"></label><button class="btn">${t("search")}</button></form>`;
   const add = addPanel("person", "Add person", form("fu", field("un", "name") + field("ue", "email", "email") + field("up", "password", "password") + field("ur", "role", "", roles)));
-  return `${e ? crumbFor(e.full_name, {eu: null}) : ""}<h1>${t("people")}</h1>${tmpPanel()}${editor}${add}<div class="panel">${listbar}${found.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("Login ID")}</th><th>${t("email")}</th><th>${t("role")}</th><th>${t("is_active")}</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "peMore")}</div>${impPanel()}`;
+  return `${e ? crumbFor(e.full_name, {eu: null}) : ""}<h1>${t("people")}</h1>${tmpPanel()}${helpPanel(help)}${editor}${add}<div class="panel">${listbar}${found.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("Login ID")}</th><th>${t("email")}</th><th>${t("role")}</th><th>${t("is_active")}</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "peMore")}</div>${impPanel()}`;
 };
 DO.peMore = () => { S.plim = (S.plim || 30) + 30; };
 DO.euEdit = d => { go({eu: +d.id}); return false; };
@@ -162,12 +165,25 @@ DO.tmpClose = () => { S.tmp = null; };
 DO.euReset = async d => {
   if (!await ui.confirm(t("Make a new temporary password for this person? Their old password stops working."), {okText: t("Reset password"), details: [(S.euInfo || {}).name || ""]})) return false;
   const r = await api("/users/" + d.id + "/reset-password", "POST");
-  S.tmp = {name: "", id: r.login_id, pw: r.temporary_password}; closeDetail({eu: null}); flash(t("saved"), true);
+  S.tmp = {name: r.name || "", id: r.login_id, pw: r.temporary_password, wa: r.whatsapp_link}; closeDetail({eu: null}); flash(t("saved"), true);
 };
+// v0.8.35: "Forgot password" requests. Reset and send = new temporary password + a WhatsApp message ready to send.
+function helpPanel(list) {
+  if (!list || !list.length) return "";
+  const row = h => `<div class="cl"><div><b>${esc(h.full_name || h.login_text)}</b> ${h.user_id ? tag(t(h.role)) : tag(t("No matching account"), "warn")}<br><span class="hint">${esc(h.login_id || h.login_text)}${h.contact ? " · <bdi dir=\"ltr\">" + esc(h.contact) + "</bdi>" : ""} · <bdi dir="ltr">${esc(fmtTime(h.created_at))}</bdi></span></div>`
+    + `<div class="rowflex">${h.user_id ? `<button class="btn sm" data-do="phReset" data-id="${h.user_id}" data-name="${esc(h.full_name)}">${esc(t("Reset and send"))}</button>` : ""}<button class="btn sm alt" data-do="phDismiss" data-id="${h.id}">${esc(t("Dismiss"))}</button></div></div>`;
+  return `<div class="panel" role="region" aria-label="${esc(t("Password help"))}"><h2>${esc(t("Password help"))} (${list.length})</h2><p class="hint">${esc(t("password_help_hint"))}</p>${list.map(row).join("")}</div>`;
+}
+DO.phReset = async d => {
+  if (!await ui.confirm(t("Make a new temporary password for this person? Their old password stops working."), {okText: t("Reset and send"), details: [d.name || ""]})) return false;
+  const r = await api("/users/" + d.id + "/reset-password", "POST");
+  S.tmp = {name: r.name || d.name, id: r.login_id, pw: r.temporary_password, wa: r.whatsapp_link}; flash(t("saved"), true);
+};
+DO.phDismiss = async d => { if (!await ui.confirm(t("Dismiss this request? Nothing is changed for the person."), {okText: t("Dismiss")})) return false; await api(`/password-help/${d.id}/dismiss`, "POST"); };
 // The temporary password is shown once, only here, and only until "Done" is pressed (the server keeps just a hash and cannot show it again).
 function tmpPanel() {
   if (!S.tmp) return "";
-  return `<div class="panel" role="alert"><h2>${esc(t("Temporary password"))}${S.tmp.name ? ": " + esc(S.tmp.name) : ""}</h2><p>${esc(t("Login ID"))}: <b>${esc(S.tmp.id || "")}</b><br>${esc(t("password"))}: <b>${esc(S.tmp.pw)}</b></p><p class="hint">${esc(t("Copy this now and give it to the person. It will not be shown again. They must choose their own password at first sign-in."))}</p><button type="button" class="btn alt" data-do="tmpClose">${esc(t("Done"))}</button></div>`;
+  return `<div class="panel" role="alert"><h2>${esc(t("Temporary password"))}${S.tmp.name ? ": " + esc(S.tmp.name) : ""}</h2><p>${esc(t("Login ID"))}: <b>${esc(S.tmp.id || "")}</b><br>${esc(t("password"))}: <b>${esc(S.tmp.pw)}</b></p><p class="hint">${esc(t("Copy this now and give it to the person. It will not be shown again. They must choose their own password at first sign-in."))}</p><p class="rowflex">${S.tmp.wa ? `<a class="btn" href="${esc(S.tmp.wa)}" target="_blank" rel="noopener">${esc(t("send_whatsapp"))}</a>` : `<span class="hint">${esc(t("No phone number saved for this person: give the password another way."))}</span>`}<button type="button" class="btn alt" data-do="tmpClose">${esc(t("Done"))}</button></p></div>`;
 }
 DO.euDel = async d => {
   const i = S.euInfo || {};
@@ -524,8 +540,8 @@ views.dashboard = async () => {
     ["Submissions", d.submissions], ["Graded", d.graded], ["Waiting for grading", d.pending_grading]]);
   const fin = d.financial ? `<h2>${t("Finance")}</h2>` + cards([["Revenue", "MVR " + d.financial.revenue], ["Expenses", "MVR " + d.financial.expenses], [d.financial.net < 0 ? "Net loss" : "Net profit", "MVR " + d.financial.net], ["Outstanding fees", "MVR " + d.financial.outstanding], ["Teacher earnings", "MVR " + d.financial.teacher_earnings], ["Academy revenue", "MVR " + d.financial.academy_revenue]]) : "";
   const fee = d.fees ? cards([[t("fx_unpaid_invoices"), d.fees.unpaid_invoices], [t("fx_overdue_invoices"), d.fees.overdue_invoices], [t("fx_slips_pending"), d.fees.slips_pending]]) : "";
-  const store = await storagePanel(true);
-  return `<h1>${t("dashboard")}</h1>${store.banner}<div class="panel">${filt}<p class="hint">${t("No dates chosen means all time. Accounts: ")}${d.student_accounts} ${t("Students")}, ${d.teacher_accounts} ${t("Teachers")}.</p></div>${acad}${fin}${fee}<div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
+  const [store, todo] = await Promise.all([storagePanel(true), api("/admin/todo").catch(() => null)]);
+  return `<h1>${t("dashboard")}</h1>${store.banner}${todoPanel(todo)}<div class="panel">${filt}<p class="hint">${t("No dates chosen means all time. Accounts: ")}${d.student_accounts} ${t("Students")}, ${d.teacher_accounts} ${t("Teachers")}.</p></div>${acad}${fin}${fee}<div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
 };
 
 // Session 27: exports and CSV import (the import panel is drawn at the bottom of People)
@@ -574,3 +590,13 @@ async function storagePanel(bannerOnly) {
   return {banner, panel};
 }
 DO.stCheck = async () => { S.stMissing = await api("/admin/storage/missing"); };
+
+// v0.8.35: "To do today" on the admin Dashboard: one tap to each thing that is waiting
+function todoPanel(d) {
+  if (!d) return "";
+  const rows = d.items.filter(x => x.key !== "todo_attendance").map(x => `<div class="cl"><div>${tag(String(x.n), x.level === "info" ? "" : x.level === "bad" ? "bad" : "warn")} ${esc(t(x.key))}</div><button class="btn sm" data-do="todoGo" data-v="${esc(x.view)}" data-p="${esc(JSON.stringify(x.patch))}">${t("open")}</button></div>`);
+  const cls = d.classes.map(o => `<div class="cl"><div><b>${esc(o.course_name)} · ${esc(o.batch_code)}</b> ${tag(t("No attendance yet"), "warn")}<br><span class="hint"><bdi dir="ltr">${esc(o.start_time)}</bdi> · ${esc(o.teacher_name || "–")}</span></div><button class="btn sm" data-do="todoGo" data-v="classroom" data-p="${esc(JSON.stringify({cb: o.batch_id, ct: "attendance", adate: null}))}">${t("Take attendance")}</button></div>`);
+  const all = rows.concat(cls);
+  return `<div class="panel" id="todop"><h2>${t("To do today")}</h2>${all.join("") || `<p class="msg ok">${esc(t("todo_all_clear"))}</p>`}</div>`;
+}
+DO.todoGo = d => { let p = {}; try { p = JSON.parse(d.p || "{}"); } catch (_) {} openTab(d.v, p); return false; };

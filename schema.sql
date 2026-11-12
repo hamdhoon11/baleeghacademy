@@ -485,3 +485,18 @@ CREATE TABLE IF NOT EXISTS stored_files (
   created_at TEXT NOT NULL,
   PRIMARY KEY (area, name)
 );
+
+-- v0.8.35: "Forgot password" requests. The portal sends no email, so the request goes to admins with the People area, who reset the
+-- password and send it by WhatsApp. user_id is NULL when nothing matched what was typed (shown to admins, never to the requester).
+CREATE TABLE IF NOT EXISTS password_help (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id),
+  login_text TEXT NOT NULL,
+  contact TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','done','dismissed')),
+  ip TEXT,
+  created_at TEXT NOT NULL,
+  handled_by INTEGER REFERENCES users(id),
+  handled_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_password_help_status ON password_help(status, user_id);

@@ -213,6 +213,22 @@ def register(app, c):
     def clean(o):
         return {k: v for k, v in o.items() if not k.startswith("_")}
 
+    def attendance_taken(batch_ids, day):
+        """v0.8.35: {batch_id} that already have attendance marks on this date (any class of that day)."""
+        if not batch_ids: return set()
+        q = ",".join("?" * len(batch_ids))
+        return {r["batch_id"] for r in rows(f"SELECT DISTINCT s.batch_id FROM sessions s WHERE s.batch_id IN ({q}) AND s.session_date=? "
+                                            "AND EXISTS (SELECT 1 FROM attendance a WHERE a.session_id=s.id)", (*batch_ids, day))}
+
+    def classes_without_attendance():
+        """v0.8.35, admin To do: today's classes that have started, are not cancelled and have no attendance yet (all batches)."""
+        t0 = today()
+        bs = rows(BQ + " WHERE b.status IN ('open','running')")
+        occ = [o for o in occurrences(bs, t0, t0) if o["status"] != "cancelled" and o["_start"] <= now()]
+        done = attendance_taken([o["batch_id"] for o in occ], t0.isoformat())
+        return [clean(o) for o in occ if o["batch_id"] not in done]
+    app.extensions["classes_without_attendance"] = classes_without_attendance
+
     def next_class(occ):
         n = now()
         for o in occ:
@@ -1252,7 +1268,11 @@ def register(app, c):
         bs = my_batches(request.args.get("batch_id", type=int))
         occ = occurrences(bs, t0, t0 + dt.timedelta(days=27))
         nxt = next_class(occ)
-        out = {"today": [clean(o) for o in occ if o["date"] == t0.isoformat()],
+        todays = [clean(o) for o in occ if o["date"] == t0.isoformat()]
+        if u["role"] == "teacher":   # v0.8.35: the teacher's Home shows "Take attendance" or "Attendance taken" per class
+            done = attendance_taken([o["batch_id"] for o in todays], t0.isoformat())
+            for o in todays: o["attendance_taken"] = o["batch_id"] in done; o["started"] = o["starts_at"] <= now().isoformat()
+        out = {"today": todays,
                "week": [clean(o) for o in occ if o["date"] < (t0 + dt.timedelta(days=7)).isoformat()],
                "next_class": clean(nxt) if nxt else None,
                "batches_without_schedule": [{"id": b["id"], "course_name": b["course_name"], "code": b["code"]} for b in bs if b["status"] != "closed" and not (b["days"] and b["start_time"])]}
@@ -1263,13 +1283,23 @@ def register(app, c):
             out["courses"] = [{"batch_id": b["id"], "course_name": b["course_name"], "batch_code": b["code"], "teacher_name": b["teacher_name"],
                                "attendance_pct": gr[b["id"]]["attendance_pct"] if gr else None, "avg_pct": gr[b["id"]]["avg_pct"] if gr else None} for b in bs]
             ids = [b["id"] for b in bs]
-            todo = []
+            todo, n_todo, grades, mats = [], 0, [], []
+            q = ",".join("?" * len(ids)) if ids else ""
             if ids and allow("assignments"):
-                q = ",".join("?" * len(ids))
-                todo = rows(f"SELECT a.id,a.title,a.due_date,c.name AS course_name FROM assignments a JOIN batches b ON b.id=a.batch_id JOIN courses c ON c.id=b.course_id "
-                            f"WHERE a.batch_id IN ({q}) AND a.kind='assignment' AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.assignment_id=a.id AND s.student_id=? AND s.submitted_at IS NOT NULL) "
-                            f"ORDER BY COALESCE(a.due_date,'9999-12-31') LIMIT 5", (*ids, u["id"]))
-            out["todo"] = todo
+                open_sql = (f"FROM assignments a JOIN batches b ON b.id=a.batch_id JOIN courses c ON c.id=b.course_id "
+                            f"WHERE a.batch_id IN ({q}) AND a.kind='assignment' AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.assignment_id=a.id AND s.student_id=? AND s.submitted_at IS NOT NULL)")
+                todo = rows(f"SELECT a.id,a.title,a.due_date,c.name AS course_name {open_sql} ORDER BY COALESCE(a.due_date,'9999-12-31') LIMIT 8", (*ids, u["id"]))
+                n_todo = one(f"SELECT COUNT(*) n {open_sql}", (*ids, u["id"]))["n"]   # v0.8.35: the real number (the list above is cut at 8; the badge used to stop at 5)
+                for a in todo: a["overdue"] = bool(a["due_date"] and a["due_date"][:10] < t0.isoformat())
+                # grades given in the last 14 days
+                since = (t0 - dt.timedelta(days=14)).isoformat()
+                grades = rows(f"SELECT a.id,a.title,a.max_points,s.grade,s.graded_at,c.name AS course_name FROM submissions s JOIN assignments a ON a.id=s.assignment_id "
+                              f"JOIN batches b ON b.id=a.batch_id JOIN courses c ON c.id=b.course_id WHERE a.batch_id IN ({q}) AND s.student_id=? AND s.grade IS NOT NULL "
+                              f"AND s.graded_at>=? ORDER BY s.graded_at DESC LIMIT 5", (*ids, u["id"], since))
+            if ids and allow("materials"):
+                mats = rows(f"SELECT m.id,m.title,m.kind,m.created_at,c.name AS course_name FROM materials m JOIN batches b ON b.id=m.batch_id JOIN courses c ON c.id=b.course_id "
+                            f"WHERE m.batch_id IN ({q}) AND m.created_at>=? ORDER BY m.created_at DESC LIMIT 5", (*ids, (t0 - dt.timedelta(days=7)).isoformat()))
+            out.update(todo=todo, todo_count=n_todo, new_grades=grades, new_materials=mats)
         else:
             ids = [b["id"] for b in bs] if allow("classroom") else []
             n = 0

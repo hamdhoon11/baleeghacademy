@@ -484,14 +484,20 @@ def create_app(config=None):
     @auth("admin", perm="people")
     def users_reset_password(uid):
         """New random temporary password, shown once. The old password stops working and the person must choose their own at next sign-in."""
-        u = one("SELECT id,role,login_id FROM users WHERE id=?", (uid,))
+        u = one("SELECT u.id,u.role,u.login_id,u.full_name,u.phone,(SELECT s.guardian_phone FROM students s WHERE s.user_id=u.id) AS guardian_phone FROM users u WHERE u.id=?", (uid,))
         if not u: return err("User not found", 404)
         if uid == g.user["id"]: return err("Use Change password for your own account")
         if u["role"] == "admin" and g.user["permissions"] is not None: return err("Only a full admin can reset an admin's password", 403)
         pw = temp_password()
         db().execute("UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?", (generate_password_hash(pw), uid))
+        ph = app.extensions.get("passhelp")
+        if ph: ph["close_for"](uid)   # v0.8.35: a "Forgot password" request from this person is now handled
         audit("reset_password", "user", uid, u["login_id"] or ""); db().commit()
-        resp = jsonify(login_id=u["login_id"], temporary_password=pw); resp.headers["Cache-Control"] = "no-store"
+        msg = (f"Assalaamu alaikum {u['full_name']}. Your new password for the {raw_setting('academy_name') or 'Baleegh Academy'} portal:\n"
+               f"Login ID: {u['login_id']}\nTemporary password: {pw}\nSign in at {request.host_url} and choose your own password.")
+        link = ph["wa_link"](u["phone"] or u["guardian_phone"], msg) if ph else None
+        resp = jsonify(login_id=u["login_id"], temporary_password=pw, name=u["full_name"], whatsapp_link=link)
+        resp.headers["Cache-Control"] = "no-store"
         return resp
 
     @app.delete("/api/users/<int:uid>")
@@ -1091,7 +1097,9 @@ def create_app(config=None):
                 " (SELECT COUNT(*) FROM enrollments WHERE status='active') AS active_enrollments,"
                 " (SELECT COUNT(*) FROM enrollments WHERE status='waitlist') AS waitlisted,"
                 " (SELECT COUNT(*) FROM applications WHERE status='pending') AS pending_applications")
-        return jsonify(**(extra() if extra and has_perm(g.user, "fees") else {}), **n)   # Session 32: money figures only for admins who have the Fees area
+        ph = app.extensions.get("passhelp")
+        more = {"password_help": ph["pending"]()} if ph and has_perm(g.user, "people") else {}   # v0.8.35: People badge
+        return jsonify(**(extra() if extra and has_perm(g.user, "fees") else {}), **n, **more)   # Session 32: money figures only for admins who have the Fees area
 
     SETTING_KEYS = SS.SETTING_KEYS
 
@@ -1138,7 +1146,11 @@ def create_app(config=None):
     notify.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 28: notifications (must come first: the modules below call ns.notify)
     learning.register(app, ns)
     import filecheck
-    filecheck.register(app, ns)   # v0.8.34: storage health and the list of records whose file is gone
+    filecheck.register(app, ns)
+    import passhelp
+    passhelp.register(app, ns)   # v0.8.35: "Forgot password" requests go to admins (no email needed)
+    import todo
+    todo.register(app, ns)       # v0.8.35: Dashboard "To do today"   # v0.8.34: storage health and the list of records whose file is gone
     import whatsapp
     whatsapp.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 29: WhatsApp click-to-chat by phone number
 

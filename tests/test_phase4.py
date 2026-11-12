@@ -113,6 +113,7 @@ class P4(unittest.TestCase):
     def S(self, w, i=0): return self.login(w["email"][i])
 
     def invs(self, **q):
+        q.setdefault("status", "all")   # v0.8.35: the plain list leaves voided invoices out; these tests look at every invoice
         qs = "&".join(f"{k}={v}" for k, v in q.items())
         return self.ok(self.J("get", "/api/invoices?" + qs))
 

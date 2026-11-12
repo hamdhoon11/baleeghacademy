@@ -543,3 +543,11 @@
 - Files lost before this version cannot be recovered: re-upload them (the missing-files list says which).
 - Tests: tests/test_session34.py (11), e2e_ui.py (+7 checks: viewer, Arabic download, Android, storage panel).
 - Not done: PDF receipts and invoices print Arabic or Dhivehi names as "????" (receipts.latin() replaces them; the built-in PDF fonts have no such letters). A fix needs a bundled Arabic/Thaana font and right-to-left shaping.
+
+## Done: v0.8.35: Round 1 (see CHANGES-v0.8.35.md)
+- Decisions: voided invoices are not revenue (finance.paid_where, fees.dashboard_extra) and are left out of GET /api/invoices unless status=void|all or the exact number is searched. Teacher pay = 50% of monthly fees collected, registration and voided excluded (earnings.py, unchanged; tested in test_session35).
+- New modules: passhelp.py (forgot password; table password_help; audit actions forgot_request/forgot_dismiss, never "password" in the action name: test_session32 checks it), todo.py (GET /api/admin/todo), rtltext.py + fonts/ (PDF Arabic/Thaana).
+- learning.py: attendance_taken(), classes_without_attendance() (app.extensions), /my/home gives todo_count, todo[].overdue, new_grades, new_materials (students) and today[].attendance_taken/started (teachers).
+- Front end: forgotScreen() in index.html; nextSteps()/teacherToday() and DO.goTab/takeAtt/goGrade in learning.js; helpPanel()/todoPanel() and DO.phReset/phDismiss/todoGo in admin.js.
+- Security map (tests/test_session32.py): /api/auth/forgot is public by decision; /api/password-help is People; /api/admin/todo has no single area (it filters by area itself).
+- Next: Round 2 (Fees and Admissions).

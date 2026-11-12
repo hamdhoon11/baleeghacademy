@@ -136,7 +136,7 @@ const FX = {
     mount(() => { const ff = $("#fxff"); if (ff) { $("#fxf_s").value = f.status || ""; ff.onsubmit = e => { e.preventDefault(); fxSet("month", val("fxf_m")); fxSet("status", val("fxf_s")); fxSet("q", val("fxf_q")); render(); }; } });
     return `<div class="panel"><h2>${t("fx_generate")}</h2><div class="rowflex row"><label>${t("fx_month")}<input id="fxg_m" type="month" value="${fxMonth()}"></label><button class="btn alt" data-do="fxGen">${t("fx_generate")}</button></div><p class="hint">${t("fx_generate_hint")}</p>${fxSkipList()}</div>
       <div class="panel"><form id="fxff" class="row"><label>${t("fx_month")}<input id="fxf_m" type="month" value="${esc(f.month || "")}"></label>
-      <label>${t("status")}<select id="fxf_s"><option value="">${t("fx_all")}</option>${["unpaid", "slip_submitted", "overdue", "paid", "waived", "void"].map(s => `<option value="${s}">${t("fx_st_" + s)}</option>`).join("")}</select></label>
+      <label>${t("status")}<select id="fxf_s"><option value="">${t("fx_all_but_void")}</option><option value="all">${t("fx_all_with_void")}</option>${["unpaid", "slip_submitted", "overdue", "paid", "waived", "void"].map(s => `<option value="${s}">${t("fx_st_" + s)}</option>`).join("")}</select></label>
       <label>${t("fx_search")}<input id="fxf_q" value="${esc(f.q || "")}"></label><button class="btn">${t("fx_filter")}</button></form></div>
       <div class="panel">${l.length ? l.map(invRow).join("") : `<p>${t("empty")}</p>`}</div>`;
   },

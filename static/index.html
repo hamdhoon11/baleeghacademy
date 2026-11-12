@@ -231,6 +231,7 @@ details.addp>summary::before{content:"+";display:grid;place-items:center;width:1
 details.addp[open]>summary::before{content:"\2212"}
 details.addp[open]>summary{margin-bottom:.8rem}
 .saved{color:#1f6b35;font-weight:700;font-size:.9rem}
+.linkbtn{background:none;border:0;color:var(--lagoon);text-decoration:underline;text-underline-offset:.15em;cursor:pointer;font:inherit;min-height:44px;padding:0 .3rem}.center{text-align:center}
 .pick{display:flex;flex-wrap:wrap;gap:.4rem;flex:1 1 220px}.pick>label{flex:1 1 100%}
 .listbar{display:flex;flex-wrap:wrap;gap:.6rem;align-items:end;margin-bottom:.8rem}.listbar label{flex:1 1 200px;max-width:26rem}
 .xrow td{background:#f8fbfb}.xrow .kv{margin:0}
@@ -617,6 +618,21 @@ function authShell(inner) {
   const name = (S.info && S.info.academy_name) || t("app");
   return `<div class="auth"><header class="hero"><span class="mark" aria-hidden="true">ب</span><div><h1>${esc(name)}</h1>${S.info && S.info.tagline ? `<p>${esc(S.info.tagline)}</p>` : ""}</div></header><main class="authcard" id="main"><div class="box panel">${inner}</div></main></div>`;
 }
+// v0.8.35: "Forgot password?" sends a request to the academy's admins; they reply on WhatsApp with a new temporary password
+function forgotScreen() {
+  const box = $(".authcard .box");
+  box.innerHTML = `<h2>${esc(t("Forgot password?"))}</h2><p class="hint">${esc(t("forgot_intro"))}</p><form id="ffg" class="stack"><label>${esc(t("Login ID or email"))}<input id="fg_l" autocomplete="username" autocapitalize="characters" spellcheck="false" required></label><label>${esc(t("Your phone (WhatsApp), optional"))}<input id="fg_c" type="tel" autocomplete="tel" inputmode="tel"></label><button class="btn block">${esc(t("Send request"))}</button><button type="button" class="btn alt block" id="fg_back">${esc(t("Back to sign in"))}</button></form>`;
+  $("#fg_back").onclick = () => render();
+  $("#fg_l").value = ($("#le") && $("#le").value) || ""; $("#fg_l").focus();
+  $("#ffg").onsubmit = async e => {
+    e.preventDefault(); const b = $("#ffg button:not([type=button])"); busy(b, true);
+    try {
+      const r = await api("/auth/forgot", "POST", {login: val("fg_l"), contact: val("fg_c")});
+      box.innerHTML = `<h2>${esc(t("Request sent"))}</h2><div class="msg ok" role="status">${esc(r.message)}</div><button type="button" class="btn block" id="fg_back">${esc(t("Back to sign in"))}</button>`;
+      $("#fg_back").onclick = () => render(); $("#fg_back").focus();
+    } catch (x) { busy(b, false); showErr($("#ffg"), x.message); }
+  };
+}
 const setTitle = () => { document.title = (S.token && S.user && S.view ? t(S.view) + " · " : "") + ((S.info && S.info.academy_name) || t("app")); };
 const skeleton = () => `<div class="skel" aria-hidden="true"><div class="sk h"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div></div><p class="sr-only">${esc(t("Loading..."))}</p>`;
 
@@ -648,12 +664,13 @@ function loadBadges(force) {
   BADGE.loading = (async () => {
     const n = {}, tl = S.user.tabs || [];
     try {
-      if (S.user.role === "admin" && (tl.includes("admissions") || tl.includes("fees"))) {
+      if (S.user.role === "admin" && (tl.includes("admissions") || tl.includes("fees") || tl.includes("people"))) {
         const d = await api("/dashboard");
         if (tl.includes("admissions")) n.admissions = d.pending_applications;
         if (tl.includes("fees") && "slips_pending" in d) n.fees = d.slips_pending;   // only admins with the Fees area get this number
+        if (tl.includes("people") && "password_help" in d) n.people = d.password_help;   // v0.8.35: "Forgot password" requests waiting
       }
-      if (S.user.role === "student" && tl.includes("assignments")) n.assignments = ((await api("/my/home")).todo || []).length;
+      if (S.user.role === "student" && tl.includes("assignments")) { const h = await api("/my/home"); n.assignments = h.todo_count ?? (h.todo || []).length; }   // v0.8.35: the real count, not the first few
     } catch (_) { /* badges are extras: a failure leaves them hidden */ }
     BADGE.n = n; BADGE.at = Date.now(); BADGE.loading = null; applyBadges();
   })();
@@ -717,8 +734,9 @@ async function render() {
     $("#retry").onclick = retry || (() => render()); $("#so").onclick = signout; S.rendering = false; setTitle();
   };
   if (!S.token) {
-    root.innerHTML = authShell(`<h2>${esc(t("signin"))}</h2>${S.info && S.info.banner ? `<div class="banner" role="note">${esc(S.info.banner)}</div>` : ""}${note()}<form id="fl" class="stack"><label>${t("Login ID")}<input id="le" type="text" autocomplete="username" autocapitalize="characters" spellcheck="false" placeholder="BAL/AL1/001" required></label><label>${t("password")}<input id="lp" type="password" autocomplete="current-password" required></label><label class="chk"><input type="checkbox" id="lps"><span>${esc(t("show_password"))}</span></label><button class="btn block">${t("signin")}</button></form>`);
+    root.innerHTML = authShell(`<h2>${esc(t("signin"))}</h2>${S.info && S.info.banner ? `<div class="banner" role="note">${esc(S.info.banner)}</div>` : ""}${note()}<form id="fl" class="stack"><label>${t("Login ID")}<input id="le" type="text" autocomplete="username" autocapitalize="characters" spellcheck="false" placeholder="BAL/AL1/001" required></label><label>${t("password")}<input id="lp" type="password" autocomplete="current-password" required></label><label class="chk"><input type="checkbox" id="lps"><span>${esc(t("show_password"))}</span></label><button class="btn block">${t("signin")}</button></form><p class="center"><button type="button" class="linkbtn" id="forgotBtn">${esc(t("Forgot password?"))}</button></p>`);
     $("#lps").onchange = e => { $("#lp").type = e.target.checked ? "text" : "password"; };
+    $("#forgotBtn").onclick = forgotScreen;
     $("#fl").onsubmit = async e => { e.preventDefault(); const b = $("#fl button"); busy(b, true);
       try { const r = await api("/auth/login", "POST", {login: val("le"), password: val("lp")}); S.token = r.token; sessionStorage.setItem("tok", r.token); S.user = r.user; S.view = null; loadFilters(); }
       catch (x) { busy(b, false); showErr($("#fl"), x.message); return; }

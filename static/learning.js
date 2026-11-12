@@ -66,20 +66,45 @@ views.home = async () => {
   let html = `<h1>${t("home")}</h1><div class="panel next">${nextCard(h)}</div>`;
   if (S.user.role === "student") {
     html += `<div class="stats">${h.courses.map(c => `<div class="stat"><b>${pct(c.attendance_pct)}</b>${esc(c.course_name)} · ${t("attendance_pct")}<br><small>${t("avg_pct")}: ${pct(c.avg_pct)}</small></div>`).join("")}</div>`;
-    html += `<div class="panel"><h2>${t("open_assignments")}</h2>${h.todo.length ? h.todo.map(a => `<div class="cl"><div><b>${esc(a.title)}</b><br>${esc(a.course_name)} · ${a.due_date ? esc(t("due_date")) + " " + esc(a.due_date) : t("no_due")}</div><button class="btn sm" data-do="goA" data-id="${a.id}">${t("open")}</button></div>`).join("") : `<p>${t("empty")}</p>`}</div>`;
+    html = html.replace(`<h1>${t("home")}</h1>`, `<h1>${t("home")}</h1>` + nextSteps(h));   // v0.8.35: "What to do next" first
   } else {
+    html = html.replace(`<h1>${t("home")}</h1>`, `<h1>${t("home")}</h1>` + teacherToday(h));   // v0.8.35: today's classes with Take attendance
     const d = await api("/teacher/dashboard").catch(() => null);   // Session 19: the batch picked in the header (or all batches); same numbers as everywhere else
     if (d) {
       const card = (n, k) => `<div class="stat"><b>${n}</b>${t(k)}</div>`, A = d.assignments, C = d.classes;
       html += `<div class="stats">${card(d.batches.length, "dash_batches")}${card(d.students, "dash_students")}${card(C.held, "dash_held")}${card(C.upcoming, "dash_upcoming")}${card(A.given, "dash_assignments")}${card(A.tests, "dash_tests")}${card(d.tutorials.given, "dash_tutorials")}${card(A.submissions, "dash_submissions")}${card(A.pending_grading, "pending_grading")}${card(A.graded, "dash_graded")}${card(pct(d.attendance.pct), "attendance_pct")}${card(d.attendance.low_students, "low_att_students")}</div>`;
       html += `<div class="panel"><h2>${t("dash_batches")}</h2>${d.batches.map(b => `<div class="cl"><div><b>${esc(b.course_name)}</b> · ${esc(b.code)}<br><span class="hint">${esc(b.days || "")} ${esc(b.start_time || "")} · ${b.students} ${t("dash_students")}</span></div></div>`).join("") || `<p>${t("empty")}</p>`}</div>`;
-      if (d.recent_activity.length) html += `<div class="panel"><h2>${t("dash_recent")}</h2>${d.recent_activity.map(r => `<div class="cl"><div>${esc(r.action.replace(/_/g, " "))}${r.detail ? " · " + esc(r.detail) : ""}<br><span class="hint">${esc(r.at)}</span></div></div>`).join("")}</div>`;
+      if (d.recent_activity.length) html += `<div class="panel"><h2>${t("dash_recent")}</h2>${d.recent_activity.map(r => `<div class="cl"><div>${esc(r.action.replace(/_/g, " "))}${r.detail ? " · " + esc(r.detail) : ""}<br><span class="hint"><bdi dir="ltr">${esc(fmtTime(r.at))}</bdi></span></div></div>`).join("")}</div>`;
     } else html += `<div class="stats"><div class="stat"><b>${h.to_grade}</b>${t("pending_grading")}</div><div class="stat"><b>${h.low_attendance.length}</b>${t("low_att_students")}</div></div>`;
     if (h.low_attendance.length) html += `<div class="panel"><h2>${t("low_att_students")}</h2>${h.low_attendance.map(s => `<div class="cl"><div><b>${esc(s.full_name)}</b><br>${esc(s.course_name)} · ${esc(s.batch_code)}</div>${tag(pct(s.pct), "bad")}</div>`).join("")}</div>`;
   }
   return html + `<div class="panel"><h2>${t("this_week")}</h2>${weekList(h)}</div>`;
 };
 DO.goA = d => { go({view: "assignments", aid: +d.id}); return false; };
+// v0.8.35: the student's "What to do next": work to hand in (late first), new grades, new materials. The fee notice (fees.js) stays above it.
+function nextSteps(h) {
+  const items = [];
+  (h.todo || []).forEach(a => items.push(`<div class="cl"><div><b>${esc(a.title)}</b> ${a.overdue ? tag(t("Late"), "bad") : ""}<br><span class="hint">${esc(a.course_name)} · ${a.due_date ? esc(t("due_date")) + " <bdi dir=\"ltr\">" + esc(a.due_date) + "</bdi>" : esc(t("no_due"))}</span></div><button class="btn sm" data-do="goA" data-id="${a.id}">${t("Hand in")}</button></div>`));
+  if ((h.todo_count || 0) > (h.todo || []).length) items.push(`<p class="hint">${esc(t("and_n_more").replace("{n}", h.todo_count - h.todo.length))} <button class="linkbtn" data-do="goTab" data-v="assignments">${t("assignments")}</button></p>`);
+  (h.new_grades || []).forEach(g => items.push(`<div class="cl"><div><b>${esc(g.title)}</b> ${tag(t("New grade"), "ok")}<br><span class="hint">${esc(g.course_name)} · ${esc(g.grade)} / ${esc(g.max_points)}</span></div><button class="btn sm alt" data-do="goA" data-id="${g.id}">${t("open")}</button></div>`));
+  (h.new_materials || []).forEach(m => items.push(`<div class="cl"><div><b>${esc(m.title)}</b> ${tag(t("New material"))}<br><span class="hint">${esc(m.course_name)} · <bdi dir="ltr">${esc(fmtDate(m.created_at))}</bdi></span></div><button class="btn sm alt" data-do="goTab" data-v="materials">${t("open")}</button></div>`));
+  return `<div class="panel" id="nextp"><h2>${t("What to do next")}</h2>${items.join("") || `<p class="msg ok">${esc(t("nothing_to_do"))}</p>`}</div>`;
+}
+// v0.8.35: the teacher's classes today, each with Take attendance (or Attendance taken), and the grading queue
+function teacherToday(h) {
+  const rows = (h.today || []).filter(o => o.status !== "cancelled").map(o => `<div class="cl"><div><b>${esc(o.course_name)} · ${esc(o.batch_code)}</b><br><span class="hint"><bdi dir="ltr">${esc(o.start_time)}–${esc(o.end_time)}</bdi></span></div>`
+    + (o.attendance_taken ? `<div class="rowflex">${tag("✓ " + t("Attendance taken"), "ok")}<button class="btn sm alt" data-do="takeAtt" data-b="${o.batch_id}">${t("edit")}</button></div>`
+      : `<button class="btn sm${o.started ? "" : " alt"}" data-do="takeAtt" data-b="${o.batch_id}">${t("Take attendance")}</button>`) + `</div>`).join("");
+  const grade = h.to_grade ? `<div class="cl"><div><b>${h.to_grade}</b> ${esc(t("pending_grading"))}</div><button class="btn sm" data-do="goGrade">${t("open")}</button></div>` : "";
+  return `<div class="panel" id="todayp"><h2>${t("Today")}</h2>${rows || `<p class="hint">${esc(t("no_class_today"))}</p>`}${grade}</div>`;
+}
+DO.goTab = d => { openTab(d.v); return false; };
+DO.takeAtt = d => {
+  const b = +d.b;
+  if ((S.mine || []).some(x => x.id === b)) { S.sb = b; sessionStorage.setItem("sb", b); } else S.cb = b;
+  openTab("classroom", {ct: "attendance", adate: null, aid: null}); return false;
+};
+DO.goGrade = () => { openTab("classroom", {ct: "assignments", aid: null}); return false; };
 
 // ---------- student: assignments ----------
 views.assignments = async () => {
