@@ -5,7 +5,8 @@ Exports (CSV or Excel, every download is logged; no fees, no internal notes, no 
   GET /api/student-information/enrolments.csv|.xlsx  area student_information  one row per enrolment (the file the enrolment import reads)
   GET /api/teacher-information/export.csv|.xlsx      area teacher_information  ?q=&status=active|inactive
 
-Imports (CSV only, UTF-8; multipart field "file" or a text/csv body; at most 2000 rows and 2 MB):
+Imports (v0.8.38: Excel .xlsx or CSV UTF-8; multipart field "file" or a text/csv body; at most 2000 rows and 2 MB).
+Templates to fill in: GET /api/import/<students|teachers|enrolments>/template.xlsx (same areas as the import):
   POST /api/import/students    area people       columns: full_name, email (required); student_code, login_id, phone, date_of_birth, grade, island,
                                                  guardian_name, guardian_relationship, guardian_phone, is_active (optional)
   POST /api/import/teachers    area people       columns: full_name, email (required); teacher_code, login_id, phone, bio, is_active
@@ -21,7 +22,7 @@ import csv, datetime as dt, io, re, secrets
 from flask import Response, jsonify, request
 from werkzeug.security import generate_password_hash
 
-import idcodes
+import excelio, idcodes
 from payreports import to_xlsx, csv_safe, XLSX_MIME
 
 CODE = re.compile(r"^[A-Z0-9][A-Z0-9/._-]{2,39}$")
@@ -97,21 +98,8 @@ def register(app, c):
         return v[1:] if v[:1] == "'" and v[1:2] in ("=", "+", "-", "@") else v
 
     def read_file():
-        f = request.files.get("file")
-        raw = f.read(MAX_BYTES + 1) if f else (request.get_data() or b"")
-        if not raw.strip(): raise ValueError("No file received. Choose a CSV file.")
-        if len(raw) > MAX_BYTES: raise ValueError("The file is larger than 2 MB. Split it into smaller files.")
-        try: text = raw.decode("utf-8-sig")
-        except UnicodeDecodeError: raise ValueError("The file must be saved as CSV (UTF-8).")
-        rd = csv.reader(io.StringIO(text))
-        try: head = [re.sub(r"\s+", "_", h.strip().lower()) for h in next(rd)]
-        except StopIteration: raise ValueError("The file is empty.")
-        body = []
-        for n, r in enumerate(rd, 2):
-            if not any(x.strip() for x in r): continue
-            body.append((n, {head[i]: unsafe(r[i].strip()) for i in range(min(len(head), len(r)))}))
-        if len(body) > MAX_ROWS: raise ValueError(f"More than {MAX_ROWS} rows. Split the file.")
-        return head, body
+        """v0.8.38: an Excel workbook (.xlsx, the "Data" sheet of the template) or a CSV file."""
+        return excelio.read_table()
 
     def flag(v, default=1):
         s = str(v or "").strip().lower()
@@ -235,6 +223,42 @@ def register(app, c):
         resp = jsonify(kind=kind, dry_run=dry, total=len(body), ok=ok, rejected=bad, rows=out)
         resp.headers["Cache-Control"] = "no-store"
         return resp
+
+    # ---------------- v0.8.38: templates ----------------
+    def template_for(kind):
+        C = lambda key, help, example="", required=False, **kw: {"key": key, "help": help, "example": example, "required": required, **kw}
+        yn = ["1", "0"]
+        if kind == "students":
+            cols = [C("full_name", "The student's full name.", "Aishath Ali", True, width=26), C("email", "Email address; must not be used by another account.", "aishath@example.com", True, width=28),
+                    C("student_code", "Leave empty and the portal gives one. Or your own ID (letters, digits, / . _ -).", "BAL/AX/120", text=True),
+                    C("login_id", "What they type to sign in. Empty = the same as the student ID.", "", text=True), C("phone", "WhatsApp number.", "7771234", text=True),
+                    C("date_of_birth", "Date like 2012-04-30.", "2012-04-30"), C("grade", "School grade or class.", "Grade 7"), C("island", "Island or city.", "Male'"),
+                    C("guardian_name", "For students under 18.", "Ali Ahmed"), C("guardian_relationship", "Father, mother, ...", "Father"), C("guardian_phone", "Guardian's number.", "7775678", text=True),
+                    C("is_active", "1 = can sign in (default), 0 = not yet.", "1", choices=yn)]
+            return excelio.template("Import students", cols, note="Each new account gets a temporary password, shown once after the import. Enrol them with the Enrolments template.")
+        if kind == "teachers":
+            cols = [C("full_name", "The teacher's full name.", "Ahmed Rasheed", True, width=26), C("email", "Email address; must not be used by another account.", "ahmed@example.com", True, width=28),
+                    C("teacher_code", "Leave empty and the portal gives one.", "", text=True), C("login_id", "What they type to sign in. Empty = the same as the teacher ID.", "", text=True),
+                    C("phone", "WhatsApp number.", "7779876", text=True), C("bio", "A short line about the teacher.", "Quran and Arabic teacher"), C("is_active", "1 = can sign in (default), 0 = not yet.", "1", choices=yn)]
+            return excelio.template("Import teachers", cols)
+        bs = rows("SELECT c.code AS cc, b.code AS bc, c.name AS cn FROM batches b JOIN courses c ON c.id=b.course_id WHERE c.is_active=1 AND b.status<>'closed' ORDER BY c.code, b.code")
+        cols = [C("student_code", "The student's ID (see Student information), or fill login_id or student_email instead.", "BAL/AX/120", text=True),
+                C("login_id", "Instead of student_code.", "", text=True), C("student_email", "Instead of student_code.", ""),
+                C("course_code", "The course code (see the Lists sheet).", bs[0]["cc"] if bs else "AL1", True, list_ref="Course codes", text=True),
+                C("batch_code", "The batch name/code in that course (see the Lists sheet).", bs[0]["bc"] if bs else "004", True, list_ref="Batch codes", text=True, free=True),
+                C("status", "active (default), waitlist, dropped or completed.", "active", choices=list(STATUSES)),
+                C("enrol_code", "Leave empty and the portal gives one.", "", text=True), C("enrolled_at", "Date like 2026-09-01. Empty = today.", "2026-09-01")]
+        return excelio.template("Import enrolments", cols, lists={"Course codes": sorted({b["cc"] for b in bs if b["cc"]}), "Batch codes": [b["bc"] for b in bs],
+                                                                  "Batch is in course": [f"{b['cc']} · {b['cn']}" for b in bs]},
+                                note="Courses and batches are not created by this import: they must already exist. The Lists sheet shows each batch next to its course.")
+
+    def template_route(kind):
+        audit("download_template", "import", None, kind); db().commit()
+        return excelio.send_xlsx(template_for(kind), f"import-{kind}-template")
+
+    app.add_url_rule("/api/import/students/template.xlsx", "pio_tpl_students", auth("admin", perm="people")(lambda: template_route("students")))
+    app.add_url_rule("/api/import/teachers/template.xlsx", "pio_tpl_teachers", auth("admin", perm="people")(lambda: template_route("teachers")))
+    app.add_url_rule("/api/import/enrolments/template.xlsx", "pio_tpl_enrolments", auth("admin", perm="enrollments")(lambda: template_route("enrolments")))
 
     app.add_url_rule("/api/import/students", "pio_imp_students", auth("admin", perm="people")(lambda: run("student")), methods=["POST"])
     app.add_url_rule("/api/import/teachers", "pio_imp_teachers", auth("admin", perm="people")(lambda: run("teacher")), methods=["POST"])

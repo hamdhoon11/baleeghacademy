@@ -75,21 +75,22 @@ def register(app, c):
         resp.headers.update({"X-Total-Count": str(total), "X-Page": str(page), "X-Per-Page": str(per), "Access-Control-Expose-Headers": "X-Total-Count, X-Page, X-Per-Page"})
         return resp
 
-    @app.get("/api/audit.csv")
-    @auth("admin", perm="audit")
-    def audit_csv():
-        from fees import csv_safe
+    def audit_export(ext):
+        import excelio
         w, p, e = where_of(request.args)
         if e: return err(e)
         r = rows(f"SELECT a.*, u.full_name AS user_name {BASE}{w} ORDER BY a.id DESC LIMIT ?", (*p, MAX_CSV))
-        buf = io.StringIO(); wr = csv.writer(buf)
-        wr.writerow(COLS)
-        for x in r: wr.writerow([csv_safe(x.get(k)) for k in COLS])
-        audit("export_audit_csv", "report", None, f"{len(r)} rows" + (" (cut at %d)" % MAX_CSV if len(r) == MAX_CSV else "") + (f"; filters: {dict(request.args)}" if request.args else ""))
+        audit(f"export_audit_{ext}", "report", None, f"{len(r)} rows" + (" (cut at %d)" % MAX_CSV if len(r) == MAX_CSV else "") + (f"; filters: {dict(request.args)}" if request.args else ""))
         db().commit()
-        resp = Response(buf.getvalue(), mimetype="text/csv")
-        resp.headers["Content-Disposition"] = 'attachment; filename="activity-log.csv"'
-        return resp
+        return excelio.send_table(ext, "activity-log", COLS, [[x.get(k) for k in COLS] for x in r], "Activity log")
+
+    @app.get("/api/audit.csv")
+    @auth("admin", perm="audit")
+    def audit_csv(): return audit_export("csv")
+
+    @app.get("/api/audit.xlsx")
+    @auth("admin", perm="audit")
+    def audit_xlsx(): return audit_export("xlsx")   # v0.8.38
 
     @app.get("/api/audit/summary")
     @auth("admin", perm="audit")

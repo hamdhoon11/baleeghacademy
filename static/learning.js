@@ -37,6 +37,40 @@ document.addEventListener("click", async e => {
 });
 document.addEventListener("change", e => { const f = CH[e.target.dataset.ch]; if (f) f(e.target); });
 
+// ---------- bulk actions (v0.8.37): tick rows, then one action for all of them ----------
+// Each action calls the same route as the single button, one row at a time, so every check, reason and log line stays exactly as before.
+const bulkSel = g => { S.bulk = S.bulk || {}; return S.bulk[g] || (S.bulk[g] = []); };
+const bulkBox = (g, id, label) => `<input type="checkbox" class="bulk" data-g="${g}" value="${id}" aria-label="${esc(t("bulk_select") + ": " + label)}"${bulkSel(g).includes(+id) ? " checked" : ""}>`;
+const bulkAll = (g, ids) => ids.length ? `<label class="inl bulk-all-l"><input type="checkbox" class="bulk-all" data-g="${g}" data-ids="${ids.join(",")}"${ids.every(i => bulkSel(g).includes(+i)) ? " checked" : ""}> ${t("bulk_all")}</label>` : "";
+// ids: the rows on screen now. Anything ticked earlier that is no longer shown (another filter or search) is let go, so an action never reaches a hidden row.
+const bulkBar = (g, actions, ids) => { const keep = (ids || []).map(Number); S.bulk = S.bulk || {}; S.bulk[g] = bulkSel(g).filter(i => keep.includes(i)); return bulkBarHtml(g, actions); };
+const bulkBarHtml = (g, actions) => `<div class="bulkbar" data-bulkbar="${g}"${bulkSel(g).length ? "" : " hidden"} role="group" aria-label="${esc(t("bulk_actions"))}"><span><b data-bulkn>${bulkSel(g).length}</b> ${t("bulk_selected")}</span>`
+  + actions.map(([k, label, danger]) => `<button class="btn sm${danger ? " danger" : ""}" data-do="${k}">${esc(t(label))}</button>`).join("") + `<button class="btn sm alt" data-do="bulkClear" data-g="${g}">${t("bulk_clear")}</button></div>`;
+function bulkSync(g) {
+  const n = bulkSel(g).length, bar = document.querySelector(`[data-bulkbar="${g}"]`);
+  if (bar) { bar.hidden = !n; bar.querySelector("[data-bulkn]").textContent = n; }
+  document.querySelectorAll(`.bulk-all[data-g="${g}"]`).forEach(a => { a.checked = a.dataset.ids.split(",").every(i => bulkSel(g).includes(+i)); });
+  announce(t("bulk_n_selected").replace("{n}", n));
+}
+document.addEventListener("change", e => {
+  const el = e.target, g = el.dataset && el.dataset.g; if (!g || !el.classList) return;
+  if (el.classList.contains("bulk")) { const id = +el.value, sel = bulkSel(g).filter(x => x !== id); if (el.checked) sel.push(id); S.bulk[g] = sel; }
+  else if (el.classList.contains("bulk-all")) {
+    const ids = el.dataset.ids.split(",").map(Number);
+    S.bulk[g] = el.checked ? [...new Set([...bulkSel(g), ...ids])] : bulkSel(g).filter(x => !ids.includes(x));
+    document.querySelectorAll(`.bulk[data-g="${g}"]`).forEach(b => { b.checked = S.bulk[g].includes(+b.value); });
+  } else return;
+  bulkSync(g);
+});
+DO.bulkClear = d => { S.bulk[d.g] = []; };
+async function bulkRun(g, fn) {   // runs fn(id) for every ticked row; a failure on one row does not stop the others
+  const ids = [...bulkSel(g)]; let done = 0; const bad = [];
+  for (const id of ids) { try { await fn(id); done++; } catch (x) { bad.push(x.message); } }
+  S.bulk[g] = [];
+  const why = [...new Set(bad)].slice(0, 3).join(" · ");
+  flash(t("bulk_done").replace("{n}", done).replace("{m}", ids.length) + (bad.length ? ` ${t("bulk_failed").replace("{n}", bad.length)}: ${why}` : ""), !bad.length);
+}
+
 // ---------- shared pieces ----------
 // dates and times stay left-to-right even inside Dhivehi (right-to-left) text, otherwise 15:56–16:56 reads backwards
 const whenHtml = o => `${esc(o.date === mvToday() ? t("today") : dayName(o.weekday))} <bdi dir="ltr">${esc(o.date)} · ${esc(o.start_time)}–${esc(o.end_time)}</bdi>`;
@@ -66,20 +100,46 @@ views.home = async () => {
   let html = `<h1>${t("home")}</h1><div class="panel next">${nextCard(h)}</div>`;
   if (S.user.role === "student") {
     html += `<div class="stats">${h.courses.map(c => `<div class="stat"><b>${pct(c.attendance_pct)}</b>${esc(c.course_name)} · ${t("attendance_pct")}<br><small>${t("avg_pct")}: ${pct(c.avg_pct)}</small></div>`).join("")}</div>`;
-    html += `<div class="panel"><h2>${t("open_assignments")}</h2>${h.todo.length ? h.todo.map(a => `<div class="cl"><div><b>${esc(a.title)}</b><br>${esc(a.course_name)} · ${a.due_date ? esc(t("due_date")) + " " + esc(a.due_date) : t("no_due")}</div><button class="btn sm" data-do="goA" data-id="${a.id}">${t("open")}</button></div>`).join("") : `<p>${t("empty")}</p>`}</div>`;
+    html = html.replace(`<h1>${t("home")}</h1>`, `<h1>${t("home")}</h1>` + nextSteps(h));   // v0.8.35: "What to do next" first
   } else {
+    html = html.replace(`<h1>${t("home")}</h1>`, `<h1>${t("home")}</h1>` + teacherToday(h));   // v0.8.35: today's classes with Take attendance
     const d = await api("/teacher/dashboard").catch(() => null);   // Session 19: the batch picked in the header (or all batches); same numbers as everywhere else
     if (d) {
       const card = (n, k) => `<div class="stat"><b>${n}</b>${t(k)}</div>`, A = d.assignments, C = d.classes;
       html += `<div class="stats">${card(d.batches.length, "dash_batches")}${card(d.students, "dash_students")}${card(C.held, "dash_held")}${card(C.upcoming, "dash_upcoming")}${card(A.given, "dash_assignments")}${card(A.tests, "dash_tests")}${card(d.tutorials.given, "dash_tutorials")}${card(A.submissions, "dash_submissions")}${card(A.pending_grading, "pending_grading")}${card(A.graded, "dash_graded")}${card(pct(d.attendance.pct), "attendance_pct")}${card(d.attendance.low_students, "low_att_students")}</div>`;
       html += `<div class="panel"><h2>${t("dash_batches")}</h2>${d.batches.map(b => `<div class="cl"><div><b>${esc(b.course_name)}</b> · ${esc(b.code)}<br><span class="hint">${esc(b.days || "")} ${esc(b.start_time || "")} · ${b.students} ${t("dash_students")}</span></div></div>`).join("") || `<p>${t("empty")}</p>`}</div>`;
-      if (d.recent_activity.length) html += `<div class="panel"><h2>${t("dash_recent")}</h2>${d.recent_activity.map(r => `<div class="cl"><div>${esc(r.action.replace(/_/g, " "))}${r.detail ? " · " + esc(r.detail) : ""}<br><span class="hint">${esc(r.at)}</span></div></div>`).join("")}</div>`;
+      if (d.recent_activity.length) html += `<div class="panel"><h2>${t("dash_recent")}</h2>${d.recent_activity.map(r => `<div class="cl"><div>${esc(r.action.replace(/_/g, " "))}${r.detail ? " · " + esc(r.detail) : ""}<br><span class="hint"><bdi dir="ltr">${esc(fmtTime(r.at))}</bdi></span></div></div>`).join("")}</div>`;
     } else html += `<div class="stats"><div class="stat"><b>${h.to_grade}</b>${t("pending_grading")}</div><div class="stat"><b>${h.low_attendance.length}</b>${t("low_att_students")}</div></div>`;
     if (h.low_attendance.length) html += `<div class="panel"><h2>${t("low_att_students")}</h2>${h.low_attendance.map(s => `<div class="cl"><div><b>${esc(s.full_name)}</b><br>${esc(s.course_name)} · ${esc(s.batch_code)}</div>${tag(pct(s.pct), "bad")}</div>`).join("")}</div>`;
   }
   return html + `<div class="panel"><h2>${t("this_week")}</h2>${weekList(h)}</div>`;
 };
 DO.goA = d => { go({view: "assignments", aid: +d.id}); return false; };
+// v0.8.35: the student's "What to do next": work to hand in (late first), new grades, new materials. The fee notice (fees.js) stays above it.
+function nextSteps(h) {
+  const items = [];
+  (h.todo || []).forEach(a => items.push(`<div class="cl"><div><b>${esc(a.title)}</b> ${a.overdue ? tag(t("Late"), "bad") : ""}<br><span class="hint">${esc(a.course_name)} · ${a.due_date ? esc(t("due_date")) + " <bdi dir=\"ltr\">" + esc(a.due_date) + "</bdi>" : esc(t("no_due"))}</span></div><button class="btn sm" data-do="goA" data-id="${a.id}">${t("Hand in")}</button></div>`));
+  if ((h.todo_count || 0) > (h.todo || []).length) items.push(`<p class="hint">${esc(t("and_n_more").replace("{n}", h.todo_count - h.todo.length))} <button class="linkbtn" data-do="goTab" data-v="assignments">${t("assignments")}</button></p>`);
+  (h.new_grades || []).forEach(g => items.push(`<div class="cl"><div><b>${esc(g.title)}</b> ${tag(t("New grade"), "ok")}<br><span class="hint">${esc(g.course_name)} · ${esc(g.grade)} / ${esc(g.max_points)}</span></div><button class="btn sm alt" data-do="goA" data-id="${g.id}">${t("open")}</button></div>`));
+  (h.new_materials || []).forEach(m => items.push(`<div class="cl"><div><b>${esc(m.title)}</b> ${tag(t("New material"))}<br><span class="hint">${esc(m.course_name)} · <bdi dir="ltr">${esc(fmtDate(m.created_at))}</bdi></span></div><button class="btn sm alt" data-do="goTab" data-v="materials">${t("open")}</button></div>`));
+  return `<div class="panel" id="nextp"><h2>${t("What to do next")}</h2>${items.join("") || `<p class="msg ok">${esc(t("nothing_to_do"))}</p>`}</div>`;
+}
+// v0.8.35: the teacher's classes today, each with Take attendance (or Attendance taken), and the grading queue
+function teacherToday(h) {
+  const rows = (h.today || []).filter(o => o.status !== "cancelled").map(o => `<div class="cl"><div><b>${esc(o.course_name)} · ${esc(o.batch_code)}</b><br><span class="hint"><bdi dir="ltr">${esc(o.start_time)}–${esc(o.end_time)}</bdi></span></div>`
+    + (o.attendance_taken ? `<div class="rowflex">${tag("✓ " + t("Attendance taken"), "ok")}<button class="btn sm alt" data-do="takeAtt" data-b="${o.batch_id}">${t("edit")}</button></div>`
+      : `<button class="btn sm${o.started ? "" : " alt"}" data-do="takeAtt" data-b="${o.batch_id}">${t("Take attendance")}</button>`) + `</div>`).join("");
+  const grade = h.to_grade ? `<div class="cl"><div><b>${h.to_grade}</b> ${esc(t("pending_grading"))}</div><button class="btn sm" data-do="goGrade">${t("open")}</button></div>` : "";
+  const tut = h.tut_to_grade ? `<div class="cl"><div><b>${h.tut_to_grade}</b> ${esc(t("tut_answers_to_grade"))}</div><button class="btn sm" data-do="goTab" data-v="tutorials">${t("open")}</button></div>` : "";
+  return `<div class="panel" id="todayp"><h2>${t("Today")}</h2>${rows || `<p class="hint">${esc(t("no_class_today"))}</p>`}${grade}${tut}</div>`;
+}
+DO.goTab = d => { openTab(d.v); return false; };
+DO.takeAtt = d => {
+  const b = +d.b;
+  if ((S.mine || []).some(x => x.id === b)) { S.sb = b; sessionStorage.setItem("sb", b); } else S.cb = b;
+  openTab("classroom", {ct: "attendance", adate: null, aid: null}); return false;
+};
+DO.goGrade = () => { openTab("classroom", {ct: "assignments", aid: null}); return false; };
 
 // ---------- student: assignments ----------
 views.assignments = async () => {
@@ -196,6 +256,7 @@ CT.assignments = async b => {
     const editable = s.students.some(r => !(r.grade != null && !s.can_edit_grades));
     html += `<div class="panel" data-detail id="gradep" data-can-edit="${s.can_edit_grades ? 1 : 0}"><h2>${esc(s.assignment.title)} · ${s.assignment.max_points} pts</h2>${editable ? `<p><button type="button" class="btn alt" data-do="saveGAll" data-aid="${sel.id}">${t("Save all")}</button> <span class="hint">${t("save_all_hint")}</span></p>` : ""}${s.students.map(r => `<div class="sub" data-sid="${r.student_id}" data-name="${esc(r.full_name)}"><div><b>${esc(r.full_name)}</b> ${r.submitted ? tag(t("submitted") + (r.is_late ? " · " + t("late_tag") : ""), r.is_late ? "warn" : "ok") : tag(t("not_submitted"), "warn")}</div>${r.text_answer ? `<p class="pre">${esc(r.text_answer)}</p>` : ""}${r.has_file ? `<button class="btn sm" data-do="dlSub" data-id="${r.submission_id}" data-name="${esc(r.file_name || "file")}">${esc(r.file_name || t("download"))}</button>` : ""}
       <div class="row" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:end;margin-top:.4rem">${(() => { const lock = r.grade != null && !s.can_edit_grades ? "disabled" : ""; return `<label style="flex:0 0 110px">${t("grade")} /${s.assignment.max_points}<input type="number" step="0.5" min="0" max="${s.assignment.max_points}" id="g_${r.student_id}" value="${r.grade ?? ""}" data-orig="${esc(r.grade ?? "")}" ${lock}></label><label>${t("feedback")}<input id="f_${r.student_id}" value="${esc(r.feedback || "")}" data-orig="${esc(r.feedback || "")}" ${lock}></label>` + (lock ? `<span class="hint">${t("grade_locked_teacher")}</span>` : `<button class="btn sm" data-do="saveG" data-sid="${r.student_id}" data-aid="${sel.id}">${t("save_grade")}</button><span class="saved" id="gs_${r.student_id}" hidden>✓ ${t("saved")}</span>`); })()}</div></div>`).join("")}</div>`;
+    html += impBox("grades", t("xl_imp_grades") + " · " + s.assignment.title, {query: "assignment_id=" + sel.id});   // v0.8.38: the template is this class list
   }
   return html;
 };
@@ -228,11 +289,15 @@ DO.saveGAll = async d => {
   return false;
 };
 
+DO.xlAtt = async d => { const m = val("xl_am") || mvToday().slice(0, 7); await fetchFile(`/batches/${d.b}/attendance.xlsx?month=${m}`, {name: `attendance-${d.c}-${m}.xlsx`}); return false; };
 CT.gradebook = async b => {
   const g = await api(`/batches/${b.id}/gradebook`);
   const mine = S.user.role === "teacher" ? (await api(`/my/given-grades?batch_id=${b.id}`)).grades : [];
   const given = mine.length ? `<div class="panel"><h2>${t("grades_i_gave")}</h2><table><thead><tr><th>${t("student")}</th><th>${t("title")}</th><th>${t("grade")}</th><th>${t("feedback")}</th></tr></thead><tbody>${mine.map(x => `<tr><td>${esc(x.full_name)}</td><td>${esc(x.title)}</td><td>${x.grade}/${x.max_points}</td><td>${esc(x.feedback || "–")}</td></tr>`).join("")}</tbody></table></div>` : "";
-  return given + `<div class="panel"><h2>${t("gradebook")}</h2><table><thead><tr><th>${t("student")}</th><th>${t("graded_items")}</th><th>${t("avg_pct")}</th><th>${t("attendance_pct")}</th></tr></thead><tbody>${g.map(s => `<tr><td>${esc(s.full_name)}</td><td>${s.graded_items}</td><td>${pct(s.avg_pct)}</td><td>${pct(s.attendance_pct)} ${s.low_attendance ? tag(t("low_attendance"), "bad") : ""}</td></tr>`).join("")}</tbody></table>${g.length ? "" : `<p>${t("empty")}</p>`}</div>`;
+  const mo = mvToday().slice(0, 7);
+  const xl = `<div class="panel"><h2>${t("xl_downloads")}</h2><div class="rowflex row"><button type="button" class="btn sm alt" data-do="xlGet" data-p="/batches/${b.id}/gradebook" data-n="gradebook-${esc(b.code)}" data-x="xlsx">${t("xl_gradebook")}</button>
+    <label>${t("fx_month")}<input id="xl_am" type="month" value="${mo}"></label><button type="button" class="btn sm alt" data-do="xlAtt" data-b="${b.id}" data-c="${esc(b.code)}">${t("xl_attendance")}</button></div></div>`;
+  return given + xl + `<div class="panel"><h2>${t("gradebook")}</h2><table><thead><tr><th>${t("student")}</th><th>${t("graded_items")}</th><th>${t("avg_pct")}</th><th>${t("attendance_pct")}</th></tr></thead><tbody>${g.map(s => `<tr><td>${esc(s.full_name)}</td><td>${s.graded_items}</td><td>${pct(s.avg_pct)}</td><td>${pct(s.attendance_pct)} ${s.low_attendance ? tag(t("low_attendance"), "bad") : ""}</td></tr>`).join("")}</tbody></table>${g.length ? "" : `<p>${t("empty")}</p>`}</div>`;
 };
 
 CT.materials = async b => {
@@ -287,12 +352,29 @@ DO.sendTAns = async d => {
 };
 const answerBox = (x, mine) => `<div class="sub"><h3>${t("your_answer")}</h3>
   ${mine ? `<p class="hint">${t("answered")} · <bdi dir="ltr">${esc((mine.submitted_at || "").slice(0, 16))}</bdi></p>` : ""}
+  ${mine && mine.graded_at ? `<div class="msg ok"><b>${x.max_points != null ? t("grade") + ": " + gradeTxt(mine.grade, x.max_points) : t("tut_comment")}</b>${mine.feedback ? `<br>${esc(mine.feedback)}` : ""}</div>` : ""}
   <p class="hint">${t("tutorial_answer_hint")}</p>
   <label>${t("your_answer")}<textarea id="tans_x" rows="5" maxlength="10000">${esc((mine && mine.text_answer) || "")}</textarea></label>
   ${mine && mine.has_file ? `<p>${t("your_file")}: <button class="btn sm" data-do="dlTAns" data-id="${mine.id}" data-name="${esc(mine.file_name || "file")}">${esc(mine.file_name || t("download"))}</button></p>` : ""}
   <label>${t("attach_file")}<input type="file" id="tans_f" accept=".pdf,.jpg,.jpeg,.png,.docx,.mp3,.m4a,.mp4"></label>
   <p><button class="btn" data-do="sendTAns" data-id="${x.id}">${t(mine ? "send_answer_again" : "send_answer")}</button></p></div>`;
-const answersList = (r) => `<div class="sub"><h3>${t("tutorial_answers")} (${r.submissions.length})</h3>${r.submissions.map(a => `<div class="bk cl"><b>${esc(a.full_name)}</b> <span class="hint"><bdi dir="ltr">${esc((a.submitted_at || "").slice(0, 16))}</bdi></span>${a.text_answer ? `<p class="pre">${esc(a.text_answer)}</p>` : ""}${a.has_file ? `<p><button class="btn sm" data-do="dlTAns" data-id="${a.id}" data-name="${esc(a.file_name || "file")}">${t("download")}: ${esc(a.file_name || t("file"))}</button></p>` : ""}</div>`).join("") || `<p>${t("no_answers_yet")}</p>`}</div>`;
+// v0.8.37: tutorial grading. Answers waiting for a grade come first; a saved grade is changed only by an admin or a teacher with "edit_grades"
+const gradeTxt = (g, mx) => mx == null ? "" : `${+g}/${mx}`;
+const ansGrade = (r, a) => {
+  const mx = r.tutorial.max_points, done = !!a.graded_at, locked = done && !r.can_edit_grades;
+  const shown = done ? `<p>${mx != null ? tag(t("grade") + " " + gradeTxt(a.grade, mx), "ok") + " " : ""}${a.feedback ? esc(a.feedback) : ""} <span class="hint">${esc(a.graded_by_name || "")}</span>${a.changed_after_grading ? " " + tag(t("tut_changed_after"), "warn") : ""}</p>` : "";
+  if (locked) return shown + `<p class="hint">${t("tut_grade_locked")}</p>`;
+  return shown + `<div class="rowflex row">${mx != null ? `<label style="flex:0 1 130px">${t("grade")} (${t("out_of")} ${mx})<input id="tg_${a.id}" type="number" min="0" max="${mx}" step="0.5" inputmode="decimal" value="${done && a.grade != null ? +a.grade : ""}"></label>` : ""}
+    <label style="flex:1 1 220px">${t(mx != null ? "feedback" : "tut_comment")}<input id="tc_${a.id}" maxlength="2000" value="${esc(a.feedback || "")}"></label>
+    <button class="btn sm" data-do="tGrade" data-id="${a.id}" data-mx="${mx ?? ""}">${t(done ? "tut_update_grade" : "tut_save_grade")}</button></div>`;
+};
+DO.tGrade = async d => {
+  const g = d.mx ? $("#tg_" + d.id).value.trim() : "", fb = $("#tc_" + d.id).value.trim();
+  if (d.mx && g === "") throw new Error(t("tut_grade_need"));
+  if (!d.mx && !fb) throw new Error(t("tut_comment_need"));
+  await api(`/tutorial-submissions/${d.id}/grade`, "POST", {grade: d.mx ? g : null, feedback: fb}); flash(t("saved"), true);
+};
+const answersList = (r) => `<div class="sub"><h3>${t("tutorial_answers")} (${r.submissions.length})</h3>${r.submissions.map(a => `<div class="bk cl" data-ans="${a.id}"><div style="flex:1"><b>${esc(a.full_name)}</b> ${a.graded_at ? "" : tag(t("tut_to_grade"), "warn")} <span class="hint"><bdi dir="ltr">${esc((a.submitted_at || "").slice(0, 16))}</bdi></span>${a.text_answer ? `<p class="pre">${esc(a.text_answer)}</p>` : ""}${a.has_file ? `<p><button class="btn sm" data-do="dlTAns" data-id="${a.id}" data-name="${esc(a.file_name || "file")}">${t("download")}: ${esc(a.file_name || t("file"))}</button></p>` : ""}${ansGrade(r, a)}</div></div>`).join("") || `<p>${t("no_answers_yet")}</p>`}</div>`;
 
 views.tutorials = async () => {
   const f = S.tf || {}, q = new URLSearchParams();
@@ -311,13 +393,16 @@ views.tutorials = async () => {
       const fd = new FormData(); fd.append("title", val("tp_t")); fd.append("text", $("#tp_x").value.trim());
       if (val("tp_u")) fd.append("url", val("tp_u")); const pc = tch ? ((S.mine || []).find(b => b.id === S.sb) || {}).course_id : val("tp_c"); if (pc) fd.append("course_id", pc);
       const file = $("#tp_f").files[0]; if (file) fd.append("file", file);
+      fd.append("max_points", val("tp_m"));
       await apiForm("/tutorials", fd);
     });
   });
   const opts = [["", "-"], ...courses.map(c => [c.id, c.name + (c.level ? " " + c.level : "")])];
   const card = x => {
     const isOpen = open && open.id === x.id;
-    const status = x.can_submit ? (x.my_submission ? tag(t("answered"), "ok") : tag(t("not_answered"), "warn")) : "";
+    const ms = x.my_submission;
+    const status = x.can_submit ? (ms ? (ms.graded ? tag(x.max_points != null ? t("grade") + " " + gradeTxt(ms.grade, x.max_points) : t("tut_commented"), "ok") : tag(t("answered"), "ok")) : tag(t("not_answered"), "warn"))
+      : x.can_view_answers && x.ungraded_count ? tag(t("tut_n_to_grade").replace("{n}", x.ungraded_count), "warn") : "";
     const act = x.can_submit ? `<button class="btn sm alt" data-do="openT" data-id="${x.id}">${isOpen ? t("close") : t(x.my_submission ? "edit_answer" : "answer_tutorial")}</button>`
       : x.can_view_answers ? `<button class="btn sm alt" data-do="openT" data-id="${x.id}">${isOpen ? t("close") : t("tutorial_answers") + " (" + (x.answer_count || 0) + ")"}</button>` : "";
     return `<div class="panel"><div class="cl"><div><b>${esc(x.title)}</b> ${status}${!x.accepts_answers ? tag(t("older_post")) : ""}<br><span class="hint">${esc(x.uploader)} · ${esc(t(x.uploader_role))} · ${esc((x.created_at || "").slice(0, 10))}${x.course_name ? " · " + esc(x.course_name) : ""}</span></div>${x.can_delete ? `<button class="btn sm alt" data-do="delTut" data-id="${x.id}">${t("delete")}</button>` : ""}</div>
@@ -328,6 +413,7 @@ views.tutorials = async () => {
     ${canPost ? `<div class="panel"><h2>${t("share_tutorial")}</h2><form id="tfp" class="row">${field("tp_t", "title")}${tch ? "" : field("tp_c", "course_optional", "", opts)}
       <label class="full">${t("tutorial_text")}<textarea id="tp_x" rows="5" maxlength="8000"></textarea></label>
       <label>${t("file")}<input type="file" id="tp_f" accept=".pdf,.jpg,.jpeg,.png,.docx,.pptx,.xlsx,.mp3,.m4a,.mp4"></label>${field("tp_u", "url", "url")}
+      <label>${t("tut_marks_out_of")}<input id="tp_m" type="number" min="1" max="1000" step="1" inputmode="numeric" value="100" aria-describedby="tp_mh"><span class="hint" id="tp_mh">${t("tut_marks_hint")}</span></label>
       <p class="full m0 hint">${t("tutorial_need")}</p><button class="btn alt">${t("post")}</button></form></div>` : ""}
     <div class="panel"><form id="tff" class="row">${tch ? "" : field("tf_c", "course", "", [["", t("all_courses")], ...opts.slice(1)])}<label>${t("search")}<input id="tf_q" value="${esc(f.q || "")}"></label><button class="btn">${t("search")}</button></form></div>
     ${list.length ? list.map(card).join("") : `<div class="panel"><p>${t("empty")}</p></div>`}${list.length >= lim ? `<p><button class="btn" data-do="moreTut">${t("load_more")}</button></p>` : ""}`;
@@ -355,3 +441,82 @@ views.my_earnings = async () => {
     <div class="panel">${body ? `<div class="scrollx"><table><thead><tr><th>${t("Month")}</th><th>${t("batch")}</th><th>${t("Collected")}</th><th>${t("Share")}</th><th>${t("Your share")}</th></tr></thead><tbody>${body}</tbody></table></div>` : `<p>${t("empty")}</p>`}</div>
     <div class="panel"><h2>${t("Payments received")}</h2>${pays ? `<table><thead><tr><th>${t("Date")}</th><th>${t("Amount")}</th><th>${t("Method")}</th></tr></thead><tbody>${pays}</tbody></table>` : `<p>${t("empty")}</p>`}</div>`;
 };
+
+// ---------- timetable (v0.8.37): one week of classes, every batch the person may see (all batches for an admin) ----------
+const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
+const mondayOf = iso => addDays(iso, -((new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7));
+DO.ttWeek = d => { S.ttw = d.w === "0" ? 0 : (S.ttw || 0) + +d.w; };
+views.timetable = async () => {
+  const today = mvToday(), d0 = addDays(mondayOf(today), 7 * (S.ttw || 0)), d1 = addDays(d0, 6);
+  const adm = S.user.role === "admin";
+  // batch_id=0: the whole week across all the person's batches, not only the one picked at the top (the server still limits it to their batches)
+  const list = await api(`/timetable?from=${d0}&to=${d1}&batch_id=0`);
+  const f = S.ttf || {};
+  mount(() => { ["ttf_t", "ttf_c"].forEach(id => { const e = $("#" + id); if (e) e.onchange = () => { S.ttf = {t: val("ttf_t"), c: val("ttf_c")}; render(); }; }); });
+  const teachers = [...new Set(list.map(o => o.teacher_name).filter(Boolean))].sort(), courses = [...new Set(list.map(o => o.course_name))].sort();
+  const shown = list.filter(o => (!f.t || o.teacher_name === f.t) && (!f.c || o.course_name === f.c));
+  const days = [...Array(7)].map((_, i) => addDays(d0, i));
+  const item = o => `<div class="tt-i${o.status === "cancelled" ? " off" : ""}${o.live ? " live" : ""}"><b><bdi dir="ltr">${esc(o.start_time)}–${esc(o.end_time)}</bdi></b><br>${esc(o.course_name)} · ${esc(o.batch_code)}${S.user.role !== "teacher" && o.teacher_name ? `<br><span class="hint">${esc(o.teacher_name)}</span>` : ""}${o.topic ? `<br><span class="hint">${esc(o.topic)}</span>` : ""}
+    ${o.status === "cancelled" ? "<br>" + tag(t("class_cancelled"), "bad") : o.extra ? "<br>" + tag(t("extra")) : ""}${o.can_join ? `<br><a class="btn sm" href="${esc(safeUrl(o.meet_link))}" target="_blank" rel="noopener noreferrer">${t("join")}</a>` : ""}</div>`;
+  const col = d => { const its = shown.filter(o => o.date === d), wd = new Date(d + "T00:00:00Z").getUTCDay();
+    return `<section class="tt-d${d === today ? " now" : ""}" aria-label="${esc(dayName(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][wd]) + " " + d)}"><h3>${esc(dayName(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][wd]))} <span class="hint"><bdi dir="ltr">${esc(d.slice(5))}</bdi></span>${d === today ? " " + tag(t("today"), "ok") : ""}</h3>${its.map(item).join("") || `<p class="hint">${t("tt_no_class")}</p>`}</section>`; };
+  const filters = adm && list.length ? `<div class="row">${field("ttf_t", "teacher", "", [["", t("all")], ...teachers.map(x => [x, x])])}${field("ttf_c", "course", "", [["", t("all_courses")], ...courses.map(x => [x, x])])}</div>` : "";
+  mount(() => { if ($("#ttf_t")) $("#ttf_t").value = f.t || ""; if ($("#ttf_c")) $("#ttf_c").value = f.c || ""; });
+  return `<h1>${t("timetable")}</h1><div class="panel"><div class="rowflex"><button class="btn sm alt" data-do="ttWeek" data-w="-1" aria-label="${t("tt_prev")}">‹ ${t("tt_prev")}</button>${S.ttw ? `<button class="btn sm alt" data-do="ttWeek" data-w="0">${t("tt_this_week")}</button>` : ""}<button class="btn sm alt" data-do="ttWeek" data-w="1" aria-label="${t("tt_next")}">${t("tt_next")} ›</button>
+    <b><bdi dir="ltr">${esc(d0)} – ${esc(d1)}</bdi></b> <span class="hint">${t("tt_count").replace("{n}", shown.filter(o => o.status !== "cancelled").length)}</span></div>${filters}</div>
+    <div class="tt">${days.map(col).join("")}</div>`;
+};
+
+// ---------- my files (v0.8.37): every file the person can open, in one list with a search ----------
+const MF_KINDS = ["material", "assignment", "my_work", "tutorial", "my_tutorial_answer", "slip", "receipt"];
+DO.mfOpen = async d => { await viewFile(d.path, d.name); return false; };
+views.my_files = async () => {
+  const r = await api("/my/files"), f = S.mff || {};
+  mount(() => { const fm = $("#mff"); if (fm) fm.onsubmit = e => { e.preventDefault(); S.mff = {q: val("mff_q"), k: val("mff_k")}; render(); };
+    if ($("#mff_k")) $("#mff_k").value = f.k || ""; });
+  const q = (f.q || "").toLowerCase();
+  const list = r.files.filter(x => (!f.k || x.kind === f.k) && (!q || [x.title, x.file_name, x.where].join(" ").toLowerCase().includes(q)));
+  const kinds = MF_KINDS.filter(k => r.files.some(x => x.kind === k));
+  const row = x => `<div class="cl"><div><b>${esc(x.title || x.file_name || "")}</b> ${tag(t("mf_" + x.kind))}<br><span class="hint"><bdi>${esc(x.file_name || "")}</bdi>${x.where ? " · " + esc(x.where) : ""}${x.date ? ` · <bdi dir="ltr">${esc(x.date)}</bdi>` : ""}</span></div>
+    <button class="btn sm" data-do="mfOpen" data-path="${esc(x.path)}" data-name="${esc(x.file_name || "file")}">${t("open")}</button></div>`;
+  return `<h1>${t("my_files")}</h1><p class="hint">${t("mf_intro")}</p>
+    <div class="panel"><form id="mff" class="row"><label>${t("search")}<input id="mff_q" value="${esc(f.q || "")}"></label>${field("mff_k", "mf_kind", "", [["", t("all")], ...kinds.map(k => [k, t("mf_" + k)])])}<button class="btn">${t("search")}</button></form></div>
+    <div class="panel"><p class="hint">${t("mf_count").replace("{n}", list.length)}</p>${list.map(row).join("") || `<p>${t("empty")}</p>`}</div>`;
+};
+
+// ---------- v0.8.38: one Excel/CSV import box, used on Courses, Batches, Finance and the grades of an assignment ----------
+// Download the template, fill it in Excel, Check file (nothing is saved), then Import. Every row goes through the same checks as the screen.
+const IMPS = {};   // kind -> {query}: set when the box is drawn
+const XL_ACCEPT = ".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv";
+function impBox(kind, title, opts = {}) {
+  IMPS[kind] = {query: opts.query || ""};
+  const r = (S.imps || {})[kind], q = IMPS[kind].query;
+  const st = {would_create: t("xl_would_save"), created: t("xl_saved"), rejected: t("rejected"), skipped: t("xl_skipped"), unchanged: t("xl_unchanged")};
+  const res = r ? `<p role="status"><b>${r.dry_run ? t("Check result: nothing was saved") : t("Imported")}</b> · ${r.ok} ${r.dry_run ? t("would be created") : t("created")} · ${r.rejected} ${t("rejected")} / ${r.total}</p>`
+    + r.rows.filter(x => x.status === "rejected").map(x => `<div class="msg err">${t("Row")} ${x.row}${x.name ? " · " + esc(x.name) : ""}: ${esc(x.message)}</div>`).join("")
+    + (r.rows.some(x => ["skipped", "unchanged"].includes(x.status)) ? `<p class="hint">${r.rows.filter(x => ["skipped", "unchanged"].includes(x.status)).map(x => `${t("Row")} ${x.row}: ${esc(st[x.status])}`).join(" · ")}</p>` : "")
+    + (r.dry_run && r.ok && !r.rejected ? `<p class="hint">${t("xl_all_good")}</p>` : "") : "";
+  return `<details class="panel addp" data-imp="${kind}"${r || opts.open ? " open" : ""}><summary>${esc(title)}</summary>
+    <p class="hint">${t("xl_import_hint")}</p>
+    <div class="rowflex row"><button type="button" class="btn sm alt" data-do="impTpl" data-k="${kind}">${t("xl_template")}</button>
+    <label>${t("xl_file")}<input id="impf_${kind}" type="file" accept="${XL_ACCEPT}">${(S.impFiles || {})[kind] ? `<span class="hint">${t("xl_chosen")}: <bdi>${esc(S.impFiles[kind].name)}</bdi></span>` : ""}</label>
+    <button type="button" class="btn alt" data-do="impChk" data-k="${kind}">${t("Check file")}</button><button type="button" class="btn" data-do="impRun" data-k="${kind}">${t("Import")}</button></div>${res}</details>`;
+}
+const impSend = async (k, dry) => {
+  // the page is redrawn after a check, which empties the file field: the chosen file is kept so Import does not ask for it again
+  const f = $("#impf_" + k).files[0] || (S.impFiles || {})[k]; if (!f) throw new Error(t("xl_choose_file"));
+  S.impFiles = {...(S.impFiles || {}), [k]: f};
+  const fd = new FormData(); fd.append("file", f);
+  const q = IMPS[k].query;
+  S.imps = {...(S.imps || {}), [k]: await apiForm(`/import/${k}?${q ? q + "&" : ""}dry_run=${dry ? 1 : 0}`, fd)};
+};
+DO.impTpl = async d => { const q = IMPS[d.k].query; await fetchFile(`/import/${d.k}/template.xlsx${q ? "?" + q : ""}`, {name: `import-${d.k}-template.xlsx`}); return false; };
+DO.impChk = async d => { await impSend(d.k, true); };
+DO.impRun = async d => {
+  const r = (S.imps || {})[d.k];
+  if (!await ui.confirm(t("xl_import_q"), {okText: t("Import"), details: r && r.dry_run ? [`${r.ok} ${t("would be created")} · ${r.rejected} ${t("rejected")}`] : [t("xl_not_checked")]})) return false;
+  await impSend(d.k, false); flash(t("saved"), true);
+};
+// Excel / CSV download buttons: xlBtns("path-without-extension", "query", "file-name")
+const xlBtns = (path, query, name, csv = true) => `<span class="seg xl"><button type="button" class="btn sm alt" data-do="xlGet" data-p="${esc(path)}" data-q="${esc(query || "")}" data-n="${esc(name)}" data-x="xlsx">${t("Download Excel")}</button>${csv ? `<button type="button" class="btn sm alt" data-do="xlGet" data-p="${esc(path)}" data-q="${esc(query || "")}" data-n="${esc(name)}" data-x="csv">${t("Download CSV")}</button>` : ""}</span>`;
+DO.xlGet = async d => { await fetchFile(`${d.p}.${d.x}${d.q ? "?" + d.q : ""}`, {name: `${d.n}.${d.x}`}); return false; };

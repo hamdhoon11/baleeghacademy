@@ -28,7 +28,7 @@ try:
             return pg
         def login(pg, e, w): e2e_shim.login(pg, BASE, e, w, db=env["DATABASE_PATH"])   # Session 22: forced change, course chooser, waits for the app
         s = page_for(); login(s, "student@baleegh.test", "ChangeMe-Stud1")
-        s.click("nav [data-v=assignments]"); s.wait_for_selector("[data-do=goA]")
+        s.click("nav [data-v=assignments]"); s.wait_for_selector("main h1:has-text('Assignments')"); s.wait_for_selector("[data-do=goA]")   # Home also has goA buttons (v0.8.35), so wait for the Assignments page itself
         check(s.locator("[data-do=goA]", has_text="Submit work").count() == 2, "both the assignment and the test show a Submit work button")
         s.locator("[data-do=goA]").first.click(); s.wait_for_selector("#atext")
         check(s.locator("#afile").count() == 1, "student sees the answer box and the file attachment")

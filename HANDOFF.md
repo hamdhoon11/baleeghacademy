@@ -533,3 +533,47 @@
 - Names later sessions must keep: `go`, `navBack`, `closeDetail`, `mount`, `showErr`, `busy`, `tabs`, `crumb`/`crumbFor`, `addPanel`, `pickField`, `checkFile`, `fmtTime`/`fmtDate`/`fmtNum`, `setLang`, `ui.*`, `NAV_KEYS`/`DETAIL_KEY`/`TAB_RESET`/`BAR_PREFS`, storage keys `tok sb flt` (session) and `lastTab:<id> navClosed:<id>` (local).
 - Decisions still open: fonts (self-host or keep Google Fonts) and login token storage (Session 20d, left unchanged); a language setting for `setLang` (none exists yet).
 - Not verified: real PostgreSQL, iOS Safari (needs 15.4+ for `<dialog>`), a screen reader pass, Dhivehi RTL with real text.
+
+## Done: v0.8.34: download problems ("The file could not be found" after uploading)
+- Cause 1 (the message you saw): on Vercel without S3_BUCKET, uploads went to Vercel's temporary /tmp disk, which is per instance and wiped. New `DbStorage` in storage.py keeps files in the database table `stored_files` (BYTEA on PostgreSQL); chosen automatically on Vercel when no bucket is set; `FILE_STORAGE=db|s3|local` forces it. File and record are saved by the same commit.
+- Cause 2: names in Arabic/Dhivehi went raw into Content-Disposition (Latin-1 only), crashing real servers. `common.file_headers` now sends an ASCII fallback plus `filename*=UTF-8''...`; `common.shown_name` keeps vowel marks.
+- Front end: `fetchFile` no longer opens a blank tab first; PDFs/images open in `ui.viewer` (inline PDF only where the browser can show it; Android gets Download); file name read from `filename*`.
+- New `filecheck.py`: GET /api/admin/storage, GET /api/admin/storage/missing (Settings area). Settings shows "Files and storage"; Dashboard shows a red banner when files would be lost.
+- CSV exports (activity log, payment report, fee report, transfers) start with a BOM so Excel shows Arabic/Dhivehi. Removed the leftover static/i18n/dv.json (Phase 3 decision). migrate_to_hosted.py now also copies expense receipts.
+- Files lost before this version cannot be recovered: re-upload them (the missing-files list says which).
+- Tests: tests/test_session34.py (11), e2e_ui.py (+7 checks: viewer, Arabic download, Android, storage panel).
+- Not done: PDF receipts and invoices print Arabic or Dhivehi names as "????" (receipts.latin() replaces them; the built-in PDF fonts have no such letters). A fix needs a bundled Arabic/Thaana font and right-to-left shaping.
+
+## Done: v0.8.35: Round 1 (see CHANGES-v0.8.35.md)
+- Decisions: voided invoices are not revenue (finance.paid_where, fees.dashboard_extra) and are left out of GET /api/invoices unless status=void|all or the exact number is searched. Teacher pay = 50% of monthly fees collected, registration and voided excluded (earnings.py, unchanged; tested in test_session35).
+- New modules: passhelp.py (forgot password; table password_help; audit actions forgot_request/forgot_dismiss, never "password" in the action name: test_session32 checks it), todo.py (GET /api/admin/todo), rtltext.py + fonts/ (PDF Arabic/Thaana).
+- learning.py: attendance_taken(), classes_without_attendance() (app.extensions), /my/home gives todo_count, todo[].overdue, new_grades, new_materials (students) and today[].attendance_taken/started (teachers).
+- Front end: forgotScreen() in index.html; nextSteps()/teacherToday() and DO.goTab/takeAtt/goGrade in learning.js; helpPanel()/todoPanel() and DO.phReset/phDismiss/todoGo in admin.js.
+- Security map (tests/test_session32.py): /api/auth/forgot is public by decision; /api/password-help is People; /api/admin/todo has no single area (it filters by area itself).
+- Next: Round 2 (Fees and Admissions).
+
+## Done: v0.8.36: Round 2 (see CHANGES-v0.8.36.md)
+- receipts.build_statement(); fees.py statement(sid) with GET /api/my/fees/statement.pdf (student, fees) and GET /api/students/<id>/statement.pdf (admin, Fees area); audit action view_statement.
+- app.py same_person(a): earlier applications / accounts by phone digits, email, name + date of birth (max 20), returned as `duplicates` by GET /api/applications/<id>; approval message ends with "Sign in at <host>".
+- Front end: ui.viewer accepts extra/okText/collect/init (check dialog) and fetchFile(path, {dialog}) returns its value; fees.js DO.fxCheck, fxDoVerify, DO.fxNext (Remind next), DO.fxMyStmt, DO.fxStmt; admin.js statement button in Student information and the duplicate warning in Admissions review.
+- Security map: /api/students is the Fees area; PARAM "students"; test_phase4 STUDENT_OK adds my_statement.
+- Next: Round 3.
+
+## Done: v0.8.37: Round 3 (see CHANGES-v0.8.37.md)
+- Schema (additive): dbx.V0837_COLUMNS (tutorials.max_points DEFAULT 100; tutorial_submissions.grade/feedback/graded_by/graded_at; expenses.recurring_id/recurring_month); tables recurring_expenses, recurring_done. migrate_v0837.py: dry run by default, SQLite backup copy on --apply, --i-have-a-backup for PostgreSQL, fingerprint check.
+- learning.py: POST /api/tutorial-submissions/<id>/grade (staff_of + edit_grades rule, notify, audit tutorial_grade / tutorial_grade_change); tutorial list gives max_points, my_submission.grade/graded, ungraded_count; answers list sorted ungraded first with changed_after_grading and can_edit_grades; /my/home teacher tut_to_grade; GET /api/my/files (student/teacher; paths are existing file routes).
+- recurring.py: rules, catch_up() in app.extensions["recurring"], called by GET /api/expenses, /api/finance/dashboard, /api/recurring-expenses and the cron route. Day 1-28; catch-up at most 12 months; recurring_done stops a deleted month from coming back.
+- Tabs: settings_schema ROLE_TABS adds timetable (all roles) and my_files (student, teacher); TAB_ANY shows them only with a useful area (admin timetable: batches or classroom; my_files: any file area).
+- Front end: learning.js bulkSel/bulkBox/bulkAll/bulkBar(g, actions, ids)/bulkRun; views.timetable (GET /timetable?batch_id=0 = all of the person's batches), views.my_files; tutorial grade UI (ansGrade, DO.tGrade); fees.js DO.fxBulkWaive/fxBulkVoid; admin.js DO.peBulkOn/peBulkOff, DO.apBulkWait/apBulkReject, monthly expenses panel (DO.recEdit/recToggle/recDel).
+- Tests: test_session37.py, e2e_round3.py; test_permissions/e2e_permissions tab lists, test_session32 map (my/files, recurring-expenses).
+- Next: Excel (v0.8.38).
+
+## Done: v0.8.38: Excel imports and exports (see CHANGES-v0.8.38.md)
+- excelio.py: read_table (xlsx "Data" sheet or csv; Excel dates/times/numbers to text), template() (Data/Instructions/Lists, drop-downs, text columns), xlsx_bytes/send_table/send_xlsx, call() (runs an API route inside the request as the same user), dry_run_scope() + row_savepoint() (check = commits held, one savepoint per row, everything undone at the end; SQLite gets an explicit BEGIN so releasing a savepoint never commits).
+- portio.py: read_file uses excelio.read_table; GET /api/import/{students,teachers,enrolments}/template.xlsx.
+- sheets.py: exports invoices/expenses/applications/courses/batches (.xlsx|.csv), batches/<id>/gradebook.xlsx and attendance.xlsx?month=; imports courses/batches/expenses (admin areas courses/batches/finance) and grades?assignment_id= (admin/teacher, classroom), each row through the screen's route via excelio.call; templates for each (grades template = class list from /assignments/<id>/submissions).
+- .xlsx added to audit, fees/report, enrollment-events. fees inv_list accepts ?limit= (max 5000) for the export.
+- Front end: learning.js impBox(kind, title, {query}) + DO.impTpl/impChk/impRun, xlBtns(path, query, name) + DO.xlGet, DO.xlAtt; chosen file kept in S.impFiles / S.impPFile across the redraw.
+- Tests: test_session38.py, e2e_excel.py; test_session32 map updated.
+- Next: nothing agreed yet; ask the owner.
+

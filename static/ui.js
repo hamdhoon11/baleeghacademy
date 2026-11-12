@@ -32,10 +32,10 @@ const ui = (() => {
 
   // Base: builds the dialog, waits for OK or Cancel, cleans up and returns focus to the opener.
   // collect(form) returns the value for OK, or throws an Error whose message is shown inside the dialog.
-  function open({title, body, okText, cancelText, danger, collect, init, focusCancel, noCancel, wide}) {
+  function open({title, body, okText, cancelText, danger, collect, init, focusCancel, noCancel, wide, view}) {
     const opener = document.activeElement, id = "dlg" + (++seq);
     const d = document.createElement("dialog");
-    d.className = "dlg" + (danger ? " danger" : "") + (wide ? " wide" : "");
+    d.className = "dlg" + (danger ? " danger" : "") + (wide ? " wide" : "") + (view ? " view" : "");
     d.setAttribute("aria-labelledby", id + "_t");
     d.innerHTML = `<form class="dlg-f" method="dialog" novalidate><h2 id="${id}_t">${esc(title)}</h2><div class="dlg-b">${body || ""}</div>`
       + `<p class="msg err" role="alert" hidden></p><div class="dlg-a">`
@@ -138,5 +138,22 @@ const ui = (() => {
       }}).then(v => (chosen = v || null));
   }
 
-  return {confirm, ask, form, pick, show, trap};
+  // v0.8.34: a file viewer inside the page. Images always show; PDFs show where the browser can display them (navigator.pdfViewerEnabled);
+  // otherwise (most Android phones) the dialog says so and offers Download. Download and Open in a new tab are always there.
+  // v0.8.36: extra (HTML under the file), okText/cancelText, collect and init turn it into a check dialog (the slip check); its value is returned
+  function viewer({name, url, type, size, title, extra, okText, cancelText, collect, init}) {
+    const isImg = /^image\//.test(type), isPdf = type === "application/pdf";
+    const canPdf = isPdf && navigator.pdfViewerEnabled !== false && !/Android/i.test(navigator.userAgent);
+    const kb = size ? (size > 1048576 ? (size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(size / 1024)) + " KB") : "";
+    const view = isImg ? `<img class="fv-img" src="${esc(url)}" alt="${esc(name)}">`
+      : canPdf ? `<iframe class="fv-pdf" src="${esc(url)}" title="${esc(name)}"></iframe>`
+      : `<p class="hint">${esc(t("viewer_no_pdf"))}</p>`;
+    const body = `<div class="fv">${view}</div><p class="fv-meta hint"><bdi>${esc(name)}</bdi>${kb ? " · " + esc(kb) : ""}</p>`
+      + `<div class="fv-act"><a class="btn" href="${esc(url)}" download="${esc(name)}">${esc(t("download"))}</a>`
+      + `<a class="btn alt" href="${esc(url)}" target="_blank" rel="noopener">${esc(t("open_new_tab"))}</a></div>`;
+    if (extra != null) return open({title: title || name, body: body + extra, okText, cancelText: cancelText || t("Close"), collect, init, wide: true, view: true});
+    return open({title: name, body, okText: t("Close"), noCancel: true, wide: true, view: true}).then(() => undefined);
+  }
+
+  return {confirm, ask, form, pick, show, trap, viewer};
 })();

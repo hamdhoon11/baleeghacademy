@@ -87,7 +87,7 @@ def register(app, c, today):
         return jsonify(ok=True)
 
     # ---------- expenses ----------
-    BASE = ("SELECT e.id,e.expense_date,e.amount_mvr,e.category_id,k.name AS category,e.description,e.receipt_name,(e.receipt_file IS NOT NULL) AS has_receipt,"
+    BASE = ("SELECT e.id,e.expense_date,e.amount_mvr,e.category_id,k.name AS category,e.description,e.receipt_name,(e.receipt_file IS NOT NULL) AS has_receipt,e.recurring_id,"
             "e.entered_by,u.full_name AS entered_by_name,e.created_at,e.updated_at FROM expenses e JOIN expense_categories k ON k.id=e.category_id LEFT JOIN users u ON u.id=e.entered_by")
 
     def shape(r):
@@ -119,6 +119,7 @@ def register(app, c, today):
     @app.get("/api/expenses")
     @auth("admin", perm=AREA)
     def exp_list():
+        if "recurring" in app.extensions: app.extensions["recurring"]()   # v0.8.37: write monthly expenses that are due
         a = request.args
         where, args = [], []
         if a.get("category_id"):
@@ -216,6 +217,7 @@ def register(app, c, today):
 
     # ---------- Session 24: revenue and the financial dashboard ----------
     # Revenue is ONLY money that really came in: rows of `payments` that are not reversed, counted on the day paid (paid_on).
+    # v0.8.35 (decision): payments on a voided invoice are not revenue either (voiding already requires reversing payments first).
     # Invoices are never revenue; they only feed "outstanding". Course, batch and tuition class come from the payment's invoice.
     PAID_FROM = "FROM payments p JOIN invoices i ON i.id=p.invoice_id JOIN courses c ON c.id=i.course_id JOIN batches b ON b.id=i.batch_id"
     OWED = "CASE WHEN i.amount_due_mvr-i.waived_mvr-i.paid_mvr>0 THEN i.amount_due_mvr-i.waived_mvr-i.paid_mvr ELSE 0 END"   # same rule as payments.balance()
@@ -243,7 +245,7 @@ def register(app, c, today):
 
     def paid_where(a, reversed_=False):
         d1, d2 = span(a); w, args = scope(a)
-        w.append("p.reversed_at IS NOT NULL" if reversed_ else "p.reversed_at IS NULL")
+        w.append("p.reversed_at IS NOT NULL" if reversed_ else "p.reversed_at IS NULL AND i.status<>'void'")   # v0.8.35: a voided invoice is never revenue
         if d1: w.append("p.paid_on>=?"); args.append(d1)
         if d2: w.append("p.paid_on<=?"); args.append(d2)
         return " WHERE " + " AND ".join(w), tuple(args)
@@ -279,11 +281,12 @@ def register(app, c, today):
         for r in by_course: kinds[r["kind"]] += int(r["collected"])
         rev = int(one("SELECT COALESCE(SUM(p.amount_mvr),0) s " + PAID_FROM + wr, ar)["s"])
         return jsonify(total_collected=total, payment_count=n, outstanding=out, reversed_not_counted=rev, by_kind=kinds, by_course=by_course, by_batch=by_batch, by_month=by_month,
-                       note="Revenue = payments received (reversed payments excluded), by the day paid. Outstanding = unpaid balance of all non-void invoices in the same course/batch/kind filter, whatever the dates.")
+                       note="Revenue = payments received (reversed payments and payments on voided invoices excluded), by the day paid. Outstanding = unpaid balance of all non-void invoices in the same course/batch/kind filter, whatever the dates.")
 
     @app.get("/api/finance/dashboard")
     @auth("admin", perm=AREA)
     def fin_dashboard():
+        if "recurring" in app.extensions: app.extensions["recurring"]()   # v0.8.37
         a = request.args.to_dict()
         t = today()
         if not a.get("date_from") and not a.get("date_to"): a["date_from"], a["date_to"] = t.replace(day=1).isoformat(), t.isoformat()   # default: this month so far

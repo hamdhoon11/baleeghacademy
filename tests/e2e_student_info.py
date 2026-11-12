@@ -26,7 +26,7 @@ try:
     with sync_playwright() as p:
         br = p.chromium.launch()
         def page_for():
-            pg = br.new_context(viewport={"width": 390, "height": 800}).new_page()
+            pg = br.new_context(viewport={"width": 390, "height": 800}, accept_downloads=True).new_page()
             pg.on("pageerror", lambda e: errors.append(str(e)))
             return pg
         def login(pg, e, w): e2e_shim.login(pg, BASE, e, w, db=env["DATABASE_PATH"])   # Session 22: forced change, course chooser, waits for the app
@@ -41,10 +41,12 @@ try:
         check(a.locator("text=Attendance and grades").count() == 1, "attendance and grades section is shown")
         check(a.locator("text=MVR 400").count() >= 1, "fees show the invoice amount")
         check(a.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "no sideways scroll on the phone")
+        with a.expect_download() as sd: a.click("[data-do=fxStmt]")   # v0.8.36
+        check(open(sd.value.path(), "rb").read().startswith(b"%PDF"), "admin downloads the student's fee statement")
         a.click("[data-do=siBack]"); a.wait_for_selector("#sif"); check(True, "Back returns to the search")
 
         l = page_for(); login(l, "a2@s.test", "Password123"); opened(l)
-        check(l.locator("text=does not have the Fees permission").count() == 1 and l.locator("text=MVR 400").count() == 0, "limited admin sees no fee details")
+        check(l.locator("text=does not have the Fees permission").count() == 1 and l.locator("text=MVR 400").count() == 0 and l.locator("[data-do=fxStmt]").count() == 0, "limited admin sees no fee details and no statement button")
         t = page_for(); login(t, "teacher@baleegh.test", "ChangeMe-Teach1")
         check(t.locator("nav [data-v=student_information]").count() == 0, "a teacher has no Student information tab")
         br.close()

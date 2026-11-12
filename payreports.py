@@ -133,7 +133,7 @@ def register(app, c, today):
         if ext == "csv":
             buf = io.StringIO(); w = csv.writer(buf); w.writerow(HEADERS)
             for r in sheet(out): w.writerow([csv_safe(v) for v in r])
-            body, mime = buf.getvalue(), "text/csv"
+            body, mime = "\ufeff" + buf.getvalue(), "text/csv; charset=utf-8"   # v0.8.34: BOM for Excel
         else:
             body, mime = to_xlsx(sheet(out), HEADERS, "Payments " + month), XLSX_MIME
         audit("export_payment_report", "report", None, f"{ext} {month} {len(out)} rows"); db().commit()

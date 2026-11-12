@@ -41,14 +41,17 @@ views.courses = async () => {
   });
   const editor = e ? `<div class="panel" data-detail><h2>${esc(t("edit"))}: ${esc(e.name)}</h2><form class="row" id="fce">${iv("ce_n", "name", e.name)}${iv("ce_l", "level", e.level)}${iv("ce_t", "textbook", e.textbook)}${iv("ce_f", "fee", e.monthly_fee_mvr, "number", moneyAttrs)}${iv("ce_g", "Registration fee (one time)", e.registration_fee_mvr || 0, "number", moneyAttrs)}${iv("ce_w", "Days per week", e.days_per_week, "number", 'min="1" max="7"')}${iv("ce_m", "Minutes per class", e.minutes_per_class, "number", 'min="1"')}${sel("ce_s", "status", statuses, e.status)}${sel("ce_k", "Type", kinds, e.kind)}${iv("ce_c", "Code", e.code)}<label class="inl"><input type="checkbox" id="ce_a" ${e.is_active ? "checked" : ""}> ${esc(t("Active (offered for new enrolments and invoices)"))}</label><label class="full">${esc(t("Description"))}<textarea id="ce_d" rows="3">${esc(e.description || "")}</textarea></label>${bar(`<button class="btn alt">${t("save")}</button>`, `<button type="button" class="btn" data-do="ecClose">${t("cancel")}</button>`, `<button type="button" class="btn danger" data-do="ecDel" data-id="${e.id}">${t("delete")}</button>`)}</form><p class="hint">${esc(t("Courses that already have batches cannot be deleted. Set the status to closed instead; the old records stay safe."))}</p></div>` : "";
   const add = addPanel("course", "Add course", form("fc", field("cn", "name") + field("cl", "level") + field("ck", "Type", "", kinds) + field("cc", "Code (optional, made from the name)") + iv("cf", "fee", "", "number", moneyAttrs) + iv("cg", "Registration fee (one time)", "", "number", moneyAttrs) + field("ct", "textbook") + field("cs", "status", "", statuses)));
-  return `${e ? crumbFor(e.name, {ec: null}) : ""}<h1>${t("courses")}</h1>${editor}${add}<div class="panel">${c.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("Type")}</th><th>${t("Code")}</th><th>${t("level")}</th><th>${t("fee")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>${c.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.kind === "tuition" ? t("Tuition class") : t("Course"))}</td><td>${esc(x.code || "")}</td><td>${esc(x.level || "")}</td><td>${esc(x.monthly_fee_mvr)}</td><td>${esc(t(x.status))} ${x.is_active ? "" : tag(t("Inactive"), "warn")}</td><td><button class="btn sm" data-do="ecEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("")}</tbody></table>` : `<p>${t("empty")}</p>`}</div>`;
+  return `${e ? crumbFor(e.name, {ec: null}) : ""}<h1>${t("courses")}</h1>${editor}${add}<div class="panel"><p>${xlBtns("/courses/export", "", "courses")}</p>${c.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("Type")}</th><th>${t("Code")}</th><th>${t("level")}</th><th>${t("fee")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>${c.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.kind === "tuition" ? t("Tuition class") : t("Course"))}</td><td>${esc(x.code || "")}</td><td>${esc(x.level || "")}</td><td>${esc(x.monthly_fee_mvr)}</td><td>${esc(t(x.status))} ${x.is_active ? "" : tag(t("Inactive"), "warn")}</td><td><button class="btn sm" data-do="ecEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("")}</tbody></table>` : `<p>${t("empty")}</p>`}</div>` + impBox("courses", t("xl_imp_courses"));
 };
 // Session 9: a fee of 0 means students in the course get no invoices; say so while the admin types
 function fcWarn(id) {
   const el = $("#" + id); if (!el || el.dataset.warn) return; el.dataset.warn = "1";
   const w = document.createElement("div"); w.className = "msg err"; w.style.flex = "1 1 100%"; w.textContent = t("fee_zero_warn");
   el.closest("label").after(w);
-  const upd = () => { w.hidden = !(el.value === "" || +el.value <= 0); }; el.addEventListener("input", upd); upd();
+  // v0.8.35: an empty new form does not warn yet; it warns once the fee was touched, or when a saved course really has 0
+  let touched = el.value !== "";
+  const upd = () => { w.hidden = !(touched && (el.value === "" || +el.value <= 0)); };
+  el.addEventListener("input", () => { touched = true; upd(); }); el.addEventListener("blur", () => { touched = true; upd(); }); upd();
 }
 DO.ecEdit = d => { go({ec: +d.id}); return false; };
 DO.ecClose = () => { closeDetail({ec: null}); };
@@ -85,7 +88,7 @@ views.batches = async () => {
   });
   const teachers = [["", "-"], ...tc.map(x => [x.id, x.full_name])];
   const detail = e ? batchEditor(e, c, teachers) + batchStudents(e, studs, allSt) + batchSubs(subs, tc) : "";
-  return `${e ? crumbFor(`${e.course_name} · ${e.code}`, {eb: null}) : ""}<h1>${t("batches")}</h1>${detail}<div class="panel">${form("fb", field("bc", "course", "", c.filter(x => x.is_active).map(x => [x.id, x.name + " " + (x.level || "")])) + field("bn", "code") + field("bt", "time", "time") + field("bsd", "start_date", "date") + field("bp", "capacity", "number") + field("bh", "teacher", "", teachers) + DAYS_IN("", "bd"))}</div><div class="panel"><table><thead><tr><th>${t("course")}</th><th>${t("code")}</th><th>${t("days")}</th><th>${t("time")}</th><th>${t("seats")}</th><th>${t("teacher")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>${b.map(x => `<tr><td>${esc(x.course_name)}</td><td>${esc(x.code)}</td><td>${x.days ? esc(x.days.split(",").map(dayName).join(", ")) : tag("–", "warn")}</td><td>${esc(x.start_time || "–")}</td><td>${x.enrolled}/${x.capacity}</td><td>${esc(x.teacher_name || "–")}</td><td>${esc(t(x.status))}</td><td><button class="btn sm" data-do="editB" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("")}</tbody></table></div>`;
+  return `${e ? crumbFor(`${e.course_name} · ${e.code}`, {eb: null}) : ""}<h1>${t("batches")}</h1>${detail}<div class="panel"><p>${xlBtns("/batches/export", "", "batches")}</p>${form("fb", field("bc", "course", "", c.filter(x => x.is_active).map(x => [x.id, x.name + " " + (x.level || "")])) + field("bn", "code") + field("bt", "time", "time") + field("bsd", "start_date", "date") + field("bp", "capacity", "number") + field("bh", "teacher", "", teachers) + DAYS_IN("", "bd"))}</div><div class="panel"><table><thead><tr><th>${t("course")}</th><th>${t("code")}</th><th>${t("days")}</th><th>${t("time")}</th><th>${t("seats")}</th><th>${t("teacher")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>${b.map(x => `<tr><td>${esc(x.course_name)}</td><td>${esc(x.code)}</td><td>${x.days ? esc(x.days.split(",").map(dayName).join(", ")) : tag("–", "warn")}</td><td>${esc(x.start_time || "–")}</td><td>${x.enrolled}/${x.capacity}</td><td>${esc(x.teacher_name || "–")}</td><td>${esc(t(x.status))}</td><td><button class="btn sm" data-do="editB" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("")}</tbody></table></div>` + impBox("batches", t("xl_imp_batches"));
 };
 DO.editB = d => { go({eb: +d.id}); return false; };
 DO.closeB = () => { closeDetail({eb: null}); };
@@ -111,10 +114,12 @@ DO.bUnenrol = async d => {
 DO.subRemove = async d => { if (!await ui.confirm(t("End this substitution now? The teacher loses access at once."), {danger: true, okText: t("Remove"), details: [d.name || ""]})) return false; await api("/substitutions/" + d.id, "DELETE"); };
 
 // ---------- people: edit anything, permissions for admins, delete mistakes. Session 11: search and paging; the create form is a collapsed panel ----------
+DO.peBulkOff = async () => { if (!await ui.confirm(t("bulk_deactivate_q").replace("{n}", bulkSel("ppl").length), {danger: true, okText: t("bulk_deactivate")})) return false; await bulkRun("ppl", id => api("/users/" + id, "PATCH", {is_active: false})); };
+DO.peBulkOn = async () => { await bulkRun("ppl", id => api("/users/" + id, "PATCH", {is_active: true})); };
 views.people = async () => {
   const roleF = S.pf || "";
   const u = await api("/users" + (roleF ? "?role=" + roleF : ""));
-  const e = S.eu ? await api("/users/" + S.eu).catch(() => null) : null;
+  const [e, help] = await Promise.all([S.eu ? api("/users/" + S.eu).catch(() => null) : null, api("/password-help").catch(() => [])]);
   const self = S.user.id, full = !S.user.permissions;
   mount(() => {
     onSubmit("fu", async () => {   // no password typed = the server makes a random one; it is shown once below
@@ -150,10 +155,11 @@ views.people = async () => {
   // search (name, login ID, email) and paging on the client: GET /api/users has no search parameter
   const q = (S.pq || "").toLowerCase(), lim = S.plim || 30;
   const found = q ? u.filter(x => [x.full_name, x.login_id, x.email].some(v => String(v || "").toLowerCase().includes(q))) : u;
-  const rows = found.slice(0, lim).map(x => `<tr><td>${esc(x.full_name)}</td><td>${esc(x.login_id || "")}</td><td>${esc(x.email)}</td><td>${esc(t(x.role))}${x.permissions !== null ? " " + tag(t("Limited"), "warn") : x.role === "admin" ? " " + tag(t("Full"), "ok") : ""}</td><td>${x.is_active ? "✓" : "✗"}<span class="sr-only">${esc(t(x.is_active ? "active" : "inactive"))}</span></td><td><button class="btn sm" data-do="euEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("");
+  const canBulk = x => x.id !== self;
+  const rows = found.slice(0, lim).map(x => `<tr><td>${canBulk(x) ? bulkBox("ppl", x.id, x.full_name) + " " : ""}${esc(x.full_name)}</td><td>${esc(x.login_id || "")}</td><td>${esc(x.email)}</td><td>${esc(t(x.role))}${x.permissions !== null ? " " + tag(t("Limited"), "warn") : x.role === "admin" ? " " + tag(t("Full"), "ok") : ""}</td><td>${x.is_active ? "✓" : "✗"}<span class="sr-only">${esc(t(x.is_active ? "active" : "inactive"))}</span></td><td><button class="btn sm" data-do="euEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("");
   const listbar = `<form id="pqf" class="listbar" role="search"><label>${esc(t("role"))}<select id="pf"><option value="">${esc(t("all"))}</option>${roles.map(r => `<option value="${r[0]}" ${r[0] === roleF ? "selected" : ""}>${esc(r[1])}</option>`).join("")}</select></label><label>${esc(t("search"))}<input id="pq" type="search" value="${esc(S.pq || "")}" placeholder="${esc(t("people_search_hint"))}"></label><button class="btn">${t("search")}</button></form>`;
   const add = addPanel("person", "Add person", form("fu", field("un", "name") + field("ue", "email", "email") + field("up", "password", "password") + field("ur", "role", "", roles)));
-  return `${e ? crumbFor(e.full_name, {eu: null}) : ""}<h1>${t("people")}</h1>${tmpPanel()}${editor}${add}<div class="panel">${listbar}${found.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("Login ID")}</th><th>${t("email")}</th><th>${t("role")}</th><th>${t("is_active")}</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "peMore")}</div>${impPanel()}`;
+  return `${e ? crumbFor(e.full_name, {eu: null}) : ""}<h1>${t("people")}</h1>${tmpPanel()}${helpPanel(help)}${editor}${add}<div class="panel">${listbar}${bulkBar("ppl", [["peBulkOn", "bulk_activate"], ["peBulkOff", "bulk_deactivate", true]], found.slice(0, lim).filter(canBulk).map(x => x.id))}${bulkAll("ppl", found.slice(0, lim).filter(canBulk).map(x => x.id))}${found.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("Login ID")}</th><th>${t("email")}</th><th>${t("role")}</th><th>${t("is_active")}</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "peMore")}</div>${impPanel()}`;
 };
 DO.peMore = () => { S.plim = (S.plim || 30) + 30; };
 DO.euEdit = d => { go({eu: +d.id}); return false; };
@@ -162,12 +168,25 @@ DO.tmpClose = () => { S.tmp = null; };
 DO.euReset = async d => {
   if (!await ui.confirm(t("Make a new temporary password for this person? Their old password stops working."), {okText: t("Reset password"), details: [(S.euInfo || {}).name || ""]})) return false;
   const r = await api("/users/" + d.id + "/reset-password", "POST");
-  S.tmp = {name: "", id: r.login_id, pw: r.temporary_password}; closeDetail({eu: null}); flash(t("saved"), true);
+  S.tmp = {name: r.name || "", id: r.login_id, pw: r.temporary_password, wa: r.whatsapp_link}; closeDetail({eu: null}); flash(t("saved"), true);
 };
+// v0.8.35: "Forgot password" requests. Reset and send = new temporary password + a WhatsApp message ready to send.
+function helpPanel(list) {
+  if (!list || !list.length) return "";
+  const row = h => `<div class="cl"><div><b>${esc(h.full_name || h.login_text)}</b> ${h.user_id ? tag(t(h.role)) : tag(t("No matching account"), "warn")}<br><span class="hint">${esc(h.login_id || h.login_text)}${h.contact ? " · <bdi dir=\"ltr\">" + esc(h.contact) + "</bdi>" : ""} · <bdi dir="ltr">${esc(fmtTime(h.created_at))}</bdi></span></div>`
+    + `<div class="rowflex">${h.user_id ? `<button class="btn sm" data-do="phReset" data-id="${h.user_id}" data-name="${esc(h.full_name)}">${esc(t("Reset and send"))}</button>` : ""}<button class="btn sm alt" data-do="phDismiss" data-id="${h.id}">${esc(t("Dismiss"))}</button></div></div>`;
+  return `<div class="panel" role="region" aria-label="${esc(t("Password help"))}"><h2>${esc(t("Password help"))} (${list.length})</h2><p class="hint">${esc(t("password_help_hint"))}</p>${list.map(row).join("")}</div>`;
+}
+DO.phReset = async d => {
+  if (!await ui.confirm(t("Make a new temporary password for this person? Their old password stops working."), {okText: t("Reset and send"), details: [d.name || ""]})) return false;
+  const r = await api("/users/" + d.id + "/reset-password", "POST");
+  S.tmp = {name: r.name || d.name, id: r.login_id, pw: r.temporary_password, wa: r.whatsapp_link}; flash(t("saved"), true);
+};
+DO.phDismiss = async d => { if (!await ui.confirm(t("Dismiss this request? Nothing is changed for the person."), {okText: t("Dismiss")})) return false; await api(`/password-help/${d.id}/dismiss`, "POST"); };
 // The temporary password is shown once, only here, and only until "Done" is pressed (the server keeps just a hash and cannot show it again).
 function tmpPanel() {
   if (!S.tmp) return "";
-  return `<div class="panel" role="alert"><h2>${esc(t("Temporary password"))}${S.tmp.name ? ": " + esc(S.tmp.name) : ""}</h2><p>${esc(t("Login ID"))}: <b>${esc(S.tmp.id || "")}</b><br>${esc(t("password"))}: <b>${esc(S.tmp.pw)}</b></p><p class="hint">${esc(t("Copy this now and give it to the person. It will not be shown again. They must choose their own password at first sign-in."))}</p><button type="button" class="btn alt" data-do="tmpClose">${esc(t("Done"))}</button></div>`;
+  return `<div class="panel" role="alert"><h2>${esc(t("Temporary password"))}${S.tmp.name ? ": " + esc(S.tmp.name) : ""}</h2><p>${esc(t("Login ID"))}: <b>${esc(S.tmp.id || "")}</b><br>${esc(t("password"))}: <b>${esc(S.tmp.pw)}</b></p><p class="hint">${esc(t("Copy this now and give it to the person. It will not be shown again. They must choose their own password at first sign-in."))}</p><p class="rowflex">${S.tmp.wa ? `<a class="btn" href="${esc(S.tmp.wa)}" target="_blank" rel="noopener">${esc(t("send_whatsapp"))}</a>` : `<span class="hint">${esc(t("No phone number saved for this person: give the password another way."))}</span>`}<button type="button" class="btn alt" data-do="tmpClose">${esc(t("Done"))}</button></p></div>`;
 }
 DO.euDel = async d => {
   const i = S.euInfo || {};
@@ -179,7 +198,7 @@ DO.euDel = async d => {
 views.enrollments = async () => {
   const [e, st, b, ev] = await Promise.all([api("/enrollments"), api("/users?role=student"), api("/batches"), api("/enrollment-events")]);
   const m = e.find(x => x.id === S.em);
-  const hist = `<div class="panel"><h2>${t("Transfers and withdrawals")}</h2><p><button class="btn sm alt" data-do="evCsv">${t("Download CSV")}</button></p>${ev.length ? `<table><thead><tr><th>${t("date")}</th><th>${t("kind")}</th><th>${t("student_name")}</th><th>${t("Previous batch")}</th><th>${t("New batch")}</th><th>${t("Reason")}</th></tr></thead><tbody>${ev.map(x => `<tr><td>${esc(x.effective_date || "?")}</td><td>${esc(t(x.kind === "transfer" ? "Transfer" : "Withdrawal"))}</td><td>${esc(x.student_name)} <span class="hint">${esc(x.student_code || "")}</span></td><td>${esc((x.from_course || "") + " " + (x.from_batch_code || ""))}</td><td>${esc((x.to_course || "") + " " + (x.to_batch_code || ""))}</td><td>${esc(x.reason || "")}</td></tr>`).join("")}</tbody></table>` : `<p class="hint">${t("empty")}</p>`}</div>`;
+  const hist = `<div class="panel"><h2>${t("Transfers and withdrawals")}</h2><p><button class="btn sm alt" data-do="evCsv">${t("Download CSV")}</button> <button class="btn sm alt" data-do="evXlsx">${t("Download Excel")}</button></p>${ev.length ? `<table><thead><tr><th>${t("date")}</th><th>${t("kind")}</th><th>${t("student_name")}</th><th>${t("Previous batch")}</th><th>${t("New batch")}</th><th>${t("Reason")}</th></tr></thead><tbody>${ev.map(x => `<tr><td>${esc(x.effective_date || "?")}</td><td>${esc(t(x.kind === "transfer" ? "Transfer" : "Withdrawal"))}</td><td>${esc(x.student_name)} <span class="hint">${esc(x.student_code || "")}</span></td><td>${esc((x.from_course || "") + " " + (x.from_batch_code || ""))}</td><td>${esc((x.to_course || "") + " " + (x.to_batch_code || ""))}</td><td>${esc(x.reason || "")}</td></tr>`).join("")}</tbody></table>` : `<p class="hint">${t("empty")}</p>`}</div>`;
   const bo = b.filter(x => x.course_active).map(x => [x.id, x.course_name + " " + x.code]);   // inactive courses are not offered for new enrolments
   mount(() => {
     onSubmit("fe", () => { if (!val("es")) throw new Error(t("Choose a student")); if (!val("eb")) throw new Error(t("Choose a batch")); return api("/enrollments", "POST", {student_id: val("es"), batch_id: val("eb")}); });
@@ -209,6 +228,7 @@ DO.emMove = async d => {
   await api("/enrollments/" + d.id, "PATCH", {transfer_to_batch_id: val("em_b"), reason}); closeDetail({em: null}); flash(t("saved"), true);
 };
 DO.evCsv = () => fetchFile("/enrollment-events.csv", {name: "transfers-withdrawals.csv"});
+DO.evXlsx = () => fetchFile("/enrollment-events.xlsx", {name: "transfers-withdrawals.xlsx"});   // v0.8.38
 DO.emDel = async d => {
   const i = S.emInfo || {};
   if (!await ui.confirm(t("Delete this enrollment? This cannot be undone."), {danger: true, details: [`${i.name || ""} · ${i.where || ""} · ${t(i.status || "")}`, t("Delete is only for enrollments added by mistake. If invoices exist, use Dropped to keep the history.")]})) return false;
@@ -229,13 +249,19 @@ views.admissions = async () => {
     if (full) onSubmit("fa", () => api("/applications/" + a.id, "PATCH", {full_name: val("fa_n"), date_of_birth: val("fa_d"), phone: val("fa_p"), email: val("fa_e"), island: nv("fa_i"), grade: nv("fa_g"), course_id: val("fa_c"), batch_id: nv("fa_b"), guardian_name: nv("fa_gn"), guardian_relationship: nv("fa_gr"), guardian_phone: nv("fa_gp")}));
   });
   const R = S.result ? `<div class="msg ok" role="status"><b>${esc(t("temp_pw"))}:</b> ${esc(S.result.temp_password)}<br><a class="btn sm alt" href="${esc(S.result.whatsapp_link)}" target="_blank" rel="noopener">${t("send_whatsapp")}</a></div>` : "";
-  const D = a ? `<div class="panel" data-detail><h2>${esc(a.full_name)} · ${esc(a.ref)}</h2><p>${esc(a.course_name)} ${esc(a.batch_code || "")} · ${esc(a.phone)} · ${esc(a.email)} · ${esc(a.island || "")}<br>${esc(t("date_of_birth"))}: ${esc(a.date_of_birth)} ${a.is_minor ? '<span class="tag">&lt;18</span>' : ""}</p>${a.is_minor ? `<p>${esc(t("guardian_name"))}: ${esc(a.guardian_name)} (${esc(a.guardian_relationship)}) ${esc(a.guardian_phone)}</p>` : ""}${a.reject_reason ? `<p>${esc(a.reject_reason)}</p>` : ""}
+  const D = a ? `<div class="panel" data-detail><h2>${esc(a.full_name)} · ${esc(a.ref)}</h2><p>${esc(a.course_name)} ${esc(a.batch_code || "")} · ${esc(a.phone)} · ${esc(a.email)} · ${esc(a.island || "")}<br>${esc(t("date_of_birth"))}: ${esc(a.date_of_birth)} ${a.is_minor ? '<span class="tag">&lt;18</span>' : ""}</p>${full && full.duplicates.length ? `<div class="msg err" role="note"><b>${esc(t("ap_dup_title"))}</b><ul>${full.duplicates.map(x => `<li>${esc(x.label)} · ${esc(x.why.map(w => t("ap_dup_" + w.replace(/ /g, "_"))).join(", "))}${x.kind === "account" ? " · " + esc(t("ap_dup_account")) : ""}</li>`).join("")}</ul></div>` : ""}${a.is_minor ? `<p>${esc(t("guardian_name"))}: ${esc(a.guardian_name)} (${esc(a.guardian_relationship)}) ${esc(a.guardian_phone)}</p>` : ""}${a.reject_reason ? `<p>${esc(a.reject_reason)}</p>` : ""}
       <p>${a.has_id ? `<button class="btn sm" id="vi" data-do="apView" data-w="id">${t("view_id")}</button> ` : ""}${a.has_guardian_id ? `<button class="btn sm" id="vg" data-do="apView" data-w="guardian_id">${t("view_guardian_id")}</button> ` : ""}${a.has_id || a.has_guardian_id ? `<button class="btn sm danger" id="df" data-do="apDelFiles" data-id="${a.id}">${t("delete_files")}</button>` : ""}</p>
       ${editable ? `<div class="rowflex row">${field("ab", "assign_batch", "", bs.map(x => [x.id, x.course_name + " " + x.code]))}<button class="btn" id="ap" data-do="apApprove" data-id="${a.id}">${t("approve")}</button>${a.status === "pending" ? `<button class="btn alt" id="wl" data-do="apWait" data-id="${a.id}">${t("put_waitlist")}</button>` : ""}<button class="btn alt" id="rj" data-do="apReject" data-id="${a.id}">${t("reject")}</button></div><p class="hint">${esc(t("ap_files_hint"))}</p>` : ""}
       <p><button type="button" class="btn sm alt" data-do="apBack">${t("back")}</button></p></div>` : "";
   const C = full ? (() => { const bopts = [["", "-"], ...bs.filter(x => x.course_id === full.course_id).map(x => [x.id, x.code])];
     return `<div class="panel"><h2>${esc(t("Correct details"))}</h2><form class="row" id="fa">${iv("fa_n", "name", full.full_name)}${iv("fa_d", "date_of_birth", full.date_of_birth, "date")}${iv("fa_p", "Phone", full.phone, "tel")}${iv("fa_e", "email", full.email, "email")}${iv("fa_i", "Island", full.island)}${iv("fa_g", "Grade / class", full.grade)}${sel("fa_c", "course", courses.filter(x => x.is_active || x.id === full.course_id).map(x => [x.id, x.name + " " + (x.level || "")]), full.course_id)}${sel("fa_b", "batch", bopts, full.batch_id)}${full.is_minor ? iv("fa_gn", "guardian_name", full.guardian_name) + iv("fa_gr", "Guardian relationship", full.guardian_relationship) + iv("fa_gp", "Guardian phone", full.guardian_phone) : ""}<button class="btn alt">${t("save")}</button></form><p class="hint">${esc(t("If you change the course, pick the batch again after saving."))}</p></div>`; })() : "";
-  return `${a ? crumbFor(a.full_name, {sel: null}) : ""}<h1>${t("admissions")}</h1>${R}${D}${C}<div class="panel"><label>${t("status")}<select id="af">${["pending", "waitlist", "approved", "rejected"].map(x => `<option value="${x}" ${x === f ? "selected" : ""}>${esc(t(x === "waitlist" ? "waitlist" : x))}</option>`).join("")}</select></label>${table(["ref", "full_name", "course_name", "batch_code", "phone", "created_at"], list, r => `<button class="btn sm" data-do="apReview" data-id="${r.id}" data-rev="${r.id}">${t("review")}</button>`, t("admissions"))}</div>`;
+  return `${a ? crumbFor(a.full_name, {sel: null}) : ""}<h1>${t("admissions")}</h1>${R}${D}${C}<div class="panel"><p>${xlBtns("/applications/export", "status=" + f, "applications-" + f)}</p><label>${t("status")}<select id="af">${["pending", "waitlist", "approved", "rejected"].map(x => `<option value="${x}" ${x === f ? "selected" : ""}>${esc(t(x === "waitlist" ? "waitlist" : x))}</option>`).join("")}</select></label>${["pending", "waitlist"].includes(f) ? bulkBar("apps", [...(f === "pending" ? [["apBulkWait", "put_waitlist"]] : []), ["apBulkReject", "reject", true]], list.map(r => r.id)) + bulkAll("apps", list.map(r => r.id)) : ""}${table(["ref", "full_name", "course_name", "batch_code", "phone", "created_at"], list, r => `${["pending", "waitlist"].includes(f) ? bulkBox("apps", r.id, r.full_name) + " " : ""}<button class="btn sm" data-do="apReview" data-id="${r.id}" data-rev="${r.id}">${t("review")}</button>`, t("admissions"))}</div>`;
+};
+DO.apBulkWait = async () => { const had = bulkSel("apps").includes(S.sel); await bulkRun("apps", id => api("/applications/" + id + "/waitlist", "POST")); if (had) closeDetail({sel: null}); };
+DO.apBulkReject = async () => {
+  const n = bulkSel("apps").length, r = await ui.ask(t("reject") + " · " + n, {label: t("reason_prompt"), required: true, multiline: true, danger: true, okText: t("reject")});
+  if (!r) return false; const had = bulkSel("apps").includes(S.sel);
+  await bulkRun("apps", id => api("/applications/" + id + "/reject", "POST", {reason: r})); if (had) closeDetail({sel: null});
 };
 DO.apReview = d => { go({sel: +d.id, result: null}); return false; };
 DO.apBack = () => { S.result = null; navBack({sel: null}); return false; };
@@ -278,7 +304,8 @@ views.settings = async () => {
     const mark = () => { if (S.setDirty) return; S.setDirty = true; $("#setDirty").hidden = false; announce(t("Unsaved changes")); };
     p.addEventListener("input", mark); p.addEventListener("change", mark);
   });
-  return `<h1>${t("settings")}</h1>${tabs({id: "settings", items: sc.groups.map(x => [x.id, t(x.title)]), current: g.id, onSelect: setSelect, label: t("settings")})}<div class="mt1 panel" id="setp"><h2>${esc(t(g.title))}</h2>${g.hint ? `<p class="hint">${esc(t(g.hint))}</p>` : ""}${g.items.map(input).join("")}<p><button class="btn" data-do="saveSet">${t("save")}</button> <span class="tag warn" id="setDirty" hidden>${esc(t("Unsaved changes"))}</span></p><p class="hint">${esc(t("Empty fields use the default. Every change is written to the audit log."))}</p></div>`;
+  const store = await storagePanel();
+  return `<h1>${t("settings")}</h1>${store.banner}${tabs({id: "settings", items: sc.groups.map(x => [x.id, t(x.title)]), current: g.id, onSelect: setSelect, label: t("settings")})}<div class="mt1 panel" id="setp"><h2>${esc(t(g.title))}</h2>${g.hint ? `<p class="hint">${esc(t(g.hint))}</p>` : ""}${g.items.map(input).join("")}<p><button class="btn" data-do="saveSet">${t("save")}</button> <span class="tag warn" id="setDirty" hidden>${esc(t("Unsaved changes"))}</span></p><p class="hint">${esc(t("Empty fields use the default. Every change is written to the audit log."))}</p></div>${store.panel}`;
 };
 DO.setTab = d => { S.sg = d.g; };
 
@@ -297,7 +324,7 @@ const siList = async () => {
       <label>${t("batch")}<select id="sif_b"><option value="">${t("si_all_batches")}</option>${bs.map(b => `<option value="${b.id}">${esc(b.course_name)} · ${esc(b.code)}</option>`).join("")}</select></label>
       <label>${t("status")}<select id="sif_s"><option value="">${t("si_any")}</option><option value="active">${t("si_active")}</option><option value="inactive">${t("si_inactive")}</option></select></label>
       <button class="btn">${t("search")}</button></form></div>
-    <div class="panel"><p>${["csv", "xlsx"].map(x => `<button class="btn sm alt" data-do="siExp" data-ext="${x}">${x === "csv" ? t("Download CSV") : t("Download Excel")}</button>`).join(" ")} <button class="btn sm alt" data-do="siExpEn">${t("Enrolments CSV")}</button></p></div>
+    <div class="panel"><p>${["csv", "xlsx"].map(x => `<button class="btn sm alt" data-do="siExp" data-ext="${x}">${x === "csv" ? t("Download CSV") : t("Download Excel")}</button>`).join(" ")} <button class="btn sm alt" data-do="siExpEn">${t("Enrolments CSV")}</button> <button class="btn sm alt" data-do="siExpEnX">${t("xl_enrolments_excel")}</button></p></div>
     <div class="panel"><p class="hint">${r.students.length} / ${r.total}</p>${r.students.map(s => `<div class="cl"><div><b>${esc(s.full_name)}</b> ${s.is_active ? "" : tag(t("si_inactive"), "bad")}<br><span class="hint">${esc(s.email)}${s.phone ? " · <bdi dir=\"ltr\">" + esc(s.phone) + "</bdi>" : ""}</span><br>${s.batches.length ? esc(s.batches.join(", ")) : `<span class="hint">${t("si_no_batches")}</span>`}</div>
       <div>${s.balance_due ? tag(siMoney(s.balance_due), "warn") + " " : ""}<button class="btn sm" data-do="siOpen" data-id="${s.id}">${t("open")}</button></div></div>`).join("") || `<p>${t("empty")}</p>`}
       ${r.students.length < r.total ? `<p><button class="btn" data-do="siMore">${t("load_more")}</button></p>` : ""}</div>`;
@@ -314,7 +341,7 @@ const siDetail = async id => {
       <div class="stats"><div class="stat"><b>${pct(a.pct)}</b>${t("attendance_pct")} ${a.low ? tag(t("low_attendance"), "bad") : ""}<br><small>${t("present")} ${a.present} · ${t("late")} ${a.late} · ${t("absent")} ${a.absent} · ${t("excused")} ${a.excused}</small></div><div class="stat"><b>${pct(c.avg_pct)}</b>${t("avg_pct")}</div></div>
       <p>${c.recent.map(x => tag(x.date.slice(5) + " " + t(x.status), x.status === "absent" ? "bad" : x.status === "present" ? "ok" : "")).join(" ") || t("empty")}</p>
       ${c.items.length ? `<table><thead><tr><th>${t("title")}</th><th>${t("kind")}</th><th>${t("due_date")}</th><th>${t("grade")}</th></tr></thead><tbody>${c.items.map(i => `<tr><td>${esc(i.title)}</td><td>${t(i.kind)}</td><td>${esc(i.due_date || "–")}</td><td>${i.grade != null ? i.grade + "/" + i.max_points : t("not_graded_yet")}${i.feedback ? `<br><small>${esc(i.feedback)}</small>` : ""}</td></tr>`).join("")}</tbody></table>` : ""}</div>`; }).join("");
-  const fees = !r.fees_visible ? `<div class="panel"><h2>${t("fees")}</h2><p class="hint">${t("si_fees_hidden")}</p></div>` : `<div class="panel"><h2>${t("fees")}</h2>
+  const fees = !r.fees_visible ? `<div class="panel"><h2>${t("fees")}</h2><p class="hint">${t("si_fees_hidden")}</p></div>` : `<div class="panel"><h2>${t("fees")}</h2><p><button class="btn sm alt" data-do="fxStmt" data-id="${p.id}">${t("fx_statement")}</button></p>
     ${r.fees.invoices.length ? `<table><thead><tr><th>${t("si_period")}</th><th>${t("due_date")}</th><th>${t("si_due")}</th><th>${t("si_paid")}</th><th>${t("status")}</th></tr></thead><tbody>${r.fees.invoices.map(i => `<tr><td><bdi dir="ltr">${esc(i.period)}</bdi></td><td><bdi dir="ltr">${esc(i.due_date)}</bdi></td><td>${siMoney(i.amount_due_mvr)}</td><td>${siMoney(i.paid_mvr)}</td><td>${i.overdue ? tag(t("overdue"), "bad") : tag(t("si_inv_" + i.status), i.status === "paid" ? "ok" : "warn")}</td></tr>`).join("")}</tbody></table>` : `<p>${t("empty")}</p>`}
     ${r.fees.payments.length ? `<h3>${t("si_payments")}</h3>${r.fees.payments.map(x => `<div class="cl"><div><b>${esc(x.receipt_no)}</b> ${x.reversed_at ? tag(t("si_reversed"), "bad") : ""}<br><span class="hint"><bdi dir="ltr">${esc(x.paid_on)}</bdi> · ${esc(x.period)} · ${esc(x.method)}</span></div><b>${siMoney(x.amount_mvr)}</b></div>`).join("")}` : ""}</div>`;
   return `${crumbFor(p.full_name, {si: null})}<h1>${t("student_information")}</h1><p><button class="btn sm alt" data-do="siBack">${t("back")}</button></p>${prof}${batches}<h2>${t("si_attendance_grades")}</h2>${prog || `<div class="panel"><p>${t("empty")}</p></div>`}${fees}`;
@@ -376,7 +403,7 @@ views.audit = async () => {
   const filters = form("fal", field("al_login_id", "Login ID") + field("al_role", "role", "text", roles) + field("al_action", "action", "text", [["", t("all")], ...acts.map(x => [x, x])])
     + field("al_batch_id", "batch", "text", [["", t("all")], ...b.map(x => [x.id, x.course_name + " " + x.code])]) + field("al_date_from", "From", "date") + field("al_date_to", "To", "date") + field("al_q", "Words in detail"), "Filter");
   const chips = sm ? `<div class="panel"><h2>${t("What has this " + (f.user_id ? "user" : "batch") + " done?")}</h2><p>${sm.total} ${t("actions")}${sm.first_at ? ` · ${esc(fmtTime(sm.first_at))} → ${esc(fmtTime(sm.last_at))}` : ""}</p><p>${sm.by_action.map(x => `<span class="chip">${esc(x.action)}: ${x.n}</span>`).join(" ")}</p>${f.batch_id ? `<p>${sm.by_user.map(x => `${esc(x.user_name || "?")} (${esc(x.user_role || "")}): ${x.n}`).join(" · ")}</p>` : ""}<p><button class="btn sm alt" data-do="alClear">${t("Show everything again")}</button></p></div>` : "";
-  const nav = `<p><button class="btn sm alt" data-do="alPage" data-n="-1" ${S.al.page <= 1 ? "disabled" : ""}>${t("Previous")}</button> ${t("Page")} ${S.al.page} <button class="btn sm alt" data-do="alPage" data-n="1" ${hasNext ? "" : "disabled"}>${t("Next")}</button> <button class="btn sm alt" data-do="alCsv">${t("Download CSV")}</button></p>`;
+  const nav = `<p><button class="btn sm alt" data-do="alPage" data-n="-1" ${S.al.page <= 1 ? "disabled" : ""}>${t("Previous")}</button> ${t("Page")} ${S.al.page} <button class="btn sm alt" data-do="alPage" data-n="1" ${hasNext ? "" : "disabled"}>${t("Next")}</button> <button class="btn sm alt" data-do="alCsv">${t("Download CSV")}</button> <button class="btn sm alt" data-do="alXlsx">${t("Download Excel")}</button></p>`;
   const kv = (k, v) => v != null && v !== "" ? `<tr><th scope="row">${esc(t(k))}</th><td>${esc(v)}</td></tr>` : "";
   const rows = r.map((x, i) => `<tr><td><bdi dir="ltr">${esc(fmtTime(x.at))}</bdi></td><td>${esc(x.user_name || "–")}${x.user_role ? ` <span class="hint">${esc(t(x.user_role))}</span>` : ""}</td><td>${esc(x.action)}</td><td>${esc(x.entity || "")}${x.entity_id != null ? " " + esc(x.entity_id) : ""}</td><td>${esc(x.detail || "")}</td><td><button type="button" class="btn sm alt" data-do="alMore" data-id="${i}" aria-expanded="false" aria-controls="alx_${i}">${t("More")}</button></td></tr>`
     + `<tr class="xrow" id="alx_${i}" hidden><td colspan="6" data-label=""><table class="kv nostack"><tbody>${kv("role", x.user_role && t(x.user_role))}${kv("Login ID", x.login_id)}${kv("batch", x.batch_id)}${kv("Old value", x.old_value)}${kv("New value", x.new_value)}${kv("IP", x.ip)}</tbody></table><p>${x.user_id ? `<button class="btn sm alt" data-do="alUser" data-id="${x.user_id}">${t("This user")}</button> ` : ""}${x.batch_id ? `<button class="btn sm alt" data-do="alBatch" data-id="${x.batch_id}">${t("This batch")}</button>` : ""}</p></td></tr>`).join("");
@@ -389,6 +416,7 @@ DO.alBatch = d => { S.al = {page: 1, f: {batch_id: d.id}}; window.scrollTo(0, 0)
 DO.alClear = () => { S.al = {page: 1, f: {}}; };
 DO.alPage = d => { S.al.page = Math.max(1, S.al.page + (+d.n)); };
 DO.alCsv = () => fetchFile("/audit.csv?" + alQuery(), {name: "activity-log.csv"});
+DO.alXlsx = () => fetchFile("/audit.xlsx?" + alQuery(), {name: "activity-log.xlsx"});   // v0.8.38
 
 // ---------- Finance (Sessions 23, 24, 30, 31; one view since Session 8): dashboard, revenue, teacher earnings, then expenses and categories ----------
 const FN_KEYS = ["category_id", "date_from", "date_to", "q"];
@@ -418,6 +446,7 @@ async function fnDashPanel() {   // financial dashboard and revenue (Session 24)
 }
 async function fnExpensesPanels() {   // expenses, categories, receipts (Session 23). Needs the "finance" area; the server refuses everyone else.
   S.fn = S.fn || {page: 1, f: {}, edit: null};
+  const recs = await api("/recurring-expenses");   // first: it writes any monthly expense that is due, so the list below includes it
   const [r, cats] = await Promise.all([api("/expenses?" + fnQuery({page: S.fn.page, per_page: 50})), api("/expense-categories")]);
   const f = S.fn.f, ed = S.fn.edit ? r.items.find(x => x.id === S.fn.edit) : null;
   const active = cats.filter(k => k.is_active || (ed && k.id === ed.category_id));
@@ -433,6 +462,10 @@ async function fnExpensesPanels() {   // expenses, categories, receipts (Session
       await apiForm(ed ? "/expenses/" + ed.id : "/expenses", fd, ed ? "PATCH" : "POST"); S.fn.edit = null;
     });
     onSubmit("fcat", async () => { await api("/expense-categories", "POST", {name: val("fc_name")}); });
+    onSubmit("frec", async () => {
+      const res = await api("/recurring-expenses", "POST", {category_id: val("fr2_cat"), amount_mvr: wholeNum("fr2_amt", "Amount (MVR)", {min: 1, empty: false}), day_of_month: val("fr2_day"), description: val("fr2_desc"), start_month: val("fr2_from"), end_month: val("fr2_to") || null});
+      S.recNote = t("rec_added").replace("{n}", res.written);   // onSubmit shows "Saved"; this line under the list says how many were entered
+    });
   });
   const filters = form("ffn", field("fn_category_id", "Category", "text", [["", t("all")], ...cats.map(k => [k.id, k.name])]) + field("fn_date_from", "From", "date") + field("fn_date_to", "To", "date") + field("fn_q", "Words in description"), "Filter");
   const entry = `<form class="row" id="fex"><label>${esc(t("Expense date"))}<input id="fx_date" type="date" value="${mvToday()}" max="${mvToday()}" required></label>`
@@ -441,15 +474,33 @@ async function fnExpensesPanels() {   // expenses, categories, receipts (Session
     + `<label>${t("Receipt (PDF, JPG or PNG)")}<input id="fx_file" type="file" accept=".pdf,.jpg,.jpeg,.png"></label>`
     + (ed && ed.has_receipt ? `<label><input id="fx_rm" type="checkbox"> ${t("Remove the current receipt")}</label>` : "")
     + `<button class="btn alt">${t(ed ? "Save" : "Add expense")}</button>${ed ? ` <button type="button" class="btn" data-do="fnCancel">${t("Cancel")}</button>` : ""}</form>`;
-  const body = r.items.map(x => `<tr><td>${esc(x.expense_date)}</td><td>${esc(x.category)}</td><td>${esc(x.description || "")}</td><td><bdi dir="ltr">${esc(x.amount_mvr)}</bdi></td><td>${x.has_receipt ? `<button class="btn sm alt" data-do="fnReceipt" data-id="${x.id}" data-name="${esc(x.receipt_name || "receipt")}">${t("Receipt")}</button>` : ""}</td>`
+  const body = r.items.map(x => `<tr><td>${esc(x.expense_date)}</td><td>${esc(x.category)}</td><td>${esc(x.description || "")}${x.recurring_id ? " " + tag(t("rec_monthly")) : ""}</td><td><bdi dir="ltr">${esc(x.amount_mvr)}</bdi></td><td>${x.has_receipt ? `<button class="btn sm alt" data-do="fnReceipt" data-id="${x.id}" data-name="${esc(x.receipt_name || "receipt")}">${t("Receipt")}</button>` : ""}</td>`
     + `<td><button class="btn sm alt" data-do="fnEdit" data-id="${x.id}">${t("Edit")}</button> <button class="btn sm" data-do="fnDel" data-id="${x.id}" data-name="${esc(x.expense_date + " · " + x.category + " · MVR " + x.amount_mvr)}">${t("Delete")}</button></td></tr>`).join("");
   const nav = `<p><button class="btn sm alt" data-do="fnPage" data-n="-1" ${S.fn.page <= 1 ? "disabled" : ""}>${t("Previous")}</button> ${t("Page")} ${S.fn.page} <button class="btn sm alt" data-do="fnPage" data-n="1" ${r.page * r.per_page >= r.count ? "disabled" : ""}>${t("Next")}</button></p>`;
   const catRows = cats.map(k => `<span class="chip">${esc(k.name)} (${k.expense_count})${k.is_active ? "" : " · " + t("inactive")} <button class="btn sm alt" data-do="fnCatToggle" data-id="${k.id}" data-on="${k.is_active ? 0 : 1}">${t(k.is_active ? "Make inactive" : "Make active")}</button> <button class="btn sm alt" data-do="fnCatRename" data-id="${k.id}" data-name="${esc(k.name)}">${t("Rename")}</button>${k.expense_count ? "" : ` <button class="btn sm" data-do="fnCatDel" data-id="${k.id}" data-name="${esc(k.name)}">${t("Delete")}</button>`}</span>`).join(" ");
+  // v0.8.37: monthly expenses written automatically on their day
+  const recRows = recs.map(x => `<div class="cl${x.is_active ? "" : " off"}"><div><b>${esc(x.category)}</b> · <bdi dir="ltr">MVR ${esc(x.amount_mvr)}</bdi> · ${t("rec_day")} ${x.day_of_month}${x.description ? " · " + esc(x.description) : ""} ${x.is_active ? "" : tag(t("rec_paused"), "warn")}<br>
+    <span class="hint">${t("rec_from")} <bdi dir="ltr">${esc(x.start_month)}</bdi>${x.end_month ? ` ${t("rec_until")} <bdi dir="ltr">${esc(x.end_month)}</bdi>` : ""} · ${t("rec_written")}: ${x.months_written}${x.next_date ? ` · ${t("rec_next")} <bdi dir="ltr">${esc(x.next_date)}</bdi>` : ""}</span></div>
+    <div class="seg"><button class="btn sm alt" data-do="recEdit" data-id="${x.id}" data-amt="${x.amount_mvr}" data-day="${x.day_of_month}" data-desc="${esc(x.description || "")}" data-end="${esc(x.end_month || "")}">${t("Edit")}</button><button class="btn sm alt" data-do="recToggle" data-id="${x.id}" data-on="${x.is_active ? 0 : 1}">${t(x.is_active ? "rec_pause" : "rec_resume")}</button><button class="btn sm" data-do="recDel" data-id="${x.id}" data-name="${esc(x.category + " · MVR " + x.amount_mvr)}">${t("Delete")}</button></div></div>`).join("");
+  const month = mvToday().slice(0, 7);
+  const recForm = `<form class="row" id="frec">${field("fr2_cat", "Category", "text", active.map(k => [k.id, k.name]))}<label>${esc(t("Amount (MVR)"))}<input id="fr2_amt" type="number" min="1" step="1" inputmode="numeric" required></label>`
+    + `<label>${t("rec_day_label")}<input id="fr2_day" type="number" min="1" max="28" step="1" inputmode="numeric" value="1" required></label>${field("fr2_desc", "Description")}`
+    + `<label>${t("rec_start")}<input id="fr2_from" type="month" value="${month}" required></label><label>${t("rec_end")}<input id="fr2_to" type="month"></label><button class="btn alt">${t("rec_add")}</button></form><p class="hint">${t("rec_hint")}</p>`;
   return `<div class="panel"><h2>${t(ed ? "Edit expense" : "Add expense")}</h2>${cats.some(k => k.is_active) ? entry : `<p>${t("Add a category first.")}</p>`}</div>`
+    + `<div class="panel"><h2>${t("rec_title")}</h2>${S.recNote ? `<p class="msg ok" role="status">${esc(S.recNote)}</p>` : ""}${(S.recNote = null, "")}${recRows || `<p class="hint">${t("rec_none")}</p>`}${cats.some(k => k.is_active) ? `<details class="addp"${recs.length ? "" : " open"}><summary>${t("rec_add")}</summary>${recForm}</details>` : ""}</div>`
     + `<div class="panel"><h2>${t("Categories")}</h2><p>${catRows || t("empty")}</p>${form("fcat", field("fc_name", "Category name"), "Add category")}</div>`
-    + `<div class="panel"><h2>${t("Expenses")}</h2>${filters}<p><b>${r.count}</b> ${t("expenses")} · ${t("Total")}: <b><bdi dir="ltr">MVR ${esc(r.total_mvr)}</bdi></b></p>${nav}`
-    + (r.items.length ? `<table><thead><tr><th>${t("date")}</th><th>${t("Category")}</th><th>${t("Description")}</th><th>MVR</th><th></th><th></th></tr></thead><tbody>${body}</tbody></table>` : `<p>${t("empty")}</p>`) + `${nav}</div>`;
+    + `<div class="panel"><h2>${t("Expenses")}</h2>${filters}<p><b>${r.count}</b> ${t("expenses")} · ${t("Total")}: <b><bdi dir="ltr">MVR ${esc(r.total_mvr)}</bdi></b> ${xlBtns("/expenses/export", new URLSearchParams(Object.entries(f).filter(([, v]) => v)).toString(), "expenses")}</p>${nav}`
+    + (r.items.length ? `<table><thead><tr><th>${t("date")}</th><th>${t("Category")}</th><th>${t("Description")}</th><th>MVR</th><th></th><th></th></tr></thead><tbody>${body}</tbody></table>` : `<p>${t("empty")}</p>`) + `${nav}</div>` + impBox("expenses", t("xl_imp_expenses"));
 }
+DO.recToggle = async d => { await api("/recurring-expenses/" + d.id, "PATCH", {is_active: d.on === "1"}); flash(t("saved"), true); };
+DO.recDel = async d => { if (!await ui.confirm(t("rec_del_q"), {danger: true, okText: t("Delete"), details: [d.name || ""]})) return false; await api("/recurring-expenses/" + d.id, "DELETE"); flash(t("saved"), true); };
+DO.recEdit = async d => {
+  const v = await ui.form(t("Edit"), [{id: "amount_mvr", label: t("Amount (MVR)"), type: "number", required: true, min: 1, step: 1, value: d.amt, inputmode: "numeric"},
+    {id: "day_of_month", label: t("rec_day_label"), type: "number", required: true, min: 1, max: 28, step: 1, value: d.day, inputmode: "numeric"},
+    {id: "description", label: t("Description"), value: d.desc, maxlength: 200}, {id: "end_month", label: t("rec_end"), type: "month", value: d.end}], {okText: t("Save")});
+  if (!v) return false;
+  await api("/recurring-expenses/" + d.id, "PATCH", {...v, end_month: v.end_month || null}); flash(t("rec_edit_done"), true);
+};
 views.finance = async () => {
   const [dash, earn, exp] = await Promise.all([fnDashPanel(), feEarnPanel(), fnExpensesPanels()]);
   return `<h1>${t("finance")}</h1>${dash}${earn}${exp}`;
@@ -523,20 +574,24 @@ views.dashboard = async () => {
     ["Submissions", d.submissions], ["Graded", d.graded], ["Waiting for grading", d.pending_grading]]);
   const fin = d.financial ? `<h2>${t("Finance")}</h2>` + cards([["Revenue", "MVR " + d.financial.revenue], ["Expenses", "MVR " + d.financial.expenses], [d.financial.net < 0 ? "Net loss" : "Net profit", "MVR " + d.financial.net], ["Outstanding fees", "MVR " + d.financial.outstanding], ["Teacher earnings", "MVR " + d.financial.teacher_earnings], ["Academy revenue", "MVR " + d.financial.academy_revenue]]) : "";
   const fee = d.fees ? cards([[t("fx_unpaid_invoices"), d.fees.unpaid_invoices], [t("fx_overdue_invoices"), d.fees.overdue_invoices], [t("fx_slips_pending"), d.fees.slips_pending]]) : "";
-  return `<h1>${t("dashboard")}</h1><div class="panel">${filt}<p class="hint">${t("No dates chosen means all time. Accounts: ")}${d.student_accounts} ${t("Students")}, ${d.teacher_accounts} ${t("Teachers")}.</p></div>${acad}${fin}${fee}<div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
+  const [store, todo] = await Promise.all([storagePanel(true), api("/admin/todo").catch(() => null)]);
+  return `<h1>${t("dashboard")}</h1>${store.banner}${todoPanel(todo)}<div class="panel">${filt}<p class="hint">${t("No dates chosen means all time. Accounts: ")}${d.student_accounts} ${t("Students")}, ${d.teacher_accounts} ${t("Teachers")}.</p></div>${acad}${fin}${fee}<div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
 };
 
 // Session 27: exports and CSV import (the import panel is drawn at the bottom of People)
 const exQuery = f => { const q = new URLSearchParams(); if (f.q) q.set("q", f.q); if (f.batch) q.set("batch_id", f.batch); if (f.status) q.set("status", f.status); return q.toString(); };
 DO.siExp = d => fetchFile(`/student-information/export.${d.ext}?` + exQuery(S.sif || {}), {name: "student-information." + d.ext});
 DO.siExpEn = () => fetchFile("/student-information/enrolments.csv", {name: "enrolments.csv"});
+DO.siExpEnX = () => fetchFile("/student-information/enrolments.xlsx", {name: "enrolments.xlsx"});
 DO.tiExp = d => fetchFile(`/teacher-information/export.${d.ext}?` + exQuery(S.tif || {}), {name: "teacher-information." + d.ext});
 const impRun = async dry => {
-  const f = $("#imp_f").files[0]; if (!f) throw new Error(t("Choose a CSV file first"));
+  const f = $("#imp_f").files[0] || (S.impPFile && S.impPFile.k === val("imp_k") ? S.impPFile.f : null); if (!f) throw new Error(t("xl_choose_file"));
+  S.impPFile = {f, k: val("imp_k")};   // kept across the redraw after Check file
   const fd = new FormData(); fd.append("file", f);
   S.impkind = val("imp_k"); S.imp = await apiForm(`/import/${S.impkind}?dry_run=${dry ? 1 : 0}`, fd);
 };
 DO.impCheck = async () => { await impRun(true); };
+DO.impPTpl = async () => { const k = val("imp_k"); await fetchFile(`/import/${k}/template.xlsx`, {name: `import-${k}-template.xlsx`}); return false; };
 DO.impGo = async () => { if (!await ui.confirm(t("Import this file now? Rows that pass the check will be created."), {okText: t("Import"), details: S.imp && S.imp.dry_run ? [`${S.imp.ok} ${t("would be created")} · ${S.imp.rejected} ${t("rejected")}`] : []})) return false; await impRun(false); };
 DO.impCreds = () => {   // the temporary passwords exist only in this response: save them as a CSV on the admin's own device
   const lines = ["login_id,name,temporary_password", ...S.imp.rows.filter(x => x.temporary_password).map(x => [x.login_id, x.name, x.temporary_password].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(","))];
@@ -544,10 +599,41 @@ DO.impCreds = () => {   // the temporary passwords exist only in this response: 
 };
 const impPanel = () => {
   const r = S.imp, made = r && !r.dry_run && r.rows.some(x => x.temporary_password);
-  return `<div class="panel"><h2>${t("Import from CSV")}</h2><p class="hint">${t("Check the file first. Nothing is saved until you press Import. Courses and batches must already exist.")}</p>
+  return `<div class="panel"><h2>${t("xl_import_people")}</h2><p class="hint">${t("xl_import_hint")} ${t("Courses and batches must already exist.")}</p>
     <div class="rowflex row"><label>${t("What to import")}<select id="imp_k">${[["students", "Students"], ["teachers", "Teachers"], ["enrolments", "Enrolments"]].map(([v, l]) => `<option value="${v}" ${S.impkind === v ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
-    <label>${t("CSV file")}<input id="imp_f" type="file" accept=".csv,text/csv"></label><button class="btn alt" data-do="impCheck">${t("Check file")}</button><button class="btn" data-do="impGo">${t("Import")}</button></div>
+    <button type="button" class="btn sm alt" data-do="impPTpl">${t("xl_template")}</button><label>${t("xl_file")}<input id="imp_f" type="file" accept="${XL_ACCEPT}">${S.impPFile ? `<span class="hint">${t("xl_chosen")}: <bdi>${esc(S.impPFile.f.name)}</bdi></span>` : ""}</label><button class="btn alt" data-do="impCheck">${t("Check file")}</button><button class="btn" data-do="impGo">${t("Import")}</button></div>
     ${r ? `<p><b>${r.dry_run ? t("Check result: nothing was saved") : t("Imported")}</b> · ${r.ok} ${r.dry_run ? t("would be created") : t("created")} · ${r.rejected} ${t("rejected")} / ${r.total}</p>
       ${made ? `<p class="msg err">${t("Temporary passwords are shown only now. Save them before leaving this page.")} <button class="btn sm" data-do="impCreds">${t("Download new accounts CSV")}</button></p>` : ""}
       ${r.rows.filter(x => x.status === "rejected").map(x => `<div class="msg err">${t("Row")} ${x.row} · ${esc(x.name)}: ${esc(x.message)}</div>`).join("")}` : ""}</div>`;
 };
+
+// ---------- v0.8.34: files and storage. Where uploads are kept, whether that lasts, and which records lost their file ----------
+const canStorage = () => S.user && S.user.role === "admin" && (S.user.tabs || []).includes("settings");
+async function storagePanel(bannerOnly) {
+  if (!canStorage()) return {banner: "", panel: ""};
+  let h; try { h = await api("/admin/storage"); } catch (_) { return {banner: "", panel: ""}; }
+  const banner = h.persistent ? "" : `<div class="msg err" role="alert"><b>${esc(t("storage_not_kept"))}</b> ${esc(h.advice)}</div>`;
+  if (bannerOnly) return {banner, panel: ""};
+  const m = S.stMissing;
+  const list = !m ? "" : m.missing ? `<p><b>${m.missing}</b> ${esc(t("storage_missing_n"))}${m.complete ? "" : " " + esc(t("storage_partial").replace("{n}", m.checked).replace("{m}", m.total))}</p><p>${Object.entries(m.by_kind).map(([k, n]) => `<span class="chip">${esc(t(k))}: ${n}</span>`).join(" ")}</p>`
+      + `<table><thead><tr><th>${t("kind")}</th><th>${t("name")}</th><th>${t("date")}</th></tr></thead><tbody>${m.items.map(x => `<tr><td>${esc(t(x.kind))}</td><td>${esc(x.label || "#" + x.id)}</td><td><bdi dir="ltr">${esc(fmtTime(x.at))}</bdi></td></tr>`).join("")}</tbody></table><p class="hint">${esc(t("storage_missing_hint"))}</p>`
+    : `<p class="msg ok">${esc(t("storage_none_missing").replace("{n}", m.checked))}</p>`;
+  const panel = `<div class="panel mt1" id="storep"><h2>${esc(t("Files and storage"))}</h2><table class="kv nostack"><tbody>`
+    + `<tr><th scope="row">${esc(t("storage_where"))}</th><td>${esc(h.where)}</td></tr>`
+    + `<tr><th scope="row">${esc(t("storage_database"))}</th><td>${esc(h.database === "postgresql" ? "PostgreSQL" : "SQLite")}${h.on_vercel ? " · Vercel" : ""}</td></tr>`
+    + (h.files != null ? `<tr><th scope="row">${esc(t("storage_files"))}</th><td>${h.files} · <bdi dir="ltr">${h.mb} MB</bdi></td></tr>` : "")
+    + `<tr><th scope="row">${esc(t("storage_kept"))}</th><td>${h.persistent ? tag(t("Yes"), "ok") : tag(t("No"), "bad")}</td></tr></tbody></table>`
+    + `<p><button type="button" class="btn alt" data-do="stCheck">${esc(t("storage_check"))}</button></p>${list}</div>`;
+  return {banner, panel};
+}
+DO.stCheck = async () => { S.stMissing = await api("/admin/storage/missing"); };
+
+// v0.8.35: "To do today" on the admin Dashboard: one tap to each thing that is waiting
+function todoPanel(d) {
+  if (!d) return "";
+  const rows = d.items.filter(x => x.key !== "todo_attendance").map(x => `<div class="cl"><div>${tag(String(x.n), x.level === "info" ? "" : x.level === "bad" ? "bad" : "warn")} ${esc(t(x.key))}</div><button class="btn sm" data-do="todoGo" data-v="${esc(x.view)}" data-p="${esc(JSON.stringify(x.patch))}">${t("open")}</button></div>`);
+  const cls = d.classes.map(o => `<div class="cl"><div><b>${esc(o.course_name)} · ${esc(o.batch_code)}</b> ${tag(t("No attendance yet"), "warn")}<br><span class="hint"><bdi dir="ltr">${esc(o.start_time)}</bdi> · ${esc(o.teacher_name || "–")}</span></div><button class="btn sm" data-do="todoGo" data-v="classroom" data-p="${esc(JSON.stringify({cb: o.batch_id, ct: "attendance", adate: null}))}">${t("Take attendance")}</button></div>`);
+  const all = rows.concat(cls);
+  return `<div class="panel" id="todop"><h2>${t("To do today")}</h2>${all.join("") || `<p class="msg ok">${esc(t("todo_all_clear"))}</p>`}</div>`;
+}
+DO.todoGo = d => { let p = {}; try { p = JSON.parse(d.p || "{}"); } catch (_) {} openTab(d.v, p); return false; };

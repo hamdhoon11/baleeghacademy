@@ -46,12 +46,12 @@ def subtab(group, key):
 
 
 def preview_bytes(pg, selector):
-    """PDFs and images open in a new tab (Session 8) instead of downloading. Headless Chrome has no PDF viewer, so window.open is
-    replaced by a stand-in for this one click; the test reads the file the app gives that tab (its blob URL)."""
-    pg.evaluate("""() => { window.__tabs = []; window.open = () => { const w = {closed: false, close() { this.closed = true; }, location: null}; window.__tabs.push(w); return w; }; }""")
+    """PDFs and images open in the in-page viewer (v0.8.34). Click, wait for it, read the file behind its Download link, close it."""
     pg.click(selector)
-    pg.wait_for_function("window.__tabs.length && window.__tabs[0].location", timeout=15000)
-    data = pg.evaluate("fetch(String(window.__tabs[0].location)).then(r=>r.arrayBuffer()).then(b=>Array.from(new Uint8Array(b)))")
+    pg.wait_for_selector("dialog.dlg.view[open] a[download]", timeout=15000)
+    data = pg.evaluate("fetch(document.querySelector('dialog.dlg.view[open] a[download]').href).then(r=>r.arrayBuffer()).then(b=>Array.from(new Uint8Array(b)))")
+    pg.keyboard.press("Escape")
+    pg.wait_for_selector("dialog.dlg.view", state="detached")
     return bytes(data)
 
 

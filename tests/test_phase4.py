@@ -113,6 +113,7 @@ class P4(unittest.TestCase):
     def S(self, w, i=0): return self.login(w["email"][i])
 
     def invs(self, **q):
+        q.setdefault("status", "all")   # v0.8.35: the plain list leaves voided invoices out; these tests look at every invoice
         qs = "&".join(f"{k}={v}" for k, v in q.items())
         return self.ok(self.J("get", "/api/invoices?" + qs))
 
@@ -663,7 +664,7 @@ class P4(unittest.TestCase):
         c = self.J("get", "/api/fees/report.csv?month=2026-03")
         self.assertEqual(c.status_code, 200); self.assertIn("text/csv", c.mimetype); self.assertIn("attachment", c.headers["Content-Disposition"])
         import csv
-        rows = list(csv.reader(io.StringIO(c.get_data(as_text=True))))
+        rows = list(csv.reader(io.StringIO(c.get_data(as_text=True).lstrip("\ufeff"))))   # v0.8.34: CSVs start with a BOM for Excel
         self.assertEqual(rows[0][:4], ["invoice", "period", "student", "course"]); self.assertEqual(len(rows), 1 + 5)
         by = {x[2]: x for x in rows[1:]}
         self.assertEqual((by["Paid Part"][9], by["Paid Part"][10], by["Paid Part"][12]), ("100", "250", "unpaid"))
@@ -691,7 +692,7 @@ class P4(unittest.TestCase):
         s = self.ok(self.J("get", "/api/my/fees/summary", self.S(w, 1))); self.assertEqual((s["balance_due"], s["overdue_count"]), (350, 1))   # the 100 payment was reversed above
 
     # ================= access control =================
-    STUDENT_OK = {"my_fees_summary", "my_fees", "slip_upload", "slip_file", "inv_get", "receipt_pdf"}
+    STUDENT_OK = {"my_statement", "my_fees_summary", "my_fees", "slip_upload", "slip_file", "inv_get", "receipt_pdf"}
 
     def test_39_every_fee_endpoint_enforces_roles(self):
         w = self.world(350, 1); s = self.S(w); t = self.login("t%dB1@t.test" % w["cid"])

@@ -50,6 +50,7 @@
     if (!tab || !S.user || !(S.user.tabs || []).includes(tab)) return;
     const extra = {};
     if (tab === "assignments" && id) extra.aid = id;
+    if (tab === "people" && id) extra.eu = id;   // v0.8.35: password help request: open that person
     if (tab === "fees" && id) { S.fxhl = id; if (S.user.role === "admin") S.fxt = "slips"; }
     if (tab === "classroom" && id) {
       if (S.user.role === "teacher" && (S.mine || []).some(b => b.id === id)) { S.sb = id; sessionStorage.setItem("sb", id); }

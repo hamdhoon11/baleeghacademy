@@ -113,7 +113,10 @@ try:
         check(s.locator("[data-do=fxUp]").count() == 1, "rejected slip shows its reason and the student can upload again")
         s.click("[data-do=fxUp]"); s.wait_for_selector("#fxs_f"); s.set_input_files("#fxs_f", os.path.join(tmp, "slip2.pdf")); s.click("#fxs button.btn.alt"); s.wait_for_selector("text=Slip sent. The academy will check it.")
         a.click("[data-tabs=fees] [data-key=record]"); a.click("[data-tabs=fees] [data-key=slips]"); a.wait_for_selector("[data-do=fxVerify]")
-        a.fill("input[id^=fxv_]", "300"); a.click("[data-do=fxVerify]"); a.wait_for_selector("text=Verified. Receipt: BA-R-0001")
+        a.click("[data-do=fxCheck]"); a.wait_for_selector("dialog.dlg .fx-check")   # v0.8.36: one-tap check: slip and invoice facts in one dialog
+        dt_ = a.inner_text("dialog.dlg")
+        check("paid so far" in dt_.lower() and "Matches the balance" in dt_ and a.locator("dialog.dlg .fv").count() == 1, "slip check shows the slip with the balance and whether the amount matches")
+        a.fill("dialog.dlg input[name=amount]", "300"); a.click("dialog.dlg button[value=ok]"); a.wait_for_selector("text=Verified. Receipt: BA-R-0001")
         s.click("nav [data-v=home]"); s.click("nav [data-v=fees]"); s.wait_for_selector("text=BA-R-0001")
         check(("Overdue" if late_now else "Part paid") in s.inner_text("main") and "MVR 50" in s.inner_text("main") and "MVR 300" in s.inner_text("main"), "partial payment: student sees MVR 300 paid, a balance of MVR 50, and the right status")
         a.click("[data-tabs=fees] [data-key=record]"); a.wait_for_selector("#fxp"); a.fill("#fxp_a", "50"); a.click("#fxp button.btn.alt"); a.wait_for_selector("text=BA-R-0002")
@@ -123,12 +126,15 @@ try:
         pdf = open(rd.value.path(), "rb").read()
         check(rd.value.suggested_filename.startswith("receipt-BA-R-000") and pdf.startswith(b"%PDF") and b"Demo Student" in pdf and b"7700000000001" not in pdf, "student downloaded a PDF receipt (no bank account number on it)")
         check(s.evaluate("[...document.querySelectorAll('main button, main a.btn, main input:not([type=checkbox]):not([type=radio]), main select')].filter(e => e.offsetParent).every(e => e.getBoundingClientRect().height >= 43.5)"), "every button and field on the student Fees page is at least 44px tall")
+        with s.expect_download() as sd: s.click("[data-do=fxMyStmt]")
+        st = open(sd.value.path(), "rb").read()
+        check(sd.value.suggested_filename.startswith("fee-statement") and st.startswith(b"%PDF"), "student downloaded a fee statement PDF")
         a.click("nav [data-v=dashboard]"); a.wait_for_selector(".stat:has-text('Revenue')")   # Session 8: the one Dashboard is admin.js's (Revenue card)
         check("MVR 350" in a.inner_text(".stat:has-text('Revenue')"), "admin dashboard shows the collected MVR 350 as revenue")
         a.click("nav [data-v=fees]"); a.click("[data-tabs=fees] [data-key=report]"); a.wait_for_selector("#fxr")
         check("MVR 350" in a.inner_text("main") and "Nobody owes anything" in a.inner_text("main"), "monthly report: collected 350 and nobody owes")
         with a.expect_download() as cd: a.click("[data-do=fxCsv]")
-        csv_text = open(cd.value.path(), encoding="utf-8").read()
+        csv_text = open(cd.value.path(), encoding="utf-8-sig").read()   # v0.8.34: CSVs start with a BOM for Excel
         check(csv_text.startswith("invoice,period") and "Demo Student" in csv_text and ",350,0,350,0,350,0," in csv_text, "monthly report CSV downloads with the right numbers")
         # ---- fees tab on a phone ----
         s.click("nav [data-v=fees]"); s.wait_for_selector("text=BA-R-0001"); s.wait_for_timeout(300)

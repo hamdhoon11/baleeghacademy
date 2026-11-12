@@ -115,7 +115,7 @@ class S26(unittest.TestCase):
     def test_csv_matches_report(self):
         r = self.c.get("/api/fees/payment-report.csv?month=2027-03", headers=self.H)
         self.assertEqual(r.status_code, 200); self.assertIn("text/csv", r.headers["Content-Type"]); self.assertIn("payments-2027-03.csv", r.headers["Content-Disposition"])
-        lines = list(csv.reader(io.StringIO(r.get_data(as_text=True))))
+        lines = list(csv.reader(io.StringIO(r.get_data(as_text=True).lstrip("\ufeff"))))   # v0.8.34: BOM
         rep = self.rep()
         self.assertEqual(len(lines) - 1, len(rep["rows"])); self.assertEqual(sum(int(l[8]) for l in lines[1:]), rep["totals"]["paid"])
         self.assertEqual(lines[0][10], "Status")

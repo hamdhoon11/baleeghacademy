@@ -15,28 +15,29 @@ OPEN = {
  ("POST", "/api/assignments/<int:aid>/grades"): AT, ("GET", "/api/assignments/<int:aid>/submissions"): AT, ("POST", "/api/assignments/<int:aid>/submit"): ("student",),
  ("POST", "/api/auth/change-password"): ALL, ("POST", "/api/auth/logout"): ALL, ("GET", "/api/auth/me"): ALL, ("GET", "/api/batches"): ALL,
  ("POST", "/api/batches/<int:bid>/assignments"): AT, ("GET", "/api/batches/<int:bid>/attendance"): AT, ("POST", "/api/batches/<int:bid>/attendance"): AT,
- ("GET", "/api/batches/<int:bid>/attendance/summary"): AT, ("GET", "/api/batches/<int:bid>/gradebook"): AT, ("POST", "/api/batches/<int:bid>/materials"): AT,
+ ("GET", "/api/batches/<int:bid>/attendance/summary"): AT, ("GET", "/api/batches/<int:bid>/gradebook"): AT, ("GET", "/api/batches/<int:bid>/gradebook.xlsx"): AT, ("GET", "/api/batches/<int:bid>/attendance.xlsx"): AT,
+ ("POST", "/api/import/grades"): AT, ("GET", "/api/import/grades/template.xlsx"): AT, ("POST", "/api/batches/<int:bid>/materials"): AT,
  ("PUT", "/api/batches/<int:bid>/meet-link"): AT, ("POST", "/api/batches/<int:bid>/recordings"): AT, ("POST", "/api/batches/<int:bid>/sessions"): AT,
  ("GET", "/api/batches/<int:bid>/students"): AT, ("GET", "/api/courses"): ALL, ("GET", "/api/enrollments"): ALL, ("GET", "/api/invoices/<int:iid>"): AS,
  ("POST", "/api/invoices/<int:iid>/slips"): ("student",), ("GET", "/api/materials"): ALL, ("DELETE", "/api/materials/<int:mid>"): AT, ("GET", "/api/materials/<int:mid>/file"): ALL,
  ("GET", "/api/my/attendance"): ("student",), ("GET", "/api/my/batches"): ("student", "teacher"), ("GET", "/api/my/earnings"): ("teacher",), ("GET", "/api/my/fees"): ("student",),
- ("GET", "/api/my/fees/summary"): ("student",), ("GET", "/api/my/given-grades"): ("teacher",), ("GET", "/api/my/grades"): ("student",), ("GET", "/api/my/home"): ("student", "teacher"),
+ ("GET", "/api/my/fees/summary"): ("student",), ("GET", "/api/my/fees/statement.pdf"): ("student",), ("GET", "/api/my/given-grades"): ("teacher",), ("GET", "/api/my/grades"): ("student",), ("GET", "/api/my/home"): ("student", "teacher"), ("GET", "/api/my/files"): ("student", "teacher"),
  ("GET", "/api/my/information"): ("student", "teacher"), ("GET", "/api/my/substitutions"): ("teacher",), ("GET", "/api/notifications"): ALL,
  ("POST", "/api/notifications/<int:nid>/read"): ALL, ("POST", "/api/notifications/read-all"): ALL, ("GET", "/api/notifications/unread-count"): ALL,
  ("GET", "/api/payments/<int:pid>/receipt.pdf"): AS, ("GET", "/api/recordings"): ALL, ("DELETE", "/api/recordings/<int:rid>"): AT, ("GET", "/api/slips/<int:sid>/file"): AS,
  ("GET", "/api/submissions/<int:sid>/file"): ALL, ("GET", "/api/teacher/dashboard"): ("teacher",), ("GET", "/api/timetable"): ALL,
  ("GET", "/api/tutorial-submissions/<int:sid>/file"): ALL, ("POST", "/api/tutorials"): AT, ("GET", "/api/tutorials"): ALL, ("GET", "/api/tutorials/<int:tid>"): ALL,
  ("DELETE", "/api/tutorials/<int:tid>"): AT, ("GET", "/api/tutorials/<int:tid>/file"): ALL, ("POST", "/api/tutorials/<int:tid>/submission"): ("student",),
- ("GET", "/api/tutorials/<int:tid>/submission"): ("student",), ("GET", "/api/tutorials/<int:tid>/submissions"): AT,
+ ("GET", "/api/tutorials/<int:tid>/submission"): ("student",), ("GET", "/api/tutorials/<int:tid>/submissions"): AT, ("POST", "/api/tutorial-submissions/<int:sid>/grade"): AT,
 }
 # admin-only routes with no permission area: each checks inside the route, and test_03 / test_04 prove it.
-NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "/api/users"), ("POST", "/api/whatsapp/prepare"), ("POST", "/api/whatsapp/sent")}
+NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "/api/admin/todo"), ("GET", "/api/users"), ("POST", "/api/whatsapp/prepare"), ("POST", "/api/whatsapp/sent")}
 AREA = [("/api/applications", "admissions"), ("/api/announcements", "classroom"), ("/api/audit", "audit"), ("/api/discounts", "fees"), ("/api/families", "fees"), ("/api/fees", "fees"),
-        ("/api/invoices", "fees"), ("/api/payments", "fees"), ("/api/slips", "fees"), ("/api/earnings", "finance"), ("/api/expense", "finance"), ("/api/finance", "finance"),
-        ("/api/enrollments/<int:eid>/void-open-invoices", "fees"), ("/api/enrollment", "enrollments"), ("/api/import/enrolments", "enrollments"), ("/api/import", "people"),
-        ("/api/settings", "settings"), ("/api/notifications", "settings"), ("/api/student-information", "student_information"), ("/api/teacher-information", "teacher_information"),
+        ("/api/invoices", "fees"), ("/api/payments", "fees"), ("/api/slips", "fees"), ("/api/students", "fees"), ("/api/earnings", "finance"), ("/api/expense", "finance"), ("/api/finance", "finance"), ("/api/recurring-expenses", "finance"),
+        ("/api/enrollments/<int:eid>/void-open-invoices", "fees"), ("/api/enrollment", "enrollments"), ("/api/import/enrolments", "enrollments"), ("/api/import/courses", "courses"), ("/api/import/batches", "batches"), ("/api/import/expenses", "finance"), ("/api/import", "people"),
+        ("/api/settings", "settings"), ("/api/admin/storage", "settings"), ("/api/password-help", "people"), ("/api/notifications", "settings"), ("/api/student-information", "student_information"), ("/api/teacher-information", "teacher_information"),
         ("/api/substitutions", "batches"), ("/api/users", "people"), ("/api/courses", "courses"), ("/api/batches", "batches")]
-PUBLIC = {"/", "/<path:filename>", "/api/auth/login", "/api/cron/generate-invoices", "/api/cron/reminders", "/api/health", "/api/public/apply",
+PUBLIC = {"/", "/<path:filename>", "/api/auth/login", "/api/auth/forgot", "/api/cron/generate-invoices", "/api/cron/reminders", "/api/health", "/api/public/apply",
           "/api/public/apply/status", "/api/public/batches", "/api/public/courses", "/api/public/info"}
 PARAM = {}
 
@@ -114,10 +115,11 @@ class S32(unittest.TestCase):
         W["J"]("post", "/api/substitutions", json={"batch_id": W["b1"], "substitute_teacher_id": W["t3"][0], "class_date": "2027-03-10", "ends_on": "2027-03-12", "reason": "x"})
         assert W["J"]("patch", f"/api/enrollments/{cls.ids['wd_enrollment']}", json={"status": "dropped"}).status_code == 200
         i = cls.ids
-        PARAM.update({"applications": i["application"], "assignments": i["assignment"], "batches": W["b1"], "courses": W["course"], "discounts": i["discount"], "enrollments": i["enrollment"],
+        W["c"].post("/api/auth/forgot", json={"login": "nobody-in-particular"})   # v0.8.35: a password help request, so its routes have an id to try
+        PARAM.update({"password-help": 1, "applications": i["application"], "assignments": i["assignment"], "batches": W["b1"], "courses": W["course"], "discounts": i["discount"], "enrollments": i["enrollment"],
             "expense-categories": i["exp_cat"], "expenses": i["expense"], "families": i["family"], "invoices": i["invoice"], "materials": i["material"], "notifications": 1, "payments": i["payment"],
             "recordings": i["recording"], "slips": i["slip"], "student-information": W["s1"][0], "submissions": i["submission"], "substitutions": 1, "teacher-information": W["t1"][0],
-            "tutorial-submissions": i["tut_sub"], "tutorials": i["tutorial"], "users": W["s1"][0], "student-history": W["s1"][0], "members": W["s1"][0]})
+            "tutorial-submissions": i["tut_sub"], "tutorials": i["tutorial"], "users": W["s1"][0], "student-history": W["s1"][0], "members": W["s1"][0], "students": W["s1"][0], "recurring-expenses": 1})
         cls.P = {"none": {}, "admin": W["A"], "lim": W["H_lim"], "t1": W["H_t1"], "t2": W["H_t2"], "t3": W["H_t3"], "s1": W["H_s1"], "s2": W["H_s2"], "sw": W["H_sw"]}
         cls.ROLE = {"admin": "admin", "lim": "admin", "t1": "teacher", "t2": "teacher", "t3": "teacher", "s1": "student", "s2": "student", "sw": "student"}
 

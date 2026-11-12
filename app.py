@@ -24,6 +24,8 @@ def create_app(config=None):
         S3_ENDPOINT_URL=os.environ.get("S3_ENDPOINT_URL", ""), S3_REGION=os.environ.get("S3_REGION", ""),
         S3_ACCESS_KEY_ID=os.environ.get("S3_ACCESS_KEY_ID", ""), S3_SECRET_ACCESS_KEY=os.environ.get("S3_SECRET_ACCESS_KEY", ""),
         S3_PREFIX=os.environ.get("S3_PREFIX", ""),
+        FILE_STORAGE=os.environ.get("FILE_STORAGE", ""),       # v0.8.34: db | s3 | local; empty = S3 if S3_BUCKET is set, the database on Vercel, else a local folder
+        ON_VERCEL=ON_VERCEL,
         CORS_ORIGINS=[o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()],
         TOKEN_HOURS=int(os.environ.get("TOKEN_HOURS", "8")),
         JOIN_EARLY_MIN=int(os.environ.get("JOIN_EARLY_MIN", "15")),      # Join class button appears this many minutes before start
@@ -482,14 +484,20 @@ def create_app(config=None):
     @auth("admin", perm="people")
     def users_reset_password(uid):
         """New random temporary password, shown once. The old password stops working and the person must choose their own at next sign-in."""
-        u = one("SELECT id,role,login_id FROM users WHERE id=?", (uid,))
+        u = one("SELECT u.id,u.role,u.login_id,u.full_name,u.phone,(SELECT s.guardian_phone FROM students s WHERE s.user_id=u.id) AS guardian_phone FROM users u WHERE u.id=?", (uid,))
         if not u: return err("User not found", 404)
         if uid == g.user["id"]: return err("Use Change password for your own account")
         if u["role"] == "admin" and g.user["permissions"] is not None: return err("Only a full admin can reset an admin's password", 403)
         pw = temp_password()
         db().execute("UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?", (generate_password_hash(pw), uid))
+        ph = app.extensions.get("passhelp")
+        if ph: ph["close_for"](uid)   # v0.8.35: a "Forgot password" request from this person is now handled
         audit("reset_password", "user", uid, u["login_id"] or ""); db().commit()
-        resp = jsonify(login_id=u["login_id"], temporary_password=pw); resp.headers["Cache-Control"] = "no-store"
+        msg = (f"Assalaamu alaikum {u['full_name']}. Your new password for the {raw_setting('academy_name') or 'Baleegh Academy'} portal:\n"
+               f"Login ID: {u['login_id']}\nTemporary password: {pw}\nSign in at {request.host_url} and choose your own password.")
+        link = ph["wa_link"](u["phone"] or u["guardian_phone"], msg) if ph else None
+        resp = jsonify(login_id=u["login_id"], temporary_password=pw, name=u["full_name"], whatsapp_link=link)
+        resp.headers["Cache-Control"] = "no-store"
         return resp
 
     @app.delete("/api/users/<int:uid>")
@@ -811,7 +819,7 @@ def create_app(config=None):
 
     # ---------- admissions (Phase 2) ----------
     UPLOADS = os.path.join(os.path.dirname(app.config["DATABASE_PATH"]), "uploads")   # used only when files are kept on local disk
-    store = storage.make(app.config, UPLOADS)
+    store = storage.make(app.config, UPLOADS, conn=db)   # on Vercel without a bucket the files go into the database (v0.8.34)
     app.extensions["store"] = store
     apply_hits = {}
     MAGIC = {".pdf": b"%PDF", ".jpg": b"\xff\xd8\xff", ".jpeg": b"\xff\xd8\xff", ".png": b"\x89PNG"}
@@ -938,7 +946,25 @@ def create_app(config=None):
     @auth("admin", perm="admissions")
     def apps_get(aid):
         a = one(APP_SQL + " WHERE a.id=?", (aid,))
-        return jsonify(a) if a else err("Application not found", 404)
+        if not a: return err("Application not found", 404)
+        out = dict(a); out["duplicates"] = same_person(a)
+        return jsonify(out)
+
+    def same_person(a):
+        """v0.8.36: earlier applications or existing accounts that look like the same person: same phone (digits), same email, or same name and
+        date of birth. Shown as a warning on the review panel; nothing is blocked."""
+        ph, em = digits_intl(a["phone"] or ""), (a["email"] or "").strip().lower()
+        name, dob = (a["full_name"] or "").strip().lower(), a["date_of_birth"]
+        seen, out = set(), []
+        for r in rows("SELECT id, ref, full_name, phone, email, date_of_birth, status, created_at FROM applications WHERE id<>? ORDER BY id DESC LIMIT 2000", (a["id"],)):
+            why = [w for w, hit in (("phone", ph and len(ph) >= 7 and digits_intl(r["phone"] or "") == ph), ("email", em and (r["email"] or "").strip().lower() == em),
+                                    ("name and date of birth", name and dob and (r["full_name"] or "").strip().lower() == name and r["date_of_birth"] == dob)) if hit]
+            if why: out.append({"kind": "application", "id": r["id"], "label": f"{r['full_name']} ({r['ref']}, {r['status']})", "why": why, "at": r["created_at"]})
+        for r in rows("SELECT u.id, u.full_name, u.login_id, u.phone, u.email, u.role, u.is_active FROM users u WHERE LOWER(u.email)=? OR u.phone IS NOT NULL", (em,)):
+            if r["id"] in seen: continue
+            why = [w for w, hit in (("phone", ph and len(ph) >= 7 and digits_intl(r["phone"] or "") == ph), ("email", em and (r["email"] or "").strip().lower() == em)) if hit]
+            if why: seen.add(r["id"]); out.append({"kind": "account", "id": r["id"], "label": f"{r['full_name']} ({r['login_id'] or r['role']}{'' if r['is_active'] else ', inactive'})", "why": why})
+        return out[:20]
 
     @app.get("/api/applications/<int:aid>/file/<which>")
     @auth("admin", perm="admissions")
@@ -992,7 +1018,7 @@ def create_app(config=None):
             msg = re.sub(r"\{(\w+)\}", lambda m_: str(vals.get(m_.group(1), m_.group(0))), tpl)
         else:
             msg = (f"Assalaamu alaikum {a['full_name']}, your application to {academy} (ref {a['ref']}) is approved. "
-                   f"Login ID: {login_id} | Temporary password: {temp} (you will be asked to change it).")
+                   f"Login ID: {login_id} | Temporary password: {temp} (you will be asked to change it). Sign in at {request.host_url}")
         if est == "waitlist": msg += " You are on the batch waitlist and we will confirm your seat."
         from urllib.parse import quote
         return jsonify(user_id=uid, email=a["email"], temp_password=temp, enrollment_status=est, message=msg,
@@ -1089,7 +1115,9 @@ def create_app(config=None):
                 " (SELECT COUNT(*) FROM enrollments WHERE status='active') AS active_enrollments,"
                 " (SELECT COUNT(*) FROM enrollments WHERE status='waitlist') AS waitlisted,"
                 " (SELECT COUNT(*) FROM applications WHERE status='pending') AS pending_applications")
-        return jsonify(**(extra() if extra and has_perm(g.user, "fees") else {}), **n)   # Session 32: money figures only for admins who have the Fees area
+        ph = app.extensions.get("passhelp")
+        more = {"password_help": ph["pending"]()} if ph and has_perm(g.user, "people") else {}   # v0.8.35: People badge
+        return jsonify(**(extra() if extra and has_perm(g.user, "fees") else {}), **n, **more)   # Session 32: money figures only for admins who have the Fees area
 
     SETTING_KEYS = SS.SETTING_KEYS
 
@@ -1135,6 +1163,12 @@ def create_app(config=None):
     import notify
     notify.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 28: notifications (must come first: the modules below call ns.notify)
     learning.register(app, ns)
+    import filecheck
+    filecheck.register(app, ns)
+    import passhelp
+    passhelp.register(app, ns)   # v0.8.35: "Forgot password" requests go to admins (no email needed)
+    import todo
+    todo.register(app, ns)       # v0.8.35: Dashboard "To do today"   # v0.8.34: storage health and the list of records whose file is gone
     import whatsapp
     whatsapp.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 29: WhatsApp click-to-chat by phone number
 
@@ -1149,7 +1183,8 @@ def create_app(config=None):
         if not secret or not got.startswith("Bearer ") or not hmac.compare_digest(got[7:].encode(), secret.encode()):
             return err("Not allowed", 401)
         r = fees_hook("catch_up", None, "scheduled run")
-        return jsonify(period=r["period"], created=r["created"], skipped_total=r["skipped_total"], skipped=r["skipped"])
+        written = app.extensions["recurring"]("scheduled run") if "recurring" in app.extensions else 0   # v0.8.37: monthly expenses due today
+        return jsonify(expenses_written=written, period=r["period"], created=r["created"], skipped_total=r["skipped_total"], skipped=r["skipped"])
 
     # ---------- Phase 4: fees and payments (invoices, slips, receipts, reminders, reports) ----------
     import fees
@@ -1160,12 +1195,16 @@ def create_app(config=None):
     import finance, earnings
     earnings.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # Session 30: teacher earnings
     finance.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # Session 23: expenses
+    import recurring
+    recurring.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # v0.8.37: monthly expenses
     import admindash
     admindash.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # Session 25: admin dashboard
     import payreports
     payreports.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # Session 26: payment reports
     import portio
     portio.register(app, ns)   # Session 27: exports and imports
+    import sheets
+    sheets.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # v0.8.38: Excel exports and imports
     import auditview
     auditview.register(app, ns)   # Session 21: activity log viewer (the old /api/audit route lives there now)
 
@@ -1178,7 +1217,7 @@ def create_app(config=None):
 
     @app.errorhandler(FileNotFoundError)
     def _file_missing(e):
-        return api_error("The file could not be found. It may have been removed.", 404)
+        return api_error("The file could not be found on the server. It may have been removed, or lost before storage was fixed: ask the person to upload it again.", 404)
 
     @app.errorhandler(HTTPException)
     def _http_error(e):

@@ -315,7 +315,10 @@ def register(app, c):
         if st == "overdue": w.append("i.status IN ('unpaid','slip_submitted') AND i.due_date<?"); a.append(t)
         elif st == "open": w.append("i.status IN ('unpaid','slip_submitted')")
         elif st in ("unpaid", "slip_submitted", "paid", "void", "waived"): w.append("i.status=?"); a.append(st)
+        elif st == "all": pass
         elif st: return err("Unknown status")
+        # v0.8.35: voided invoices are left out of the normal list; find them with status=void (or all), or by their exact number
+        elif not re.match(r"^INV-\d{6}-\d+$", (request.args.get("q") or "").strip().upper()): w.append("i.status<>'void'")
         if request.args.get("student_id"):
             if not request.args["student_id"].isdigit(): return err("Bad student id")
             w.append("i.student_id=?"); a.append(int(request.args["student_id"]))
@@ -324,9 +327,10 @@ def register(app, c):
             m = re.match(r"^INV-\d{6}-(\d+)$", q.upper())
             if m: w.append("i.id=?"); a.append(int(m.group(1)))
             else: w.append("LOWER(u.full_name) LIKE ?"); a.append("%" + q.lower() + "%")
-        sql = INV_SQL + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY i.period DESC, u.full_name, i.id LIMIT 500"
+        lim = min(max(request.args.get("limit", 500, type=int), 1), 5000)   # v0.8.38: the Excel export asks for up to 5000
+        sql = INV_SQL + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY i.period DESC, u.full_name, i.id LIMIT ?"
         t0 = today()
-        return jsonify([shape(r, t0) for r in rows(sql, a)])
+        return jsonify([shape(r, t0) for r in rows(sql, a + [lim])])
 
     def slip_row(s, admin):
         d = {k: s[k] for k in ("id", "invoice_id", "amount_mvr", "transfer_date", "reference", "status", "reject_reason", "created_at", "file_name")}
@@ -751,6 +755,37 @@ def register(app, c):
         resp.headers["Cache-Control"] = "private, no-store"
         return resp
 
+    # ---------- v0.8.36: fee statement (all invoices and payments of one student, as a PDF) ----------
+    def statement(sid):
+        u = one("SELECT u.id,u.full_name,s.student_code FROM users u LEFT JOIN students s ON s.user_id=u.id WHERE u.id=? AND u.role='student'", (sid,))
+        if not u: return None
+        t0 = today()
+        invs = [shape(r, t0) for r in rows(INV_SQL + " WHERE i.student_id=? AND i.status!='void' ORDER BY i.period, i.id", (sid,))]
+        pays = rows("SELECT p.*, i.period FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE p.student_id=? AND i.status!='void' ORDER BY p.paid_on, p.id", (sid,))
+        il = [{"number": i["number"], "period": i["period"], "course": i["course_name"] + " " + i["batch_code"], "due_date": i["due_date"],
+               "amount_due": i["amount_due_mvr"], "waived": i["waived_mvr"], "paid": i["paid_mvr"], "balance": i["balance"],
+               "status": "overdue" if i["overdue"] else i["status"]} for i in invs]
+        pl = [{"paid_on": p["paid_on"], "receipt_no": p["receipt_no"], "invoice_number": inv_no({"period": p["period"], "id": p["invoice_id"]}),
+               "method": METHOD_LABEL.get(p["method"], p["method"]), "amount": p["amount_mvr"], "reversed": bool(p["reversed_at"])} for p in pays]
+        tot = {"due": sum(i["amount_due"] - i["waived"] for i in il), "paid": sum(p["amount"] for p in pl if not p["reversed"]), "balance": sum(i["balance"] for i in il)}
+        data = receipts.build_statement({"academy": setting("academy_name", "Baleegh Academy"), "phone": setting("contact_phone"), "student": u["full_name"],
+                                         "student_code": u["student_code"], "generated": t0.isoformat(), "invoices": il, "payments": pl, "totals": tot})
+        audit_c("view_statement", "user", sid, g.user["role"]); db().commit()
+        resp = Response(data, mimetype="application/pdf")
+        resp.headers["Content-Disposition"] = f'attachment; filename="fee-statement-{sid}-{t0.isoformat()}.pdf"'
+        resp.headers["Cache-Control"] = "private, no-store"
+        return resp
+
+    @app.get("/api/my/fees/statement.pdf")
+    @auth("student", perm="fees")
+    def my_statement():
+        return statement(g.user["id"])
+
+    @app.get("/api/students/<int:sid>/statement.pdf")
+    @auth("admin", perm="fees")
+    def student_statement(sid):
+        return statement(sid) or err("Student not found", 404)
+
     # ---------- overdue and reminders ----------
     def template_text():
         return setting("reminder_template_en") or DEFAULT_REMINDER_EN
@@ -848,22 +883,23 @@ def register(app, c):
         r.pop("invoices")
         return jsonify(r)
 
-    @app.get("/api/fees/report.csv")
-    @auth("admin", perm="fees")
-    def fees_report_csv():
+    def fees_report_export(ext):
+        import excelio
         month = request.args.get("month") or month_of(today())
         if not PERIOD.match(month): return err("Month must look like 2026-03")
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow(["invoice", "period", "student", "course", "batch", "fee_mvr", "discount_mvr", "amount_due_mvr", "waived_mvr", "paid_mvr", "balance_mvr", "due_date", "status", "overdue"])
-        for i in report(month)["invoices"]:
-            w.writerow([csv_safe(x) for x in (i["number"], i["period"], i["student_name"], i["course_name"], i["batch_code"], i["amount_mvr"], i["discount_mvr"], i["amount_due_mvr"],
-                                               i["waived_mvr"], i["paid_mvr"], i["balance"], i["due_date"], i["status"], "yes" if i["overdue"] else "no")])
-        audit_c("export_fees_csv", "report", None, month); db().commit()
-        resp = Response(buf.getvalue(), mimetype="text/csv")
-        resp.headers["Content-Disposition"] = f'attachment; filename="fees-{month}.csv"'
-        resp.headers["Cache-Control"] = "private, no-store"
-        return resp
+        head = ["invoice", "period", "student", "course", "batch", "fee_mvr", "discount_mvr", "amount_due_mvr", "waived_mvr", "paid_mvr", "balance_mvr", "due_date", "status", "overdue"]
+        table = [[i["number"], i["period"], i["student_name"], i["course_name"], i["batch_code"], i["amount_mvr"], i["discount_mvr"], i["amount_due_mvr"],
+                  i["waived_mvr"], i["paid_mvr"], i["balance"], i["due_date"], i["status"], "yes" if i["overdue"] else "no"] for i in report(month)["invoices"]]
+        audit_c(f"export_fees_{ext}", "report", None, month); db().commit()
+        return excelio.send_table(ext, f"fees-{month}", head, table, f"Fees {month}")
+
+    @app.get("/api/fees/report.csv")
+    @auth("admin", perm="fees")
+    def fees_report_csv(): return fees_report_export("csv")
+
+    @app.get("/api/fees/report.xlsx")
+    @auth("admin", perm="fees")
+    def fees_report_xlsx(): return fees_report_export("xlsx")   # v0.8.38
 
     def dashboard_extra():
         t = today()
@@ -871,7 +907,7 @@ def register(app, c):
         r = one("SELECT (SELECT COUNT(*) FROM invoices WHERE status IN ('unpaid','slip_submitted') AND amount_due_mvr-waived_mvr-paid_mvr>0) AS unpaid_invoices,"
                 " (SELECT COUNT(*) FROM invoices WHERE status IN ('unpaid','slip_submitted') AND amount_due_mvr-waived_mvr-paid_mvr>0 AND due_date<?) AS overdue_invoices,"
                 " (SELECT COUNT(*) FROM payment_slips WHERE status='pending') AS slips_pending,"
-                " (SELECT COALESCE(SUM(amount_mvr),0) FROM payments WHERE reversed_at IS NULL AND paid_on>=? AND paid_on<?) AS month_collection_mvr",
+                " (SELECT COALESCE(SUM(p.amount_mvr),0) FROM payments p JOIN invoices iv ON iv.id=p.invoice_id WHERE p.reversed_at IS NULL AND iv.status<>'void' AND p.paid_on>=? AND p.paid_on<?) AS month_collection_mvr",
                 (t.isoformat(), first.isoformat(), next_month_start(month_of(t)).isoformat()))
         return {k: r[k] for k in ("unpaid_invoices", "overdue_invoices", "slips_pending", "month_collection_mvr")}
 
