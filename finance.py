@@ -87,7 +87,7 @@ def register(app, c, today):
         return jsonify(ok=True)
 
     # ---------- expenses ----------
-    BASE = ("SELECT e.id,e.expense_date,e.amount_mvr,e.category_id,k.name AS category,e.description,e.receipt_name,(e.receipt_file IS NOT NULL) AS has_receipt,"
+    BASE = ("SELECT e.id,e.expense_date,e.amount_mvr,e.category_id,k.name AS category,e.description,e.receipt_name,(e.receipt_file IS NOT NULL) AS has_receipt,e.recurring_id,"
             "e.entered_by,u.full_name AS entered_by_name,e.created_at,e.updated_at FROM expenses e JOIN expense_categories k ON k.id=e.category_id LEFT JOIN users u ON u.id=e.entered_by")
 
     def shape(r):
@@ -119,6 +119,7 @@ def register(app, c, today):
     @app.get("/api/expenses")
     @auth("admin", perm=AREA)
     def exp_list():
+        if "recurring" in app.extensions: app.extensions["recurring"]()   # v0.8.37: write monthly expenses that are due
         a = request.args
         where, args = [], []
         if a.get("category_id"):
@@ -285,6 +286,7 @@ def register(app, c, today):
     @app.get("/api/finance/dashboard")
     @auth("admin", perm=AREA)
     def fin_dashboard():
+        if "recurring" in app.extensions: app.extensions["recurring"]()   # v0.8.37
         a = request.args.to_dict()
         t = today()
         if not a.get("date_from") and not a.get("date_to"): a["date_from"], a["date_to"] = t.replace(day=1).isoformat(), t.isoformat()   # default: this month so far

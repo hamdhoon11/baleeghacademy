@@ -236,6 +236,7 @@ CREATE TABLE IF NOT EXISTS tutorials (
   url TEXT,
   uploaded_by INTEGER NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  max_points INTEGER DEFAULT 100,               -- v0.8.37: marks out of; NULL = comments only
   CHECK (body IS NOT NULL OR file IS NOT NULL OR url IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS idx_tut_course ON tutorials(course_id);
@@ -250,6 +251,10 @@ CREATE TABLE IF NOT EXISTS tutorial_submissions (
   file TEXT,
   file_name TEXT,
   submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+  grade REAL,                                   -- v0.8.37: tutorial grading (same rules as assignments)
+  feedback TEXT,
+  graded_by INTEGER REFERENCES users(id),
+  graded_at TEXT,
   UNIQUE (tutorial_id, student_id),
   CHECK (text_answer IS NOT NULL OR file IS NOT NULL)
 );
@@ -404,9 +409,31 @@ CREATE TABLE IF NOT EXISTS expenses (
   entered_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_by INTEGER REFERENCES users(id),
-  updated_at TEXT
+  updated_at TEXT,
+  recurring_id INTEGER,          -- v0.8.37: written by a recurring rule (NULL = entered by hand)
+  recurring_month TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);
+-- v0.8.37: monthly expenses. recurring_done records each month written, so a month deleted by hand is not written again.
+CREATE TABLE IF NOT EXISTS recurring_expenses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category_id INTEGER NOT NULL REFERENCES expense_categories(id),
+  amount_mvr INTEGER NOT NULL CHECK (amount_mvr > 0),
+  day_of_month INTEGER NOT NULL CHECK (day_of_month BETWEEN 1 AND 28),
+  description TEXT,
+  start_month TEXT NOT NULL,
+  end_month TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS recurring_done (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  recurring_id INTEGER NOT NULL,
+  recurring_month TEXT NOT NULL,
+  expense_id INTEGER,
+  UNIQUE (recurring_id, recurring_month)
+);
 CREATE INDEX IF NOT EXISTS idx_expenses_cat ON expenses(category_id);
 
 -- Session 28: in-app notifications. One row per person per message. dedupe_key (optional) makes a scheduled reminder fire once:

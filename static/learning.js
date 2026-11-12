@@ -37,6 +37,40 @@ document.addEventListener("click", async e => {
 });
 document.addEventListener("change", e => { const f = CH[e.target.dataset.ch]; if (f) f(e.target); });
 
+// ---------- bulk actions (v0.8.37): tick rows, then one action for all of them ----------
+// Each action calls the same route as the single button, one row at a time, so every check, reason and log line stays exactly as before.
+const bulkSel = g => { S.bulk = S.bulk || {}; return S.bulk[g] || (S.bulk[g] = []); };
+const bulkBox = (g, id, label) => `<input type="checkbox" class="bulk" data-g="${g}" value="${id}" aria-label="${esc(t("bulk_select") + ": " + label)}"${bulkSel(g).includes(+id) ? " checked" : ""}>`;
+const bulkAll = (g, ids) => ids.length ? `<label class="inl bulk-all-l"><input type="checkbox" class="bulk-all" data-g="${g}" data-ids="${ids.join(",")}"${ids.every(i => bulkSel(g).includes(+i)) ? " checked" : ""}> ${t("bulk_all")}</label>` : "";
+// ids: the rows on screen now. Anything ticked earlier that is no longer shown (another filter or search) is let go, so an action never reaches a hidden row.
+const bulkBar = (g, actions, ids) => { const keep = (ids || []).map(Number); S.bulk = S.bulk || {}; S.bulk[g] = bulkSel(g).filter(i => keep.includes(i)); return bulkBarHtml(g, actions); };
+const bulkBarHtml = (g, actions) => `<div class="bulkbar" data-bulkbar="${g}"${bulkSel(g).length ? "" : " hidden"} role="group" aria-label="${esc(t("bulk_actions"))}"><span><b data-bulkn>${bulkSel(g).length}</b> ${t("bulk_selected")}</span>`
+  + actions.map(([k, label, danger]) => `<button class="btn sm${danger ? " danger" : ""}" data-do="${k}">${esc(t(label))}</button>`).join("") + `<button class="btn sm alt" data-do="bulkClear" data-g="${g}">${t("bulk_clear")}</button></div>`;
+function bulkSync(g) {
+  const n = bulkSel(g).length, bar = document.querySelector(`[data-bulkbar="${g}"]`);
+  if (bar) { bar.hidden = !n; bar.querySelector("[data-bulkn]").textContent = n; }
+  document.querySelectorAll(`.bulk-all[data-g="${g}"]`).forEach(a => { a.checked = a.dataset.ids.split(",").every(i => bulkSel(g).includes(+i)); });
+  announce(t("bulk_n_selected").replace("{n}", n));
+}
+document.addEventListener("change", e => {
+  const el = e.target, g = el.dataset && el.dataset.g; if (!g || !el.classList) return;
+  if (el.classList.contains("bulk")) { const id = +el.value, sel = bulkSel(g).filter(x => x !== id); if (el.checked) sel.push(id); S.bulk[g] = sel; }
+  else if (el.classList.contains("bulk-all")) {
+    const ids = el.dataset.ids.split(",").map(Number);
+    S.bulk[g] = el.checked ? [...new Set([...bulkSel(g), ...ids])] : bulkSel(g).filter(x => !ids.includes(x));
+    document.querySelectorAll(`.bulk[data-g="${g}"]`).forEach(b => { b.checked = S.bulk[g].includes(+b.value); });
+  } else return;
+  bulkSync(g);
+});
+DO.bulkClear = d => { S.bulk[d.g] = []; };
+async function bulkRun(g, fn) {   // runs fn(id) for every ticked row; a failure on one row does not stop the others
+  const ids = [...bulkSel(g)]; let done = 0; const bad = [];
+  for (const id of ids) { try { await fn(id); done++; } catch (x) { bad.push(x.message); } }
+  S.bulk[g] = [];
+  const why = [...new Set(bad)].slice(0, 3).join(" · ");
+  flash(t("bulk_done").replace("{n}", done).replace("{m}", ids.length) + (bad.length ? ` ${t("bulk_failed").replace("{n}", bad.length)}: ${why}` : ""), !bad.length);
+}
+
 // ---------- shared pieces ----------
 // dates and times stay left-to-right even inside Dhivehi (right-to-left) text, otherwise 15:56–16:56 reads backwards
 const whenHtml = o => `${esc(o.date === mvToday() ? t("today") : dayName(o.weekday))} <bdi dir="ltr">${esc(o.date)} · ${esc(o.start_time)}–${esc(o.end_time)}</bdi>`;
@@ -96,7 +130,8 @@ function teacherToday(h) {
     + (o.attendance_taken ? `<div class="rowflex">${tag("✓ " + t("Attendance taken"), "ok")}<button class="btn sm alt" data-do="takeAtt" data-b="${o.batch_id}">${t("edit")}</button></div>`
       : `<button class="btn sm${o.started ? "" : " alt"}" data-do="takeAtt" data-b="${o.batch_id}">${t("Take attendance")}</button>`) + `</div>`).join("");
   const grade = h.to_grade ? `<div class="cl"><div><b>${h.to_grade}</b> ${esc(t("pending_grading"))}</div><button class="btn sm" data-do="goGrade">${t("open")}</button></div>` : "";
-  return `<div class="panel" id="todayp"><h2>${t("Today")}</h2>${rows || `<p class="hint">${esc(t("no_class_today"))}</p>`}${grade}</div>`;
+  const tut = h.tut_to_grade ? `<div class="cl"><div><b>${h.tut_to_grade}</b> ${esc(t("tut_answers_to_grade"))}</div><button class="btn sm" data-do="goTab" data-v="tutorials">${t("open")}</button></div>` : "";
+  return `<div class="panel" id="todayp"><h2>${t("Today")}</h2>${rows || `<p class="hint">${esc(t("no_class_today"))}</p>`}${grade}${tut}</div>`;
 }
 DO.goTab = d => { openTab(d.v); return false; };
 DO.takeAtt = d => {
@@ -312,12 +347,29 @@ DO.sendTAns = async d => {
 };
 const answerBox = (x, mine) => `<div class="sub"><h3>${t("your_answer")}</h3>
   ${mine ? `<p class="hint">${t("answered")} · <bdi dir="ltr">${esc((mine.submitted_at || "").slice(0, 16))}</bdi></p>` : ""}
+  ${mine && mine.graded_at ? `<div class="msg ok"><b>${x.max_points != null ? t("grade") + ": " + gradeTxt(mine.grade, x.max_points) : t("tut_comment")}</b>${mine.feedback ? `<br>${esc(mine.feedback)}` : ""}</div>` : ""}
   <p class="hint">${t("tutorial_answer_hint")}</p>
   <label>${t("your_answer")}<textarea id="tans_x" rows="5" maxlength="10000">${esc((mine && mine.text_answer) || "")}</textarea></label>
   ${mine && mine.has_file ? `<p>${t("your_file")}: <button class="btn sm" data-do="dlTAns" data-id="${mine.id}" data-name="${esc(mine.file_name || "file")}">${esc(mine.file_name || t("download"))}</button></p>` : ""}
   <label>${t("attach_file")}<input type="file" id="tans_f" accept=".pdf,.jpg,.jpeg,.png,.docx,.mp3,.m4a,.mp4"></label>
   <p><button class="btn" data-do="sendTAns" data-id="${x.id}">${t(mine ? "send_answer_again" : "send_answer")}</button></p></div>`;
-const answersList = (r) => `<div class="sub"><h3>${t("tutorial_answers")} (${r.submissions.length})</h3>${r.submissions.map(a => `<div class="bk cl"><b>${esc(a.full_name)}</b> <span class="hint"><bdi dir="ltr">${esc((a.submitted_at || "").slice(0, 16))}</bdi></span>${a.text_answer ? `<p class="pre">${esc(a.text_answer)}</p>` : ""}${a.has_file ? `<p><button class="btn sm" data-do="dlTAns" data-id="${a.id}" data-name="${esc(a.file_name || "file")}">${t("download")}: ${esc(a.file_name || t("file"))}</button></p>` : ""}</div>`).join("") || `<p>${t("no_answers_yet")}</p>`}</div>`;
+// v0.8.37: tutorial grading. Answers waiting for a grade come first; a saved grade is changed only by an admin or a teacher with "edit_grades"
+const gradeTxt = (g, mx) => mx == null ? "" : `${+g}/${mx}`;
+const ansGrade = (r, a) => {
+  const mx = r.tutorial.max_points, done = !!a.graded_at, locked = done && !r.can_edit_grades;
+  const shown = done ? `<p>${mx != null ? tag(t("grade") + " " + gradeTxt(a.grade, mx), "ok") + " " : ""}${a.feedback ? esc(a.feedback) : ""} <span class="hint">${esc(a.graded_by_name || "")}</span>${a.changed_after_grading ? " " + tag(t("tut_changed_after"), "warn") : ""}</p>` : "";
+  if (locked) return shown + `<p class="hint">${t("tut_grade_locked")}</p>`;
+  return shown + `<div class="rowflex row">${mx != null ? `<label style="flex:0 1 130px">${t("grade")} (${t("out_of")} ${mx})<input id="tg_${a.id}" type="number" min="0" max="${mx}" step="0.5" inputmode="decimal" value="${done && a.grade != null ? +a.grade : ""}"></label>` : ""}
+    <label style="flex:1 1 220px">${t(mx != null ? "feedback" : "tut_comment")}<input id="tc_${a.id}" maxlength="2000" value="${esc(a.feedback || "")}"></label>
+    <button class="btn sm" data-do="tGrade" data-id="${a.id}" data-mx="${mx ?? ""}">${t(done ? "tut_update_grade" : "tut_save_grade")}</button></div>`;
+};
+DO.tGrade = async d => {
+  const g = d.mx ? $("#tg_" + d.id).value.trim() : "", fb = $("#tc_" + d.id).value.trim();
+  if (d.mx && g === "") throw new Error(t("tut_grade_need"));
+  if (!d.mx && !fb) throw new Error(t("tut_comment_need"));
+  await api(`/tutorial-submissions/${d.id}/grade`, "POST", {grade: d.mx ? g : null, feedback: fb}); flash(t("saved"), true);
+};
+const answersList = (r) => `<div class="sub"><h3>${t("tutorial_answers")} (${r.submissions.length})</h3>${r.submissions.map(a => `<div class="bk cl" data-ans="${a.id}"><div style="flex:1"><b>${esc(a.full_name)}</b> ${a.graded_at ? "" : tag(t("tut_to_grade"), "warn")} <span class="hint"><bdi dir="ltr">${esc((a.submitted_at || "").slice(0, 16))}</bdi></span>${a.text_answer ? `<p class="pre">${esc(a.text_answer)}</p>` : ""}${a.has_file ? `<p><button class="btn sm" data-do="dlTAns" data-id="${a.id}" data-name="${esc(a.file_name || "file")}">${t("download")}: ${esc(a.file_name || t("file"))}</button></p>` : ""}${ansGrade(r, a)}</div></div>`).join("") || `<p>${t("no_answers_yet")}</p>`}</div>`;
 
 views.tutorials = async () => {
   const f = S.tf || {}, q = new URLSearchParams();
@@ -336,13 +388,16 @@ views.tutorials = async () => {
       const fd = new FormData(); fd.append("title", val("tp_t")); fd.append("text", $("#tp_x").value.trim());
       if (val("tp_u")) fd.append("url", val("tp_u")); const pc = tch ? ((S.mine || []).find(b => b.id === S.sb) || {}).course_id : val("tp_c"); if (pc) fd.append("course_id", pc);
       const file = $("#tp_f").files[0]; if (file) fd.append("file", file);
+      fd.append("max_points", val("tp_m"));
       await apiForm("/tutorials", fd);
     });
   });
   const opts = [["", "-"], ...courses.map(c => [c.id, c.name + (c.level ? " " + c.level : "")])];
   const card = x => {
     const isOpen = open && open.id === x.id;
-    const status = x.can_submit ? (x.my_submission ? tag(t("answered"), "ok") : tag(t("not_answered"), "warn")) : "";
+    const ms = x.my_submission;
+    const status = x.can_submit ? (ms ? (ms.graded ? tag(x.max_points != null ? t("grade") + " " + gradeTxt(ms.grade, x.max_points) : t("tut_commented"), "ok") : tag(t("answered"), "ok")) : tag(t("not_answered"), "warn"))
+      : x.can_view_answers && x.ungraded_count ? tag(t("tut_n_to_grade").replace("{n}", x.ungraded_count), "warn") : "";
     const act = x.can_submit ? `<button class="btn sm alt" data-do="openT" data-id="${x.id}">${isOpen ? t("close") : t(x.my_submission ? "edit_answer" : "answer_tutorial")}</button>`
       : x.can_view_answers ? `<button class="btn sm alt" data-do="openT" data-id="${x.id}">${isOpen ? t("close") : t("tutorial_answers") + " (" + (x.answer_count || 0) + ")"}</button>` : "";
     return `<div class="panel"><div class="cl"><div><b>${esc(x.title)}</b> ${status}${!x.accepts_answers ? tag(t("older_post")) : ""}<br><span class="hint">${esc(x.uploader)} · ${esc(t(x.uploader_role))} · ${esc((x.created_at || "").slice(0, 10))}${x.course_name ? " · " + esc(x.course_name) : ""}</span></div>${x.can_delete ? `<button class="btn sm alt" data-do="delTut" data-id="${x.id}">${t("delete")}</button>` : ""}</div>
@@ -353,6 +408,7 @@ views.tutorials = async () => {
     ${canPost ? `<div class="panel"><h2>${t("share_tutorial")}</h2><form id="tfp" class="row">${field("tp_t", "title")}${tch ? "" : field("tp_c", "course_optional", "", opts)}
       <label class="full">${t("tutorial_text")}<textarea id="tp_x" rows="5" maxlength="8000"></textarea></label>
       <label>${t("file")}<input type="file" id="tp_f" accept=".pdf,.jpg,.jpeg,.png,.docx,.pptx,.xlsx,.mp3,.m4a,.mp4"></label>${field("tp_u", "url", "url")}
+      <label>${t("tut_marks_out_of")}<input id="tp_m" type="number" min="1" max="1000" step="1" inputmode="numeric" value="100" aria-describedby="tp_mh"><span class="hint" id="tp_mh">${t("tut_marks_hint")}</span></label>
       <p class="full m0 hint">${t("tutorial_need")}</p><button class="btn alt">${t("post")}</button></form></div>` : ""}
     <div class="panel"><form id="tff" class="row">${tch ? "" : field("tf_c", "course", "", [["", t("all_courses")], ...opts.slice(1)])}<label>${t("search")}<input id="tf_q" value="${esc(f.q || "")}"></label><button class="btn">${t("search")}</button></form></div>
     ${list.length ? list.map(card).join("") : `<div class="panel"><p>${t("empty")}</p></div>`}${list.length >= lim ? `<p><button class="btn" data-do="moreTut">${t("load_more")}</button></p>` : ""}`;
@@ -379,4 +435,46 @@ views.my_earnings = async () => {
   return `<h1>${t("my_earnings")}</h1><p class="hint">${esc(r.note)}</p><div class="stats"><div class="stat"><b>${money(r.earned_mvr)}</b>${t("Earned")}</div><div class="stat"><b>${money(r.paid_mvr)}</b>${t("Paid")}</div><div class="stat"><b>${money(r.outstanding_mvr)}</b>${t("Outstanding")}</div></div>
     <div class="panel">${body ? `<div class="scrollx"><table><thead><tr><th>${t("Month")}</th><th>${t("batch")}</th><th>${t("Collected")}</th><th>${t("Share")}</th><th>${t("Your share")}</th></tr></thead><tbody>${body}</tbody></table></div>` : `<p>${t("empty")}</p>`}</div>
     <div class="panel"><h2>${t("Payments received")}</h2>${pays ? `<table><thead><tr><th>${t("Date")}</th><th>${t("Amount")}</th><th>${t("Method")}</th></tr></thead><tbody>${pays}</tbody></table>` : `<p>${t("empty")}</p>`}</div>`;
+};
+
+// ---------- timetable (v0.8.37): one week of classes, every batch the person may see (all batches for an admin) ----------
+const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
+const mondayOf = iso => addDays(iso, -((new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7));
+DO.ttWeek = d => { S.ttw = d.w === "0" ? 0 : (S.ttw || 0) + +d.w; };
+views.timetable = async () => {
+  const today = mvToday(), d0 = addDays(mondayOf(today), 7 * (S.ttw || 0)), d1 = addDays(d0, 6);
+  const adm = S.user.role === "admin";
+  // batch_id=0: the whole week across all the person's batches, not only the one picked at the top (the server still limits it to their batches)
+  const list = await api(`/timetable?from=${d0}&to=${d1}&batch_id=0`);
+  const f = S.ttf || {};
+  mount(() => { ["ttf_t", "ttf_c"].forEach(id => { const e = $("#" + id); if (e) e.onchange = () => { S.ttf = {t: val("ttf_t"), c: val("ttf_c")}; render(); }; }); });
+  const teachers = [...new Set(list.map(o => o.teacher_name).filter(Boolean))].sort(), courses = [...new Set(list.map(o => o.course_name))].sort();
+  const shown = list.filter(o => (!f.t || o.teacher_name === f.t) && (!f.c || o.course_name === f.c));
+  const days = [...Array(7)].map((_, i) => addDays(d0, i));
+  const item = o => `<div class="tt-i${o.status === "cancelled" ? " off" : ""}${o.live ? " live" : ""}"><b><bdi dir="ltr">${esc(o.start_time)}–${esc(o.end_time)}</bdi></b><br>${esc(o.course_name)} · ${esc(o.batch_code)}${S.user.role !== "teacher" && o.teacher_name ? `<br><span class="hint">${esc(o.teacher_name)}</span>` : ""}${o.topic ? `<br><span class="hint">${esc(o.topic)}</span>` : ""}
+    ${o.status === "cancelled" ? "<br>" + tag(t("class_cancelled"), "bad") : o.extra ? "<br>" + tag(t("extra")) : ""}${o.can_join ? `<br><a class="btn sm" href="${esc(safeUrl(o.meet_link))}" target="_blank" rel="noopener noreferrer">${t("join")}</a>` : ""}</div>`;
+  const col = d => { const its = shown.filter(o => o.date === d), wd = new Date(d + "T00:00:00Z").getUTCDay();
+    return `<section class="tt-d${d === today ? " now" : ""}" aria-label="${esc(dayName(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][wd]) + " " + d)}"><h3>${esc(dayName(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][wd]))} <span class="hint"><bdi dir="ltr">${esc(d.slice(5))}</bdi></span>${d === today ? " " + tag(t("today"), "ok") : ""}</h3>${its.map(item).join("") || `<p class="hint">${t("tt_no_class")}</p>`}</section>`; };
+  const filters = adm && list.length ? `<div class="row">${field("ttf_t", "teacher", "", [["", t("all")], ...teachers.map(x => [x, x])])}${field("ttf_c", "course", "", [["", t("all_courses")], ...courses.map(x => [x, x])])}</div>` : "";
+  mount(() => { if ($("#ttf_t")) $("#ttf_t").value = f.t || ""; if ($("#ttf_c")) $("#ttf_c").value = f.c || ""; });
+  return `<h1>${t("timetable")}</h1><div class="panel"><div class="rowflex"><button class="btn sm alt" data-do="ttWeek" data-w="-1" aria-label="${t("tt_prev")}">‹ ${t("tt_prev")}</button>${S.ttw ? `<button class="btn sm alt" data-do="ttWeek" data-w="0">${t("tt_this_week")}</button>` : ""}<button class="btn sm alt" data-do="ttWeek" data-w="1" aria-label="${t("tt_next")}">${t("tt_next")} ›</button>
+    <b><bdi dir="ltr">${esc(d0)} – ${esc(d1)}</bdi></b> <span class="hint">${t("tt_count").replace("{n}", shown.filter(o => o.status !== "cancelled").length)}</span></div>${filters}</div>
+    <div class="tt">${days.map(col).join("")}</div>`;
+};
+
+// ---------- my files (v0.8.37): every file the person can open, in one list with a search ----------
+const MF_KINDS = ["material", "assignment", "my_work", "tutorial", "my_tutorial_answer", "slip", "receipt"];
+DO.mfOpen = async d => { await viewFile(d.path, d.name); return false; };
+views.my_files = async () => {
+  const r = await api("/my/files"), f = S.mff || {};
+  mount(() => { const fm = $("#mff"); if (fm) fm.onsubmit = e => { e.preventDefault(); S.mff = {q: val("mff_q"), k: val("mff_k")}; render(); };
+    if ($("#mff_k")) $("#mff_k").value = f.k || ""; });
+  const q = (f.q || "").toLowerCase();
+  const list = r.files.filter(x => (!f.k || x.kind === f.k) && (!q || [x.title, x.file_name, x.where].join(" ").toLowerCase().includes(q)));
+  const kinds = MF_KINDS.filter(k => r.files.some(x => x.kind === k));
+  const row = x => `<div class="cl"><div><b>${esc(x.title || x.file_name || "")}</b> ${tag(t("mf_" + x.kind))}<br><span class="hint"><bdi>${esc(x.file_name || "")}</bdi>${x.where ? " · " + esc(x.where) : ""}${x.date ? ` · <bdi dir="ltr">${esc(x.date)}</bdi>` : ""}</span></div>
+    <button class="btn sm" data-do="mfOpen" data-path="${esc(x.path)}" data-name="${esc(x.file_name || "file")}">${t("open")}</button></div>`;
+  return `<h1>${t("my_files")}</h1><p class="hint">${t("mf_intro")}</p>
+    <div class="panel"><form id="mff" class="row"><label>${t("search")}<input id="mff_q" value="${esc(f.q || "")}"></label>${field("mff_k", "mf_kind", "", [["", t("all")], ...kinds.map(k => [k, t("mf_" + k)])])}<button class="btn">${t("search")}</button></form></div>
+    <div class="panel"><p class="hint">${t("mf_count").replace("{n}", list.length)}</p>${list.map(row).join("") || `<p>${t("empty")}</p>`}</div>`;
 };

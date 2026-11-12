@@ -86,16 +86,25 @@ ROLE_AREAS = {
 OPT_IN = {"teacher": ("edit_grades", "cancel_class")}
 # Tabs in the order they are shown. Home, Dashboard and my_information (Session 16, read-only, own data only) need no permission.
 ROLE_TABS = {
-    "admin": ("dashboard", "admissions", "courses", "batches", "classroom", "tutorials", "people", "student_information", "teacher_information", "enrollments", "fees", "finance", "settings", "audit"),
-    "teacher": ("home", "classroom", "tutorials", "my_earnings", "my_information"),
-    "student": ("home", "assignments", "progress", "materials", "recordings", "fees", "tutorials", "my_information"),
+    "admin": ("dashboard", "admissions", "courses", "batches", "timetable", "classroom", "tutorials", "people", "student_information", "teacher_information", "enrollments", "fees", "finance", "settings", "audit"),
+    "teacher": ("home", "timetable", "classroom", "tutorials", "my_files", "my_earnings", "my_information"),
+    "student": ("home", "timetable", "assignments", "progress", "materials", "recordings", "fees", "tutorials", "my_files", "my_information"),
 }
 TAB_AREA = {a: a for a in AREAS}   # every tab that is not home/dashboard is guarded by the area of the same name
 
 
+# v0.8.37: tabs shown when the person has ANY of these areas (a limited account without them does not get an empty page)
+TAB_ANY = {("admin", "timetable"): ("batches", "classroom"), ("student", "my_files"): ("materials", "assignments", "tutorials", "fees"),
+           ("teacher", "my_files"): ("classroom", "tutorials")}
+
+
 def tabs_for(role, perms):
     """Tabs a person may see. perms is None (everything their role has) or a list of areas."""
-    return [t for t in ROLE_TABS.get(role, ()) if t not in TAB_AREA or perms is None or TAB_AREA[t] in perms]
+    def ok(t):
+        if perms is None: return True
+        if (role, t) in TAB_ANY: return any(a in perms for a in TAB_ANY[(role, t)])
+        return t not in TAB_AREA or TAB_AREA[t] in perms
+    return [t for t in ROLE_TABS.get(role, ()) if ok(t)]
 
 
 _URL = re.compile(r"^https://\S+$")

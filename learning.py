@@ -1042,12 +1042,19 @@ def register(app, c):
             if not one("SELECT 1 x FROM courses WHERE id=?", (cid,)): return err("Course not found", 404)
             if g.user["role"] == "teacher" and not one(f"SELECT 1 x FROM batches WHERE course_id=? AND id IN ({marks(len(teacher_batches(g.user['id'])) or 1)})", [cid, *(sorted(teacher_batches(g.user["id"])) or [0])]):
                 return err("You can only post tutorials for courses you teach", 403)
+        mx = 100   # v0.8.37: marks out of (empty = comments only)
+        if "max_points" in f:
+            raw = str(f.get("max_points") or "").strip()
+            if not raw: mx = None
+            else:
+                try: mx = int(raw); assert 1 <= mx <= 1000
+                except (ValueError, AssertionError): return err("Marks out of must be a whole number from 1 to 1000, or empty for comments only")
         stored = shown = None
         if has_file:
             try: stored, shown = save_file(up, ALLOWED_MATERIAL)
             except ValueError as x: return err(str(x))
-        tid = db().execute("INSERT INTO tutorials(title,body,course_id,file,file_name,url,uploaded_by) VALUES(?,?,?,?,?,?,?)",
-                           (f["title"].strip(), text or None, cid, stored, shown, url or None, g.user["id"])).lastrowid
+        tid = db().execute("INSERT INTO tutorials(title,body,course_id,file,file_name,url,uploaded_by,max_points) VALUES(?,?,?,?,?,?,?,?)",
+                           (f["title"].strip(), text or None, cid, stored, shown, url or None, g.user["id"], mx)).lastrowid
         audit("add_tutorial", "tutorial", tid, f["title"], course_id=cid); db().commit()
         return jsonify(id=tid), 201
 
@@ -1072,7 +1079,7 @@ def register(app, c):
             sb = request.args.get("batch_id", type=int)
             if sb:   # the picker's batch: its course's tutorials plus general ones (403 if the student is not actively in it)
                 w.append("(t.course_id IS NULL OR t.course_id=?)"); a.append(my_batches(sb)[0]["course_id"])
-        items = rows(f"SELECT t.id,t.title,SUBSTR(t.body,1,{PREVIEW + 1}) AS text,t.course_id,t.file_name,(t.file IS NOT NULL) AS has_file,t.url,t.created_at,t.uploaded_by,c.name AS course_name,u.full_name AS uploader,u.role AS uploader_role "
+        items = rows(f"SELECT t.id,t.title,SUBSTR(t.body,1,{PREVIEW + 1}) AS text,t.course_id,t.file_name,(t.file IS NOT NULL) AS has_file,t.url,t.created_at,t.uploaded_by,t.max_points,c.name AS course_name,u.full_name AS uploader,u.role AS uploader_role "
                      "FROM tutorials t LEFT JOIN courses c ON c.id=t.course_id JOIN users u ON u.id=t.uploaded_by "
                      + ("WHERE " + " AND ".join(w) + " " if w else "") + "ORDER BY t.id DESC LIMIT ?", [*a, limit])
         u = g.user
@@ -1081,9 +1088,9 @@ def register(app, c):
         ids = [t["id"] for t in items]
         mine, counts = {}, {}
         if ids and student:
-            mine = {r["tutorial_id"]: r for r in rows(f"SELECT tutorial_id,submitted_at,(file IS NOT NULL) AS has_file,(text_answer IS NOT NULL) AS has_text FROM tutorial_submissions WHERE student_id=? AND tutorial_id IN ({','.join('?' * len(ids))})", [u["id"], *ids])}
+            mine = {r["tutorial_id"]: r for r in rows(f"SELECT tutorial_id,submitted_at,(file IS NOT NULL) AS has_file,(text_answer IS NOT NULL) AS has_text,grade,feedback,graded_at FROM tutorial_submissions WHERE student_id=? AND tutorial_id IN ({','.join('?' * len(ids))})", [u["id"], *ids])}
         if ids and staff:
-            counts = {r["tutorial_id"]: r["n"] for r in rows(f"SELECT tutorial_id,COUNT(*) n FROM tutorial_submissions WHERE tutorial_id IN ({','.join('?' * len(ids))}) GROUP BY tutorial_id", ids)}
+            counts = {r["tutorial_id"]: r for r in rows(f"SELECT tutorial_id,COUNT(*) n,SUM(CASE WHEN graded_at IS NULL THEN 1 ELSE 0 END) todo FROM tutorial_submissions WHERE tutorial_id IN ({','.join('?' * len(ids))}) GROUP BY tutorial_id", ids)}
         for t in items:
             t["has_file"] = bool(t["has_file"])
             by_staff = t["uploader_role"] in ("admin", "teacher")
@@ -1093,10 +1100,12 @@ def register(app, c):
             t["can_submit"] = bool(student and by_staff)
             if student and by_staff:
                 s = mine.get(t["id"])
-                t["my_submission"] = {"submitted_at": s["submitted_at"], "has_file": bool(s["has_file"]), "has_text": bool(s["has_text"])} if s else None
+                t["my_submission"] = {"submitted_at": s["submitted_at"], "has_file": bool(s["has_file"]), "has_text": bool(s["has_text"]),
+                                      "grade": s["grade"], "feedback": s["feedback"], "graded": s["graded_at"] is not None} if s else None
             if staff and staff_of(t):
                 t["can_view_answers"] = True
-                t["answer_count"] = counts.get(t["id"], 0)
+                cn = counts.get(t["id"]) or {}
+                t["answer_count"], t["ungraded_count"] = cn.get("n") or 0, cn.get("todo") or 0
             t.pop("uploaded_by", None)
             t["text_truncated"] = bool(t["text"]) and len(t["text"]) > PREVIEW
             if t["text_truncated"]: t["text"] = t["text"][:PREVIEW]
@@ -1183,7 +1192,7 @@ def register(app, c):
         if not one("SELECT 1 x FROM tutorials WHERE id=?", (tid,)): return err("Tutorial not found", 404)
         e = tut_blocked(tid)
         if e: return e
-        s = one("SELECT id,text_answer,file_name,(file IS NOT NULL) AS has_file,submitted_at FROM tutorial_submissions WHERE tutorial_id=? AND student_id=?", (tid, g.user["id"]))
+        s = one("SELECT id,text_answer,file_name,(file IS NOT NULL) AS has_file,submitted_at,grade,feedback,graded_at FROM tutorial_submissions WHERE tutorial_id=? AND student_id=?", (tid, g.user["id"]))
         if s: s["has_file"] = bool(s["has_file"])
         return jsonify(submission=s)
 
@@ -1193,12 +1202,52 @@ def register(app, c):
         """Every student answer to one tutorial: the admin sees all, a teacher only for tutorials they posted."""
         e = gate("tutorials")
         if e: return e
-        t = one("SELECT id,title,uploaded_by FROM tutorials WHERE id=?", (tid,))
+        t = one("SELECT id,title,uploaded_by,max_points FROM tutorials WHERE id=?", (tid,))
         if not t: return err("Tutorial not found", 404)
         if not staff_of(t): return err("You can only see answers to your own tutorials", 403)
-        subs = rows("SELECT s.id,s.student_id,u.full_name,s.text_answer,s.file_name,(s.file IS NOT NULL) AS has_file,s.submitted_at FROM tutorial_submissions s JOIN users u ON u.id=s.student_id WHERE s.tutorial_id=? ORDER BY s.submitted_at DESC,s.id DESC", (tid,))
-        for s in subs: s["has_file"] = bool(s["has_file"])
-        return jsonify(tutorial={"id": t["id"], "title": t["title"]}, submissions=subs)
+        subs = rows("SELECT s.id,s.student_id,u.full_name,s.text_answer,s.file_name,(s.file IS NOT NULL) AS has_file,s.submitted_at,s.grade,s.feedback,s.graded_at,gu.full_name AS graded_by_name "
+                    "FROM tutorial_submissions s JOIN users u ON u.id=s.student_id LEFT JOIN users gu ON gu.id=s.graded_by WHERE s.tutorial_id=? "
+                    "ORDER BY (s.graded_at IS NOT NULL), s.submitted_at DESC, s.id DESC", (tid,))   # v0.8.37: answers waiting for a grade first
+        for s in subs:
+            s["has_file"] = bool(s["has_file"])
+            s["changed_after_grading"] = bool(s["graded_at"] and s["submitted_at"] and s["submitted_at"] > s["graded_at"])
+        return jsonify(tutorial={"id": t["id"], "title": t["title"], "max_points": t["max_points"]}, submissions=subs,
+                       can_edit_grades=g.user["role"] == "admin" or can("edit_grades"))
+
+    @app.post("/api/tutorial-submissions/<int:sid>/grade")
+    @auth("admin", "teacher", perm="create_tutorials")
+    def l_tut_grade(sid):
+        """v0.8.37: grade and/or comment one answer. Same rules as assignments: the poster or an admin grades; a saved grade is changed only by an
+        admin or a teacher with "edit_grades". A tutorial with no "marks out of" takes comments only."""
+        e = gate("tutorials")
+        if e: return e
+        s = one("SELECT s.*,t.title,t.uploaded_by,t.max_points,t.course_id FROM tutorial_submissions s JOIN tutorials t ON t.id=s.tutorial_id WHERE s.id=?", (sid,))
+        if not s: return err("Answer not found", 404)
+        if not staff_of(s): return err("You can only grade answers to your own tutorials", 403)
+        d = body()
+        fb = (d.get("feedback") or "").strip()[:2000] or None
+        raw = d.get("grade")
+        if s["max_points"] is None:
+            if raw not in (None, ""): return err("This tutorial takes comments only (no marks)")
+            gr = None
+            if not fb: return err("Write a comment")
+        else:
+            gr = points(raw, s["max_points"])
+            if gr is None: return err(f"Grade must be a number from 0 to {s['max_points']}")
+        if s["graded_at"]:
+            if gr == s["grade"] and fb == s["feedback"]: return jsonify(ok=True, grade=gr, changed=False)
+            if g.user["role"] != "admin" and not can("edit_grades"):
+                return err("This grade is already saved. Only an admin, or a teacher with permission to change grades, can edit it.", 403)
+            db().execute("UPDATE tutorial_submissions SET grade=?,feedback=?,graded_at=datetime('now') WHERE id=?", (gr, fb, sid))
+            audit("tutorial_grade_change", "tutorial_submission", sid, f"{s['title']}, student {s['student_id']}: {s['grade']} -> {gr}", course_id=s["course_id"], old=s["grade"], new=gr)
+            title = "Tutorial grade updated"
+        else:
+            db().execute("UPDATE tutorial_submissions SET grade=?,feedback=?,graded_by=?,graded_at=datetime('now') WHERE id=?", (gr, fb, g.user["id"], sid))
+            audit("tutorial_grade", "tutorial_submission", sid, f"{s['title']}, student {s['student_id']}: {gr}" + (f"; feedback: {fb}" if fb else ""), course_id=s["course_id"], new=gr)
+            title = "Tutorial graded"
+        c.notify([s["student_id"]], "grade", title, f"{s['title']}: " + (f"{gr:g} / {s['max_points']}" if gr is not None else "new comment"), "tutorials")
+        db().commit()
+        return jsonify(ok=True, grade=gr, changed=True)
 
     @app.get("/api/tutorial-submissions/<int:sid>/file")
     @auth(perm={"student": "submit_tutorial_work", "teacher": "create_tutorials", "admin": "create_tutorials"})
@@ -1260,6 +1309,51 @@ def register(app, c):
         out["recent_activity"] = rows("SELECT action,entity,entity_id,detail,at FROM audit_log WHERE user_id=? AND action NOT IN ('login','logout') ORDER BY id DESC LIMIT 10", (u["id"],))   # the teacher's own latest work (sign-ins left out)
         return jsonify(out)
 
+    # ---------- my files (v0.8.37): one list of every file a student or teacher can open, each with the route that serves it ----------
+    # Nothing new is exposed: every path below is an existing file route that checks access again when the file is opened.
+    @app.get("/api/my/files")
+    @auth("student", "teacher")
+    def l_my_files():
+        u, out = g.user, []
+        add = lambda kind, rs, path, title="title", when="created_at", where=True: out.extend(
+            {"kind": kind, "title": r[title], "file_name": r["file_name"], "date": (r[when] or "")[:10], "path": path.format(**r),
+             "where": f"{r['course_name']} {r['batch_code']}".strip() if where and r.get("course_name") else ""} for r in rs)
+        B = "JOIN batches b ON b.id={}.batch_id JOIN courses c ON c.id=b.course_id"
+        if u["role"] == "student":
+            act = "(SELECT batch_id FROM enrollments WHERE student_id=? AND status='active')"
+            if can("materials"):
+                add("material", rows(f"SELECT m.id,m.title,m.file_name,m.created_at,c.name AS course_name,b.code AS batch_code FROM materials m {B.format('m')} "
+                                     f"WHERE m.file IS NOT NULL AND m.batch_id IN {act}", (u["id"],)), "/materials/{id}/file")
+            if can("assignments"):
+                add("assignment", rows(f"SELECT a.id,a.title,a.attachment_name AS file_name,a.created_at,c.name AS course_name,b.code AS batch_code FROM assignments a {B.format('a')} "
+                                       f"WHERE a.attachment IS NOT NULL AND a.batch_id IN {act}", (u["id"],)), "/assignments/{id}/attachment")
+                add("my_work", rows(f"SELECT s.id,a.title,s.file_name,s.submitted_at,c.name AS course_name,b.code AS batch_code FROM submissions s JOIN assignments a ON a.id=s.assignment_id {B.format('a')} "
+                                    f"WHERE s.student_id=? AND s.file IS NOT NULL AND a.batch_id IN {act}", (u["id"], u["id"])), "/submissions/{id}/file", when="submitted_at")
+            if can("tutorials"):
+                add("tutorial", rows(f"SELECT t.id,t.title,t.file_name,t.created_at,c.name AS course_name,'' AS batch_code FROM tutorials t LEFT JOIN courses c ON c.id=t.course_id "
+                                     f"WHERE t.file IS NOT NULL AND {STU_TUT}", (u["id"],)), "/tutorials/{id}/file")
+                if can("submit_tutorial_work"):
+                    add("my_tutorial_answer", rows("SELECT s.id,t.title,s.file_name,s.submitted_at FROM tutorial_submissions s JOIN tutorials t ON t.id=s.tutorial_id "
+                                                   "WHERE s.student_id=? AND s.file IS NOT NULL", (u["id"],)), "/tutorial-submissions/{id}/file", when="submitted_at", where=False)
+            if can("fees"):
+                add("slip", rows("SELECT s.id,i.period AS title,s.file_name,s.created_at FROM payment_slips s JOIN invoices i ON i.id=s.invoice_id WHERE s.student_id=?", (u["id"],)),
+                    "/slips/{id}/file", where=False)
+                add("receipt", rows("SELECT p.id,p.receipt_no AS title,('receipt-' || p.receipt_no || '.pdf') AS file_name,p.paid_on FROM payments p WHERE p.student_id=? AND p.reversed_at IS NULL",
+                                    (u["id"],)), "/payments/{id}/receipt.pdf", when="paid_on", where=False)
+        else:
+            ids = sorted(teacher_batches(u["id"]))
+            if ids and can("classroom"):
+                q = marks(len(ids))
+                add("material", rows(f"SELECT m.id,m.title,m.file_name,m.created_at,c.name AS course_name,b.code AS batch_code FROM materials m {B.format('m')} "
+                                     f"WHERE m.file IS NOT NULL AND m.batch_id IN ({q})", ids), "/materials/{id}/file")
+                add("assignment", rows(f"SELECT a.id,a.title,a.attachment_name AS file_name,a.created_at,c.name AS course_name,b.code AS batch_code FROM assignments a {B.format('a')} "
+                                       f"WHERE a.attachment IS NOT NULL AND a.batch_id IN ({q})", ids), "/assignments/{id}/attachment")
+            if can("tutorials"):
+                add("tutorial", rows("SELECT t.id,t.title,t.file_name,t.created_at,c.name AS course_name,'' AS batch_code FROM tutorials t LEFT JOIN courses c ON c.id=t.course_id "
+                                     "WHERE t.file IS NOT NULL AND t.uploaded_by=?", (u["id"],)), "/tutorials/{id}/file")
+        out.sort(key=lambda x: (x["date"], x["title"] or ""), reverse=True)
+        return jsonify(files=out[:1000])
+
     @app.get("/api/my/home")
     @auth("student", "teacher")
     def l_home():
@@ -1314,4 +1408,7 @@ def register(app, c):
                     if st.get(s["id"], {}).get("low"):
                         low.append({"batch_id": b["id"], "batch_code": b["code"], "course_name": b["course_name"], "student_id": s["id"], "full_name": s["full_name"], "pct": st[s["id"]]["pct"]})
             out["to_grade"], out["low_attendance"] = n, low
+            # v0.8.37: answers to the teacher's own tutorials still waiting for a grade or comment
+            out["tut_to_grade"] = one("SELECT COUNT(*) n FROM tutorial_submissions s JOIN tutorials t ON t.id=s.tutorial_id WHERE t.uploaded_by=? AND s.graded_at IS NULL",
+                                      (g.user["id"],))["n"] if allow("tutorials") and can("create_tutorials") else 0
         return jsonify(out)

@@ -1,5 +1,7 @@
 # Baleegh Academy Portal
 
+**v0.8.37: Round 3.** Tutorial grading (run `migrate_v0837.py` first: dry run, then `--apply`); week Timetable for everyone; My files; bulk actions on invoices, people and admissions; monthly expenses entered automatically. See `CHANGES-v0.8.37.md`.
+
 **v0.8.36: Round 2.** One-tap slip check (slip and invoice facts in one dialog with Verify/Reject); "Remind next on WhatsApp" on Fees → Overdue; fee statement PDF for students and admins; duplicate-applicant warning on Admissions review; sign-in link in the approval message. See `CHANGES-v0.8.36.md`.
 
 **v0.8.35: Round 1.** Forgot password (request to admins, reset and send by WhatsApp); admin Dashboard "To do today"; teacher Home "Today" with Take attendance; student Home "What to do next"; PDF receipts and invoices print Arabic and Dhivehi names; voided invoices are never revenue and are out of the normal list (Status: Void finds them). See `CHANGES-v0.8.35.md`.

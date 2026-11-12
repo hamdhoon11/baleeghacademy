@@ -119,6 +119,9 @@ DO.fxDisc = async d => {
   if (!v) return false;
   await api(`/invoices/${d.id}/discount`, "POST", {kind: v.kind, value: v.value, reason: v.reason}); flash(t("saved"), true);
 };
+// v0.8.37: one reason for all the ticked invoices; each goes through the same route as its own button
+DO.fxBulkWaive = async () => { const n = bulkSel("inv").length; const r = await fxAsk(t("fx_waive") + " · " + n, {okText: t("fx_waive")}); if (!r) return false; await bulkRun("inv", id => api(`/invoices/${id}/waive`, "POST", {reason: r})); };
+DO.fxBulkVoid = async () => { const n = bulkSel("inv").length; const r = await fxAsk(t("fx_void") + " · " + n, {danger: true, okText: t("fx_void")}); if (!r) return false; await bulkRun("inv", id => api(`/invoices/${id}/void`, "POST", {reason: r})); };
 DO.fxVoid = async d => { const r = await fxAsk(t("fx_void"), {danger: true, okText: t("fx_void")}); if (!r) return false; await api(`/invoices/${d.id}/void`, "POST", {reason: r}); flash(t("saved"), true); };
 DO.fxWaive = async d => { const r = await fxAsk(t("fx_waive"), {okText: t("fx_waive")}); if (!r) return false; await api(`/invoices/${d.id}/waive`, "POST", {reason: r}); flash(t("saved"), true); };
 DO.fxReopen = async d => { const r = await fxAsk(t("fx_reopen"), {okText: t("fx_reopen")}); if (!r) return false; await api(`/invoices/${d.id}/reopen`, "POST", {reason: r}); flash(t("saved"), true); };
@@ -143,7 +146,8 @@ DO.fxPrHist = d => { S.fxf = {...(S.fxf || {}), hist: +d.id}; };
 DO.fxPrBack = () => { S.fxf = {...(S.fxf || {}), hist: null}; };
 DO.fxCsv = async () => { const m = val("fxr_m") || fxMonth(); await download("/fees/report.csv?month=" + m, `fees-${m}.csv`); return false; };
 
-const invRow = i => `<div class="cl ${i.status === "void" ? "off" : ""}"><div><b>${esc(i.student_name)}</b> ${fxBadge(i)}<br><span class="hint">${ltr(i.number)} · ${esc(i.course_name)} ${esc(i.batch_code)} · ${t("fx_due_on")} ${ltr(i.due_date)}</span><br>${mvr(i.amount_due_mvr)} · ${t("fx_balance")}: ${mvr(i.balance)}${i.status_reason ? `<br><span class="hint">${esc(i.status_reason)}</span>` : ""}</div>
+const FX_OPEN = i => ["unpaid", "slip_submitted"].includes(i.status);
+const invRow = i => `<div class="cl ${i.status === "void" ? "off" : ""}"><div>${FX_OPEN(i) ? bulkBox("inv", i.id, i.number + " " + i.student_name) + " " : ""}<b>${esc(i.student_name)}</b> ${fxBadge(i)}<br><span class="hint">${ltr(i.number)} · ${esc(i.course_name)} ${esc(i.batch_code)} · ${t("fx_due_on")} ${ltr(i.due_date)}</span><br>${mvr(i.amount_due_mvr)} · ${t("fx_balance")}: ${mvr(i.balance)}${i.status_reason ? `<br><span class="hint">${esc(i.status_reason)}</span>` : ""}</div>
   <div class="seg"><button class="btn sm" data-do="fxInvPdf" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_invoice_pdf")}</button>${["unpaid", "slip_submitted"].includes(i.status) ? `<button class="btn sm" data-do="fxDisc" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_discount")}</button><button class="btn sm" data-do="fxWaive" data-id="${i.id}">${t("fx_waive")}</button><button class="btn sm" data-do="fxVoid" data-id="${i.id}">${t("fx_void")}</button>` : ""}${["void", "waived"].includes(i.status) ? `<button class="btn sm" data-do="fxReopen" data-id="${i.id}">${t("fx_reopen")}</button>` : ""}</div></div>`;
 
 const FX = {
@@ -166,7 +170,7 @@ const FX = {
       <div class="panel"><form id="fxff" class="row"><label>${t("fx_month")}<input id="fxf_m" type="month" value="${esc(f.month || "")}"></label>
       <label>${t("status")}<select id="fxf_s"><option value="">${t("fx_all_but_void")}</option><option value="all">${t("fx_all_with_void")}</option>${["unpaid", "slip_submitted", "overdue", "paid", "waived", "void"].map(s => `<option value="${s}">${t("fx_st_" + s)}</option>`).join("")}</select></label>
       <label>${t("fx_search")}<input id="fxf_q" value="${esc(f.q || "")}"></label><button class="btn">${t("fx_filter")}</button></form></div>
-      <div class="panel">${l.length ? l.map(invRow).join("") : `<p>${t("empty")}</p>`}</div>`;
+      <div class="panel">${bulkBar("inv", [["fxBulkWaive", "fx_waive"], ["fxBulkVoid", "fx_void", true]], l.filter(FX_OPEN).map(i => i.id))}${bulkAll("inv", l.filter(FX_OPEN).map(i => i.id))}${l.length ? l.map(invRow).join("") : `<p>${t("empty")}</p>`}</div>`;
   },
   async record() {
     const [inv, pays] = await Promise.all([api("/invoices?status=open"), api("/payments")]);

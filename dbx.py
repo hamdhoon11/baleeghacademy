@@ -30,6 +30,11 @@ _ID_TABLE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+)\s*\(\s*id INTEGER PRIM
 _LOCK_KEY = 727_001   # arbitrary number: stops two serverless instances from migrating the schema at the same moment
 
 
+V0837_COLUMNS = (("tutorials", "max_points", "INTEGER DEFAULT 100"), ("tutorial_submissions", "grade", "REAL"), ("tutorial_submissions", "feedback", "TEXT"),
+                            ("tutorial_submissions", "graded_by", "INTEGER"), ("tutorial_submissions", "graded_at", "TEXT"),
+                            ("expenses", "recurring_id", "INTEGER"), ("expenses", "recurring_month", "TEXT"))   # v0.8.37: recurring expenses (nullable)
+
+
 def is_postgres(url):
     return bool(url) and url.split(":", 1)[0] in ("postgres", "postgresql")
 
@@ -240,6 +245,9 @@ def init_schema(conn, base):
     # Session 20: activity log v2. Old rows keep working (all new columns are nullable); auditlog.backfill() fills what can be worked out.
     for col in ("user_role", "login_id", "course_id", "batch_id", "old_value", "new_value", "ip"):
         if col not in conn.columns("audit_log"): conn.execute(f"ALTER TABLE audit_log ADD COLUMN {col} {'INTEGER' if col.endswith('_id') and col != 'login_id' else 'TEXT'}")
+    # v0.8.37: tutorial grading and recurring expenses. Additive only: existing tutorials get "out of 100", existing answers stay ungraded (migrate_v0837.py shows this first).
+    for tbl, col, decl in V0837_COLUMNS:
+        if col not in conn.columns(tbl): conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {schema_to_pg(decl) if conn.pg else decl}")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_batch ON audit_log(batch_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id)")
     import auditlog; auditlog.install_triggers(conn)   # Session 21: the log can be added to but never changed or deleted

@@ -1183,7 +1183,8 @@ def create_app(config=None):
         if not secret or not got.startswith("Bearer ") or not hmac.compare_digest(got[7:].encode(), secret.encode()):
             return err("Not allowed", 401)
         r = fees_hook("catch_up", None, "scheduled run")
-        return jsonify(period=r["period"], created=r["created"], skipped_total=r["skipped_total"], skipped=r["skipped"])
+        written = app.extensions["recurring"]("scheduled run") if "recurring" in app.extensions else 0   # v0.8.37: monthly expenses due today
+        return jsonify(expenses_written=written, period=r["period"], created=r["created"], skipped_total=r["skipped_total"], skipped=r["skipped"])
 
     # ---------- Phase 4: fees and payments (invoices, slips, receipts, reminders, reports) ----------
     import fees
@@ -1194,6 +1195,8 @@ def create_app(config=None):
     import finance, earnings
     earnings.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # Session 30: teacher earnings
     finance.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # Session 23: expenses
+    import recurring
+    recurring.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # v0.8.37: monthly expenses
     import admindash
     admindash.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # Session 25: admin dashboard
     import payreports

@@ -265,6 +265,21 @@ kbd{font:600 .8rem/1 var(--body);border:1px solid var(--line);border-bottom-widt
 label.inl{flex:0 0 auto;flex-direction:row;align-items:center;gap:.4rem}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 @media print{nav,.scrim,.skip,.ctx{display:none!important}.app{display:block}main{padding:0}.panel{box-shadow:none}}
+/* v0.8.37: week timetable. Seven columns on a wide screen, one day under another on a phone */
+.tt{display:grid;grid-template-columns:1fr;gap:8px}
+@media(min-width:560px){.tt{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(min-width:1000px){.tt{grid-template-columns:repeat(7,minmax(0,1fr))}}
+.tt-d{background:var(--white);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px;min-width:0}
+.tt-d.now{border-color:var(--lagoon);box-shadow:0 0 0 1px var(--lagoon)}
+.tt-d h3{font-size:1rem;margin:0 0 6px}
+.tt-i{border-inline-start:3px solid var(--sun);padding:4px 6px;margin:6px 0;overflow-wrap:anywhere}
+.tt-i.off{opacity:.6;text-decoration:line-through}
+.tt-i.live{background:var(--mist)}
+/* v0.8.37: bulk actions */
+.bulkbar{position:sticky;top:calc(var(--top) + var(--sat));z-index:5;display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;background:var(--mist);border:1px solid var(--line);border-radius:var(--r-sm);padding:.5rem .7rem;margin-bottom:.7rem}
+.bulkbar[hidden]{display:none}
+input.bulk,input.bulk-all{width:24px;height:24px;min-height:24px;margin:0;flex:0 0 auto}
+.bulk-all-l{margin-bottom:.4rem}
 </style>
 </head>
 <body>
@@ -476,6 +491,8 @@ const IC = {
   progress: '<path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/>',
   materials: '<path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   recordings: '<rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 11 6-4v10l-6-4"/>',
+  timetable: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4M7 13h3M14 13h3M7 17h3"/>',
+  my_files: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M12 12v6M9 15l3 3 3-3"/>',
   my_information: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
   my_earnings: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
@@ -489,7 +506,7 @@ const IC = {
 };
 const icon = k => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${IC[k] || IC.dot}</svg>`;
 // The admin menu has 14 entries, so it is grouped. Tabs and their order still come from the server (ROLE_TABS).
-const NAV_GROUP = {dashboard: "nav_overview", admissions: "nav_overview", courses: "nav_teaching", batches: "nav_teaching", classroom: "nav_teaching", tutorials: "nav_teaching",
+const NAV_GROUP = {dashboard: "nav_overview", admissions: "nav_overview", courses: "nav_teaching", batches: "nav_teaching", timetable: "nav_teaching", classroom: "nav_teaching", tutorials: "nav_teaching",
   people: "nav_people", student_information: "nav_people", teacher_information: "nav_people", enrollments: "nav_people", fees: "nav_money", finance: "nav_money", settings: "nav_system", audit: "nav_system"};
 const BAR_SLOTS = 4;   // tabs shown in the phone's bottom bar; the rest sit behind "More"
 // Session 9: which tabs a role wants in the phone bar. Only the bar changes; the computer sidebar and the More sheet keep the server order.

@@ -558,3 +558,13 @@
 - Front end: ui.viewer accepts extra/okText/collect/init (check dialog) and fetchFile(path, {dialog}) returns its value; fees.js DO.fxCheck, fxDoVerify, DO.fxNext (Remind next), DO.fxMyStmt, DO.fxStmt; admin.js statement button in Student information and the duplicate warning in Admissions review.
 - Security map: /api/students is the Fees area; PARAM "students"; test_phase4 STUDENT_OK adds my_statement.
 - Next: Round 3.
+
+## Done: v0.8.37: Round 3 (see CHANGES-v0.8.37.md)
+- Schema (additive): dbx.V0837_COLUMNS (tutorials.max_points DEFAULT 100; tutorial_submissions.grade/feedback/graded_by/graded_at; expenses.recurring_id/recurring_month); tables recurring_expenses, recurring_done. migrate_v0837.py: dry run by default, SQLite backup copy on --apply, --i-have-a-backup for PostgreSQL, fingerprint check.
+- learning.py: POST /api/tutorial-submissions/<id>/grade (staff_of + edit_grades rule, notify, audit tutorial_grade / tutorial_grade_change); tutorial list gives max_points, my_submission.grade/graded, ungraded_count; answers list sorted ungraded first with changed_after_grading and can_edit_grades; /my/home teacher tut_to_grade; GET /api/my/files (student/teacher; paths are existing file routes).
+- recurring.py: rules, catch_up() in app.extensions["recurring"], called by GET /api/expenses, /api/finance/dashboard, /api/recurring-expenses and the cron route. Day 1-28; catch-up at most 12 months; recurring_done stops a deleted month from coming back.
+- Tabs: settings_schema ROLE_TABS adds timetable (all roles) and my_files (student, teacher); TAB_ANY shows them only with a useful area (admin timetable: batches or classroom; my_files: any file area).
+- Front end: learning.js bulkSel/bulkBox/bulkAll/bulkBar(g, actions, ids)/bulkRun; views.timetable (GET /timetable?batch_id=0 = all of the person's batches), views.my_files; tutorial grade UI (ansGrade, DO.tGrade); fees.js DO.fxBulkWaive/fxBulkVoid; admin.js DO.peBulkOn/peBulkOff, DO.apBulkWait/apBulkReject, monthly expenses panel (DO.recEdit/recToggle/recDel).
+- Tests: test_session37.py, e2e_round3.py; test_permissions/e2e_permissions tab lists, test_session32 map (my/files, recurring-expenses).
+- Next: nothing agreed yet; ask the owner.
+

@@ -114,6 +114,8 @@ DO.bUnenrol = async d => {
 DO.subRemove = async d => { if (!await ui.confirm(t("End this substitution now? The teacher loses access at once."), {danger: true, okText: t("Remove"), details: [d.name || ""]})) return false; await api("/substitutions/" + d.id, "DELETE"); };
 
 // ---------- people: edit anything, permissions for admins, delete mistakes. Session 11: search and paging; the create form is a collapsed panel ----------
+DO.peBulkOff = async () => { if (!await ui.confirm(t("bulk_deactivate_q").replace("{n}", bulkSel("ppl").length), {danger: true, okText: t("bulk_deactivate")})) return false; await bulkRun("ppl", id => api("/users/" + id, "PATCH", {is_active: false})); };
+DO.peBulkOn = async () => { await bulkRun("ppl", id => api("/users/" + id, "PATCH", {is_active: true})); };
 views.people = async () => {
   const roleF = S.pf || "";
   const u = await api("/users" + (roleF ? "?role=" + roleF : ""));
@@ -153,10 +155,11 @@ views.people = async () => {
   // search (name, login ID, email) and paging on the client: GET /api/users has no search parameter
   const q = (S.pq || "").toLowerCase(), lim = S.plim || 30;
   const found = q ? u.filter(x => [x.full_name, x.login_id, x.email].some(v => String(v || "").toLowerCase().includes(q))) : u;
-  const rows = found.slice(0, lim).map(x => `<tr><td>${esc(x.full_name)}</td><td>${esc(x.login_id || "")}</td><td>${esc(x.email)}</td><td>${esc(t(x.role))}${x.permissions !== null ? " " + tag(t("Limited"), "warn") : x.role === "admin" ? " " + tag(t("Full"), "ok") : ""}</td><td>${x.is_active ? "✓" : "✗"}<span class="sr-only">${esc(t(x.is_active ? "active" : "inactive"))}</span></td><td><button class="btn sm" data-do="euEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("");
+  const canBulk = x => x.id !== self;
+  const rows = found.slice(0, lim).map(x => `<tr><td>${canBulk(x) ? bulkBox("ppl", x.id, x.full_name) + " " : ""}${esc(x.full_name)}</td><td>${esc(x.login_id || "")}</td><td>${esc(x.email)}</td><td>${esc(t(x.role))}${x.permissions !== null ? " " + tag(t("Limited"), "warn") : x.role === "admin" ? " " + tag(t("Full"), "ok") : ""}</td><td>${x.is_active ? "✓" : "✗"}<span class="sr-only">${esc(t(x.is_active ? "active" : "inactive"))}</span></td><td><button class="btn sm" data-do="euEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("");
   const listbar = `<form id="pqf" class="listbar" role="search"><label>${esc(t("role"))}<select id="pf"><option value="">${esc(t("all"))}</option>${roles.map(r => `<option value="${r[0]}" ${r[0] === roleF ? "selected" : ""}>${esc(r[1])}</option>`).join("")}</select></label><label>${esc(t("search"))}<input id="pq" type="search" value="${esc(S.pq || "")}" placeholder="${esc(t("people_search_hint"))}"></label><button class="btn">${t("search")}</button></form>`;
   const add = addPanel("person", "Add person", form("fu", field("un", "name") + field("ue", "email", "email") + field("up", "password", "password") + field("ur", "role", "", roles)));
-  return `${e ? crumbFor(e.full_name, {eu: null}) : ""}<h1>${t("people")}</h1>${tmpPanel()}${helpPanel(help)}${editor}${add}<div class="panel">${listbar}${found.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("Login ID")}</th><th>${t("email")}</th><th>${t("role")}</th><th>${t("is_active")}</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "peMore")}</div>${impPanel()}`;
+  return `${e ? crumbFor(e.full_name, {eu: null}) : ""}<h1>${t("people")}</h1>${tmpPanel()}${helpPanel(help)}${editor}${add}<div class="panel">${listbar}${bulkBar("ppl", [["peBulkOn", "bulk_activate"], ["peBulkOff", "bulk_deactivate", true]], found.slice(0, lim).filter(canBulk).map(x => x.id))}${bulkAll("ppl", found.slice(0, lim).filter(canBulk).map(x => x.id))}${found.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("Login ID")}</th><th>${t("email")}</th><th>${t("role")}</th><th>${t("is_active")}</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "peMore")}</div>${impPanel()}`;
 };
 DO.peMore = () => { S.plim = (S.plim || 30) + 30; };
 DO.euEdit = d => { go({eu: +d.id}); return false; };
@@ -251,7 +254,13 @@ views.admissions = async () => {
       <p><button type="button" class="btn sm alt" data-do="apBack">${t("back")}</button></p></div>` : "";
   const C = full ? (() => { const bopts = [["", "-"], ...bs.filter(x => x.course_id === full.course_id).map(x => [x.id, x.code])];
     return `<div class="panel"><h2>${esc(t("Correct details"))}</h2><form class="row" id="fa">${iv("fa_n", "name", full.full_name)}${iv("fa_d", "date_of_birth", full.date_of_birth, "date")}${iv("fa_p", "Phone", full.phone, "tel")}${iv("fa_e", "email", full.email, "email")}${iv("fa_i", "Island", full.island)}${iv("fa_g", "Grade / class", full.grade)}${sel("fa_c", "course", courses.filter(x => x.is_active || x.id === full.course_id).map(x => [x.id, x.name + " " + (x.level || "")]), full.course_id)}${sel("fa_b", "batch", bopts, full.batch_id)}${full.is_minor ? iv("fa_gn", "guardian_name", full.guardian_name) + iv("fa_gr", "Guardian relationship", full.guardian_relationship) + iv("fa_gp", "Guardian phone", full.guardian_phone) : ""}<button class="btn alt">${t("save")}</button></form><p class="hint">${esc(t("If you change the course, pick the batch again after saving."))}</p></div>`; })() : "";
-  return `${a ? crumbFor(a.full_name, {sel: null}) : ""}<h1>${t("admissions")}</h1>${R}${D}${C}<div class="panel"><label>${t("status")}<select id="af">${["pending", "waitlist", "approved", "rejected"].map(x => `<option value="${x}" ${x === f ? "selected" : ""}>${esc(t(x === "waitlist" ? "waitlist" : x))}</option>`).join("")}</select></label>${table(["ref", "full_name", "course_name", "batch_code", "phone", "created_at"], list, r => `<button class="btn sm" data-do="apReview" data-id="${r.id}" data-rev="${r.id}">${t("review")}</button>`, t("admissions"))}</div>`;
+  return `${a ? crumbFor(a.full_name, {sel: null}) : ""}<h1>${t("admissions")}</h1>${R}${D}${C}<div class="panel"><label>${t("status")}<select id="af">${["pending", "waitlist", "approved", "rejected"].map(x => `<option value="${x}" ${x === f ? "selected" : ""}>${esc(t(x === "waitlist" ? "waitlist" : x))}</option>`).join("")}</select></label>${["pending", "waitlist"].includes(f) ? bulkBar("apps", [...(f === "pending" ? [["apBulkWait", "put_waitlist"]] : []), ["apBulkReject", "reject", true]], list.map(r => r.id)) + bulkAll("apps", list.map(r => r.id)) : ""}${table(["ref", "full_name", "course_name", "batch_code", "phone", "created_at"], list, r => `${["pending", "waitlist"].includes(f) ? bulkBox("apps", r.id, r.full_name) + " " : ""}<button class="btn sm" data-do="apReview" data-id="${r.id}" data-rev="${r.id}">${t("review")}</button>`, t("admissions"))}</div>`;
+};
+DO.apBulkWait = async () => { const had = bulkSel("apps").includes(S.sel); await bulkRun("apps", id => api("/applications/" + id + "/waitlist", "POST")); if (had) closeDetail({sel: null}); };
+DO.apBulkReject = async () => {
+  const n = bulkSel("apps").length, r = await ui.ask(t("reject") + " · " + n, {label: t("reason_prompt"), required: true, multiline: true, danger: true, okText: t("reject")});
+  if (!r) return false; const had = bulkSel("apps").includes(S.sel);
+  await bulkRun("apps", id => api("/applications/" + id + "/reject", "POST", {reason: r})); if (had) closeDetail({sel: null});
 };
 DO.apReview = d => { go({sel: +d.id, result: null}); return false; };
 DO.apBack = () => { S.result = null; navBack({sel: null}); return false; };
@@ -435,6 +444,7 @@ async function fnDashPanel() {   // financial dashboard and revenue (Session 24)
 }
 async function fnExpensesPanels() {   // expenses, categories, receipts (Session 23). Needs the "finance" area; the server refuses everyone else.
   S.fn = S.fn || {page: 1, f: {}, edit: null};
+  const recs = await api("/recurring-expenses");   // first: it writes any monthly expense that is due, so the list below includes it
   const [r, cats] = await Promise.all([api("/expenses?" + fnQuery({page: S.fn.page, per_page: 50})), api("/expense-categories")]);
   const f = S.fn.f, ed = S.fn.edit ? r.items.find(x => x.id === S.fn.edit) : null;
   const active = cats.filter(k => k.is_active || (ed && k.id === ed.category_id));
@@ -450,6 +460,10 @@ async function fnExpensesPanels() {   // expenses, categories, receipts (Session
       await apiForm(ed ? "/expenses/" + ed.id : "/expenses", fd, ed ? "PATCH" : "POST"); S.fn.edit = null;
     });
     onSubmit("fcat", async () => { await api("/expense-categories", "POST", {name: val("fc_name")}); });
+    onSubmit("frec", async () => {
+      const res = await api("/recurring-expenses", "POST", {category_id: val("fr2_cat"), amount_mvr: wholeNum("fr2_amt", "Amount (MVR)", {min: 1, empty: false}), day_of_month: val("fr2_day"), description: val("fr2_desc"), start_month: val("fr2_from"), end_month: val("fr2_to") || null});
+      S.recNote = t("rec_added").replace("{n}", res.written);   // onSubmit shows "Saved"; this line under the list says how many were entered
+    });
   });
   const filters = form("ffn", field("fn_category_id", "Category", "text", [["", t("all")], ...cats.map(k => [k.id, k.name])]) + field("fn_date_from", "From", "date") + field("fn_date_to", "To", "date") + field("fn_q", "Words in description"), "Filter");
   const entry = `<form class="row" id="fex"><label>${esc(t("Expense date"))}<input id="fx_date" type="date" value="${mvToday()}" max="${mvToday()}" required></label>`
@@ -458,15 +472,33 @@ async function fnExpensesPanels() {   // expenses, categories, receipts (Session
     + `<label>${t("Receipt (PDF, JPG or PNG)")}<input id="fx_file" type="file" accept=".pdf,.jpg,.jpeg,.png"></label>`
     + (ed && ed.has_receipt ? `<label><input id="fx_rm" type="checkbox"> ${t("Remove the current receipt")}</label>` : "")
     + `<button class="btn alt">${t(ed ? "Save" : "Add expense")}</button>${ed ? ` <button type="button" class="btn" data-do="fnCancel">${t("Cancel")}</button>` : ""}</form>`;
-  const body = r.items.map(x => `<tr><td>${esc(x.expense_date)}</td><td>${esc(x.category)}</td><td>${esc(x.description || "")}</td><td><bdi dir="ltr">${esc(x.amount_mvr)}</bdi></td><td>${x.has_receipt ? `<button class="btn sm alt" data-do="fnReceipt" data-id="${x.id}" data-name="${esc(x.receipt_name || "receipt")}">${t("Receipt")}</button>` : ""}</td>`
+  const body = r.items.map(x => `<tr><td>${esc(x.expense_date)}</td><td>${esc(x.category)}</td><td>${esc(x.description || "")}${x.recurring_id ? " " + tag(t("rec_monthly")) : ""}</td><td><bdi dir="ltr">${esc(x.amount_mvr)}</bdi></td><td>${x.has_receipt ? `<button class="btn sm alt" data-do="fnReceipt" data-id="${x.id}" data-name="${esc(x.receipt_name || "receipt")}">${t("Receipt")}</button>` : ""}</td>`
     + `<td><button class="btn sm alt" data-do="fnEdit" data-id="${x.id}">${t("Edit")}</button> <button class="btn sm" data-do="fnDel" data-id="${x.id}" data-name="${esc(x.expense_date + " · " + x.category + " · MVR " + x.amount_mvr)}">${t("Delete")}</button></td></tr>`).join("");
   const nav = `<p><button class="btn sm alt" data-do="fnPage" data-n="-1" ${S.fn.page <= 1 ? "disabled" : ""}>${t("Previous")}</button> ${t("Page")} ${S.fn.page} <button class="btn sm alt" data-do="fnPage" data-n="1" ${r.page * r.per_page >= r.count ? "disabled" : ""}>${t("Next")}</button></p>`;
   const catRows = cats.map(k => `<span class="chip">${esc(k.name)} (${k.expense_count})${k.is_active ? "" : " · " + t("inactive")} <button class="btn sm alt" data-do="fnCatToggle" data-id="${k.id}" data-on="${k.is_active ? 0 : 1}">${t(k.is_active ? "Make inactive" : "Make active")}</button> <button class="btn sm alt" data-do="fnCatRename" data-id="${k.id}" data-name="${esc(k.name)}">${t("Rename")}</button>${k.expense_count ? "" : ` <button class="btn sm" data-do="fnCatDel" data-id="${k.id}" data-name="${esc(k.name)}">${t("Delete")}</button>`}</span>`).join(" ");
+  // v0.8.37: monthly expenses written automatically on their day
+  const recRows = recs.map(x => `<div class="cl${x.is_active ? "" : " off"}"><div><b>${esc(x.category)}</b> · <bdi dir="ltr">MVR ${esc(x.amount_mvr)}</bdi> · ${t("rec_day")} ${x.day_of_month}${x.description ? " · " + esc(x.description) : ""} ${x.is_active ? "" : tag(t("rec_paused"), "warn")}<br>
+    <span class="hint">${t("rec_from")} <bdi dir="ltr">${esc(x.start_month)}</bdi>${x.end_month ? ` ${t("rec_until")} <bdi dir="ltr">${esc(x.end_month)}</bdi>` : ""} · ${t("rec_written")}: ${x.months_written}${x.next_date ? ` · ${t("rec_next")} <bdi dir="ltr">${esc(x.next_date)}</bdi>` : ""}</span></div>
+    <div class="seg"><button class="btn sm alt" data-do="recEdit" data-id="${x.id}" data-amt="${x.amount_mvr}" data-day="${x.day_of_month}" data-desc="${esc(x.description || "")}" data-end="${esc(x.end_month || "")}">${t("Edit")}</button><button class="btn sm alt" data-do="recToggle" data-id="${x.id}" data-on="${x.is_active ? 0 : 1}">${t(x.is_active ? "rec_pause" : "rec_resume")}</button><button class="btn sm" data-do="recDel" data-id="${x.id}" data-name="${esc(x.category + " · MVR " + x.amount_mvr)}">${t("Delete")}</button></div></div>`).join("");
+  const month = mvToday().slice(0, 7);
+  const recForm = `<form class="row" id="frec">${field("fr2_cat", "Category", "text", active.map(k => [k.id, k.name]))}<label>${esc(t("Amount (MVR)"))}<input id="fr2_amt" type="number" min="1" step="1" inputmode="numeric" required></label>`
+    + `<label>${t("rec_day_label")}<input id="fr2_day" type="number" min="1" max="28" step="1" inputmode="numeric" value="1" required></label>${field("fr2_desc", "Description")}`
+    + `<label>${t("rec_start")}<input id="fr2_from" type="month" value="${month}" required></label><label>${t("rec_end")}<input id="fr2_to" type="month"></label><button class="btn alt">${t("rec_add")}</button></form><p class="hint">${t("rec_hint")}</p>`;
   return `<div class="panel"><h2>${t(ed ? "Edit expense" : "Add expense")}</h2>${cats.some(k => k.is_active) ? entry : `<p>${t("Add a category first.")}</p>`}</div>`
+    + `<div class="panel"><h2>${t("rec_title")}</h2>${S.recNote ? `<p class="msg ok" role="status">${esc(S.recNote)}</p>` : ""}${(S.recNote = null, "")}${recRows || `<p class="hint">${t("rec_none")}</p>`}${cats.some(k => k.is_active) ? `<details class="addp"${recs.length ? "" : " open"}><summary>${t("rec_add")}</summary>${recForm}</details>` : ""}</div>`
     + `<div class="panel"><h2>${t("Categories")}</h2><p>${catRows || t("empty")}</p>${form("fcat", field("fc_name", "Category name"), "Add category")}</div>`
     + `<div class="panel"><h2>${t("Expenses")}</h2>${filters}<p><b>${r.count}</b> ${t("expenses")} · ${t("Total")}: <b><bdi dir="ltr">MVR ${esc(r.total_mvr)}</bdi></b></p>${nav}`
     + (r.items.length ? `<table><thead><tr><th>${t("date")}</th><th>${t("Category")}</th><th>${t("Description")}</th><th>MVR</th><th></th><th></th></tr></thead><tbody>${body}</tbody></table>` : `<p>${t("empty")}</p>`) + `${nav}</div>`;
 }
+DO.recToggle = async d => { await api("/recurring-expenses/" + d.id, "PATCH", {is_active: d.on === "1"}); flash(t("saved"), true); };
+DO.recDel = async d => { if (!await ui.confirm(t("rec_del_q"), {danger: true, okText: t("Delete"), details: [d.name || ""]})) return false; await api("/recurring-expenses/" + d.id, "DELETE"); flash(t("saved"), true); };
+DO.recEdit = async d => {
+  const v = await ui.form(t("Edit"), [{id: "amount_mvr", label: t("Amount (MVR)"), type: "number", required: true, min: 1, step: 1, value: d.amt, inputmode: "numeric"},
+    {id: "day_of_month", label: t("rec_day_label"), type: "number", required: true, min: 1, max: 28, step: 1, value: d.day, inputmode: "numeric"},
+    {id: "description", label: t("Description"), value: d.desc, maxlength: 200}, {id: "end_month", label: t("rec_end"), type: "month", value: d.end}], {okText: t("Save")});
+  if (!v) return false;
+  await api("/recurring-expenses/" + d.id, "PATCH", {...v, end_month: v.end_month || null}); flash(t("rec_edit_done"), true);
+};
 views.finance = async () => {
   const [dash, earn, exp] = await Promise.all([fnDashPanel(), feEarnPanel(), fnExpensesPanels()]);
   return `<h1>${t("finance")}</h1>${dash}${earn}${exp}`;
