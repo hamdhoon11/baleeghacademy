@@ -84,19 +84,19 @@ def register(app, c):
         r, e = query()
         return e or jsonify(r)
 
-    @app.get("/api/enrollment-events.csv")
-    @auth("admin", perm="enrollments")
-    def ev_csv():
+    def ev_export(ext):
+        import excelio
         r, e = query()
         if e: return e
-        from fees import csv_safe
-        buf = io.StringIO(); w = csv.writer(buf)
-        w.writerow(["date", "type", "student_id", "student", "previous_course", "previous_batch", "new_course", "new_batch", "reason", "recorded_by", "recorded_at"])
-        for x in r:
-            w.writerow([csv_safe(v) for v in (x["effective_date"], x["kind"], x["student_code"], x["student_name"], x["from_course"], x["from_batch_code"],
-                                              x["to_course"], x["to_batch_code"], x["reason"], x["by_name"], x["at"])])
-        audit("export_enrollment_events_csv", "report", None, f"{len(r)} rows"); db().commit()
-        resp = Response("\ufeff" + buf.getvalue(), mimetype="text/csv; charset=utf-8")   # v0.8.34: BOM for Excel
-        resp.headers["Content-Disposition"] = 'attachment; filename="transfers-withdrawals.csv"'
-        resp.headers["Cache-Control"] = "private, no-store"
-        return resp
+        head = ["date", "type", "student_id", "student", "previous_course", "previous_batch", "new_course", "new_batch", "reason", "recorded_by", "recorded_at"]
+        table = [[x["effective_date"], x["kind"], x["student_code"], x["student_name"], x["from_course"], x["from_batch_code"], x["to_course"], x["to_batch_code"], x["reason"], x["by_name"], x["at"]] for x in r]
+        audit(f"export_enrollment_events_{ext}", "report", None, f"{len(r)} rows"); db().commit()
+        return excelio.send_table(ext, "transfers-withdrawals", head, table, "Transfers and withdrawals")
+
+    @app.get("/api/enrollment-events.csv")
+    @auth("admin", perm="enrollments")
+    def ev_csv(): return ev_export("csv")
+
+    @app.get("/api/enrollment-events.xlsx")
+    @auth("admin", perm="enrollments")
+    def ev_xlsx(): return ev_export("xlsx")   # v0.8.38

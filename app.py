@@ -1203,6 +1203,8 @@ def create_app(config=None):
     payreports.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # Session 26: payment reports
     import portio
     portio.register(app, ns)   # Session 27: exports and imports
+    import sheets
+    sheets.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # v0.8.38: Excel exports and imports
     import auditview
     auditview.register(app, ns)   # Session 21: activity log viewer (the old /api/audit route lives there now)
 

@@ -144,6 +144,7 @@ DO.fxPrCsv = async () => { const q = fxPrQuery(); await download("/fees/payment-
 DO.fxPrXlsx = async () => { const q = fxPrQuery(); await download("/fees/payment-report.xlsx?" + q, `payments-${fxPrMonth()}.xlsx`); return false; };
 DO.fxPrHist = d => { S.fxf = {...(S.fxf || {}), hist: +d.id}; };
 DO.fxPrBack = () => { S.fxf = {...(S.fxf || {}), hist: null}; };
+DO.fxXlsx = async () => { const m = val("fxr_m") || fxMonth(); await download("/fees/report.xlsx?month=" + m, `fees-${m}.xlsx`); return false; };   // v0.8.38
 DO.fxCsv = async () => { const m = val("fxr_m") || fxMonth(); await download("/fees/report.csv?month=" + m, `fees-${m}.csv`); return false; };
 
 const FX_OPEN = i => ["unpaid", "slip_submitted"].includes(i.status);
@@ -169,7 +170,7 @@ const FX = {
     return `<div class="panel"><h2>${t("fx_generate")}</h2><div class="rowflex row"><label>${t("fx_month")}<input id="fxg_m" type="month" value="${fxMonth()}"></label><button class="btn alt" data-do="fxGen">${t("fx_generate")}</button></div><p class="hint">${t("fx_generate_hint")}</p>${fxSkipList()}</div>
       <div class="panel"><form id="fxff" class="row"><label>${t("fx_month")}<input id="fxf_m" type="month" value="${esc(f.month || "")}"></label>
       <label>${t("status")}<select id="fxf_s"><option value="">${t("fx_all_but_void")}</option><option value="all">${t("fx_all_with_void")}</option>${["unpaid", "slip_submitted", "overdue", "paid", "waived", "void"].map(s => `<option value="${s}">${t("fx_st_" + s)}</option>`).join("")}</select></label>
-      <label>${t("fx_search")}<input id="fxf_q" value="${esc(f.q || "")}"></label><button class="btn">${t("fx_filter")}</button></form></div>
+      <label>${t("fx_search")}<input id="fxf_q" value="${esc(f.q || "")}"></label><button class="btn">${t("fx_filter")}</button></form><p>${xlBtns("/invoices/export", q.toString(), "invoices")}</p></div>
       <div class="panel">${bulkBar("inv", [["fxBulkWaive", "fx_waive"], ["fxBulkVoid", "fx_void", true]], l.filter(FX_OPEN).map(i => i.id))}${bulkAll("inv", l.filter(FX_OPEN).map(i => i.id))}${l.length ? l.map(invRow).join("") : `<p>${t("empty")}</p>`}</div>`;
   },
   async record() {
@@ -231,7 +232,7 @@ const FX = {
     const m = (S.fxf || {}).rep || fxMonth();
     const r = await api("/fees/report?month=" + m), T_ = r.totals;
     mount(() => { const f = $("#fxr"); if (f) f.onsubmit = e => { e.preventDefault(); fxSet("rep", val("fxr_m") || fxMonth()); render(); }; });
-    return `<div class="panel"><form id="fxr" class="row"><label>${t("fx_month")}<input id="fxr_m" type="month" value="${esc(m)}"></label><button class="btn">${t("fx_show")}</button><button type="button" class="btn alt" data-do="fxCsv">${t("fx_csv")}</button></form></div>
+    return `<div class="panel"><form id="fxr" class="row"><label>${t("fx_month")}<input id="fxr_m" type="month" value="${esc(m)}"></label><button class="btn">${t("fx_show")}</button><button type="button" class="btn alt" data-do="fxCsv">${t("fx_csv")}</button><button type="button" class="btn alt" data-do="fxXlsx">${t("Download Excel")}</button></form></div>
       <div class="stats">${[[t("fx_invoiced"), T_.invoiced], [t("fx_collected"), T_.collected], [t("fx_outstanding"), T_.outstanding]].map(([k, v]) => `<div class="stat"><b>${mvr(v)}</b>${k}</div>`).join("")}<div class="stat"><b>${T_.overdue_count}</b>${t("fx_st_overdue")}</div></div>
       <div class="panel"><h2>${t("fx_by_course")}</h2>${r.by_course.map(c => `<div class="cl"><span>${esc(c.course_name)}</span><span>${mvr(c.collected)} / ${mvr(c.invoiced)}</span></div>`).join("") || `<p>${t("empty")}</p>`}</div>
       <div class="panel"><h2>${t("fx_who_owes")}</h2>${r.owing.map(o => `<div class="cl"><div><b>${esc(o.student_name)}</b> ${o.overdue ? tag(t("fx_st_overdue"), "bad") : ""}<br><span class="hint">${ltr(o.number)} · ${esc(o.course_name)} ${esc(o.batch_code)}</span></div>${mvr(o.balance)}</div>`).join("") || `<p>${t("fx_nobody_owes")}</p>`}</div>`;

@@ -256,6 +256,7 @@ CT.assignments = async b => {
     const editable = s.students.some(r => !(r.grade != null && !s.can_edit_grades));
     html += `<div class="panel" data-detail id="gradep" data-can-edit="${s.can_edit_grades ? 1 : 0}"><h2>${esc(s.assignment.title)} · ${s.assignment.max_points} pts</h2>${editable ? `<p><button type="button" class="btn alt" data-do="saveGAll" data-aid="${sel.id}">${t("Save all")}</button> <span class="hint">${t("save_all_hint")}</span></p>` : ""}${s.students.map(r => `<div class="sub" data-sid="${r.student_id}" data-name="${esc(r.full_name)}"><div><b>${esc(r.full_name)}</b> ${r.submitted ? tag(t("submitted") + (r.is_late ? " · " + t("late_tag") : ""), r.is_late ? "warn" : "ok") : tag(t("not_submitted"), "warn")}</div>${r.text_answer ? `<p class="pre">${esc(r.text_answer)}</p>` : ""}${r.has_file ? `<button class="btn sm" data-do="dlSub" data-id="${r.submission_id}" data-name="${esc(r.file_name || "file")}">${esc(r.file_name || t("download"))}</button>` : ""}
       <div class="row" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:end;margin-top:.4rem">${(() => { const lock = r.grade != null && !s.can_edit_grades ? "disabled" : ""; return `<label style="flex:0 0 110px">${t("grade")} /${s.assignment.max_points}<input type="number" step="0.5" min="0" max="${s.assignment.max_points}" id="g_${r.student_id}" value="${r.grade ?? ""}" data-orig="${esc(r.grade ?? "")}" ${lock}></label><label>${t("feedback")}<input id="f_${r.student_id}" value="${esc(r.feedback || "")}" data-orig="${esc(r.feedback || "")}" ${lock}></label>` + (lock ? `<span class="hint">${t("grade_locked_teacher")}</span>` : `<button class="btn sm" data-do="saveG" data-sid="${r.student_id}" data-aid="${sel.id}">${t("save_grade")}</button><span class="saved" id="gs_${r.student_id}" hidden>✓ ${t("saved")}</span>`); })()}</div></div>`).join("")}</div>`;
+    html += impBox("grades", t("xl_imp_grades") + " · " + s.assignment.title, {query: "assignment_id=" + sel.id});   // v0.8.38: the template is this class list
   }
   return html;
 };
@@ -288,11 +289,15 @@ DO.saveGAll = async d => {
   return false;
 };
 
+DO.xlAtt = async d => { const m = val("xl_am") || mvToday().slice(0, 7); await fetchFile(`/batches/${d.b}/attendance.xlsx?month=${m}`, {name: `attendance-${d.c}-${m}.xlsx`}); return false; };
 CT.gradebook = async b => {
   const g = await api(`/batches/${b.id}/gradebook`);
   const mine = S.user.role === "teacher" ? (await api(`/my/given-grades?batch_id=${b.id}`)).grades : [];
   const given = mine.length ? `<div class="panel"><h2>${t("grades_i_gave")}</h2><table><thead><tr><th>${t("student")}</th><th>${t("title")}</th><th>${t("grade")}</th><th>${t("feedback")}</th></tr></thead><tbody>${mine.map(x => `<tr><td>${esc(x.full_name)}</td><td>${esc(x.title)}</td><td>${x.grade}/${x.max_points}</td><td>${esc(x.feedback || "–")}</td></tr>`).join("")}</tbody></table></div>` : "";
-  return given + `<div class="panel"><h2>${t("gradebook")}</h2><table><thead><tr><th>${t("student")}</th><th>${t("graded_items")}</th><th>${t("avg_pct")}</th><th>${t("attendance_pct")}</th></tr></thead><tbody>${g.map(s => `<tr><td>${esc(s.full_name)}</td><td>${s.graded_items}</td><td>${pct(s.avg_pct)}</td><td>${pct(s.attendance_pct)} ${s.low_attendance ? tag(t("low_attendance"), "bad") : ""}</td></tr>`).join("")}</tbody></table>${g.length ? "" : `<p>${t("empty")}</p>`}</div>`;
+  const mo = mvToday().slice(0, 7);
+  const xl = `<div class="panel"><h2>${t("xl_downloads")}</h2><div class="rowflex row"><button type="button" class="btn sm alt" data-do="xlGet" data-p="/batches/${b.id}/gradebook" data-n="gradebook-${esc(b.code)}" data-x="xlsx">${t("xl_gradebook")}</button>
+    <label>${t("fx_month")}<input id="xl_am" type="month" value="${mo}"></label><button type="button" class="btn sm alt" data-do="xlAtt" data-b="${b.id}" data-c="${esc(b.code)}">${t("xl_attendance")}</button></div></div>`;
+  return given + xl + `<div class="panel"><h2>${t("gradebook")}</h2><table><thead><tr><th>${t("student")}</th><th>${t("graded_items")}</th><th>${t("avg_pct")}</th><th>${t("attendance_pct")}</th></tr></thead><tbody>${g.map(s => `<tr><td>${esc(s.full_name)}</td><td>${s.graded_items}</td><td>${pct(s.avg_pct)}</td><td>${pct(s.attendance_pct)} ${s.low_attendance ? tag(t("low_attendance"), "bad") : ""}</td></tr>`).join("")}</tbody></table>${g.length ? "" : `<p>${t("empty")}</p>`}</div>`;
 };
 
 CT.materials = async b => {
@@ -478,3 +483,40 @@ views.my_files = async () => {
     <div class="panel"><form id="mff" class="row"><label>${t("search")}<input id="mff_q" value="${esc(f.q || "")}"></label>${field("mff_k", "mf_kind", "", [["", t("all")], ...kinds.map(k => [k, t("mf_" + k)])])}<button class="btn">${t("search")}</button></form></div>
     <div class="panel"><p class="hint">${t("mf_count").replace("{n}", list.length)}</p>${list.map(row).join("") || `<p>${t("empty")}</p>`}</div>`;
 };
+
+// ---------- v0.8.38: one Excel/CSV import box, used on Courses, Batches, Finance and the grades of an assignment ----------
+// Download the template, fill it in Excel, Check file (nothing is saved), then Import. Every row goes through the same checks as the screen.
+const IMPS = {};   // kind -> {query}: set when the box is drawn
+const XL_ACCEPT = ".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv";
+function impBox(kind, title, opts = {}) {
+  IMPS[kind] = {query: opts.query || ""};
+  const r = (S.imps || {})[kind], q = IMPS[kind].query;
+  const st = {would_create: t("xl_would_save"), created: t("xl_saved"), rejected: t("rejected"), skipped: t("xl_skipped"), unchanged: t("xl_unchanged")};
+  const res = r ? `<p role="status"><b>${r.dry_run ? t("Check result: nothing was saved") : t("Imported")}</b> · ${r.ok} ${r.dry_run ? t("would be created") : t("created")} · ${r.rejected} ${t("rejected")} / ${r.total}</p>`
+    + r.rows.filter(x => x.status === "rejected").map(x => `<div class="msg err">${t("Row")} ${x.row}${x.name ? " · " + esc(x.name) : ""}: ${esc(x.message)}</div>`).join("")
+    + (r.rows.some(x => ["skipped", "unchanged"].includes(x.status)) ? `<p class="hint">${r.rows.filter(x => ["skipped", "unchanged"].includes(x.status)).map(x => `${t("Row")} ${x.row}: ${esc(st[x.status])}`).join(" · ")}</p>` : "")
+    + (r.dry_run && r.ok && !r.rejected ? `<p class="hint">${t("xl_all_good")}</p>` : "") : "";
+  return `<details class="panel addp" data-imp="${kind}"${r || opts.open ? " open" : ""}><summary>${esc(title)}</summary>
+    <p class="hint">${t("xl_import_hint")}</p>
+    <div class="rowflex row"><button type="button" class="btn sm alt" data-do="impTpl" data-k="${kind}">${t("xl_template")}</button>
+    <label>${t("xl_file")}<input id="impf_${kind}" type="file" accept="${XL_ACCEPT}">${(S.impFiles || {})[kind] ? `<span class="hint">${t("xl_chosen")}: <bdi>${esc(S.impFiles[kind].name)}</bdi></span>` : ""}</label>
+    <button type="button" class="btn alt" data-do="impChk" data-k="${kind}">${t("Check file")}</button><button type="button" class="btn" data-do="impRun" data-k="${kind}">${t("Import")}</button></div>${res}</details>`;
+}
+const impSend = async (k, dry) => {
+  // the page is redrawn after a check, which empties the file field: the chosen file is kept so Import does not ask for it again
+  const f = $("#impf_" + k).files[0] || (S.impFiles || {})[k]; if (!f) throw new Error(t("xl_choose_file"));
+  S.impFiles = {...(S.impFiles || {}), [k]: f};
+  const fd = new FormData(); fd.append("file", f);
+  const q = IMPS[k].query;
+  S.imps = {...(S.imps || {}), [k]: await apiForm(`/import/${k}?${q ? q + "&" : ""}dry_run=${dry ? 1 : 0}`, fd)};
+};
+DO.impTpl = async d => { const q = IMPS[d.k].query; await fetchFile(`/import/${d.k}/template.xlsx${q ? "?" + q : ""}`, {name: `import-${d.k}-template.xlsx`}); return false; };
+DO.impChk = async d => { await impSend(d.k, true); };
+DO.impRun = async d => {
+  const r = (S.imps || {})[d.k];
+  if (!await ui.confirm(t("xl_import_q"), {okText: t("Import"), details: r && r.dry_run ? [`${r.ok} ${t("would be created")} · ${r.rejected} ${t("rejected")}`] : [t("xl_not_checked")]})) return false;
+  await impSend(d.k, false); flash(t("saved"), true);
+};
+// Excel / CSV download buttons: xlBtns("path-without-extension", "query", "file-name")
+const xlBtns = (path, query, name, csv = true) => `<span class="seg xl"><button type="button" class="btn sm alt" data-do="xlGet" data-p="${esc(path)}" data-q="${esc(query || "")}" data-n="${esc(name)}" data-x="xlsx">${t("Download Excel")}</button>${csv ? `<button type="button" class="btn sm alt" data-do="xlGet" data-p="${esc(path)}" data-q="${esc(query || "")}" data-n="${esc(name)}" data-x="csv">${t("Download CSV")}</button>` : ""}</span>`;
+DO.xlGet = async d => { await fetchFile(`${d.p}.${d.x}${d.q ? "?" + d.q : ""}`, {name: `${d.n}.${d.x}`}); return false; };

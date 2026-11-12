@@ -1,5 +1,7 @@
 # Baleegh Academy Portal
 
+**v0.8.38: Excel.** Every import takes Excel or CSV and has a template (Data, Instructions, Lists sheets); new imports for courses, batches, expenses and grades; Excel exports for invoices, expenses, applications, courses, batches, gradebook, attendance register, activity log, fees report and transfers. See `CHANGES-v0.8.38.md`.
+
 **v0.8.37: Round 3.** Tutorial grading (run `migrate_v0837.py` first: dry run, then `--apply`); week Timetable for everyone; My files; bulk actions on invoices, people and admissions; monthly expenses entered automatically. See `CHANGES-v0.8.37.md`.
 
 **v0.8.36: Round 2.** One-tap slip check (slip and invoice facts in one dialog with Verify/Reject); "Remind next on WhatsApp" on Fees → Overdue; fee statement PDF for students and admins; duplicate-applicant warning on Admissions review; sign-in link in the approval message. See `CHANGES-v0.8.36.md`.

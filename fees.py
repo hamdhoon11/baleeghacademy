@@ -327,9 +327,10 @@ def register(app, c):
             m = re.match(r"^INV-\d{6}-(\d+)$", q.upper())
             if m: w.append("i.id=?"); a.append(int(m.group(1)))
             else: w.append("LOWER(u.full_name) LIKE ?"); a.append("%" + q.lower() + "%")
-        sql = INV_SQL + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY i.period DESC, u.full_name, i.id LIMIT 500"
+        lim = min(max(request.args.get("limit", 500, type=int), 1), 5000)   # v0.8.38: the Excel export asks for up to 5000
+        sql = INV_SQL + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY i.period DESC, u.full_name, i.id LIMIT ?"
         t0 = today()
-        return jsonify([shape(r, t0) for r in rows(sql, a)])
+        return jsonify([shape(r, t0) for r in rows(sql, a + [lim])])
 
     def slip_row(s, admin):
         d = {k: s[k] for k in ("id", "invoice_id", "amount_mvr", "transfer_date", "reference", "status", "reject_reason", "created_at", "file_name")}
@@ -882,22 +883,23 @@ def register(app, c):
         r.pop("invoices")
         return jsonify(r)
 
-    @app.get("/api/fees/report.csv")
-    @auth("admin", perm="fees")
-    def fees_report_csv():
+    def fees_report_export(ext):
+        import excelio
         month = request.args.get("month") or month_of(today())
         if not PERIOD.match(month): return err("Month must look like 2026-03")
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow(["invoice", "period", "student", "course", "batch", "fee_mvr", "discount_mvr", "amount_due_mvr", "waived_mvr", "paid_mvr", "balance_mvr", "due_date", "status", "overdue"])
-        for i in report(month)["invoices"]:
-            w.writerow([csv_safe(x) for x in (i["number"], i["period"], i["student_name"], i["course_name"], i["batch_code"], i["amount_mvr"], i["discount_mvr"], i["amount_due_mvr"],
-                                               i["waived_mvr"], i["paid_mvr"], i["balance"], i["due_date"], i["status"], "yes" if i["overdue"] else "no")])
-        audit_c("export_fees_csv", "report", None, month); db().commit()
-        resp = Response("\ufeff" + buf.getvalue(), mimetype="text/csv; charset=utf-8")   # v0.8.34: BOM for Excel
-        resp.headers["Content-Disposition"] = f'attachment; filename="fees-{month}.csv"'
-        resp.headers["Cache-Control"] = "private, no-store"
-        return resp
+        head = ["invoice", "period", "student", "course", "batch", "fee_mvr", "discount_mvr", "amount_due_mvr", "waived_mvr", "paid_mvr", "balance_mvr", "due_date", "status", "overdue"]
+        table = [[i["number"], i["period"], i["student_name"], i["course_name"], i["batch_code"], i["amount_mvr"], i["discount_mvr"], i["amount_due_mvr"],
+                  i["waived_mvr"], i["paid_mvr"], i["balance"], i["due_date"], i["status"], "yes" if i["overdue"] else "no"] for i in report(month)["invoices"]]
+        audit_c(f"export_fees_{ext}", "report", None, month); db().commit()
+        return excelio.send_table(ext, f"fees-{month}", head, table, f"Fees {month}")
+
+    @app.get("/api/fees/report.csv")
+    @auth("admin", perm="fees")
+    def fees_report_csv(): return fees_report_export("csv")
+
+    @app.get("/api/fees/report.xlsx")
+    @auth("admin", perm="fees")
+    def fees_report_xlsx(): return fees_report_export("xlsx")   # v0.8.38
 
     def dashboard_extra():
         t = today()

@@ -566,5 +566,14 @@
 - Tabs: settings_schema ROLE_TABS adds timetable (all roles) and my_files (student, teacher); TAB_ANY shows them only with a useful area (admin timetable: batches or classroom; my_files: any file area).
 - Front end: learning.js bulkSel/bulkBox/bulkAll/bulkBar(g, actions, ids)/bulkRun; views.timetable (GET /timetable?batch_id=0 = all of the person's batches), views.my_files; tutorial grade UI (ansGrade, DO.tGrade); fees.js DO.fxBulkWaive/fxBulkVoid; admin.js DO.peBulkOn/peBulkOff, DO.apBulkWait/apBulkReject, monthly expenses panel (DO.recEdit/recToggle/recDel).
 - Tests: test_session37.py, e2e_round3.py; test_permissions/e2e_permissions tab lists, test_session32 map (my/files, recurring-expenses).
+- Next: Excel (v0.8.38).
+
+## Done: v0.8.38: Excel imports and exports (see CHANGES-v0.8.38.md)
+- excelio.py: read_table (xlsx "Data" sheet or csv; Excel dates/times/numbers to text), template() (Data/Instructions/Lists, drop-downs, text columns), xlsx_bytes/send_table/send_xlsx, call() (runs an API route inside the request as the same user), dry_run_scope() + row_savepoint() (check = commits held, one savepoint per row, everything undone at the end; SQLite gets an explicit BEGIN so releasing a savepoint never commits).
+- portio.py: read_file uses excelio.read_table; GET /api/import/{students,teachers,enrolments}/template.xlsx.
+- sheets.py: exports invoices/expenses/applications/courses/batches (.xlsx|.csv), batches/<id>/gradebook.xlsx and attendance.xlsx?month=; imports courses/batches/expenses (admin areas courses/batches/finance) and grades?assignment_id= (admin/teacher, classroom), each row through the screen's route via excelio.call; templates for each (grades template = class list from /assignments/<id>/submissions).
+- .xlsx added to audit, fees/report, enrollment-events. fees inv_list accepts ?limit= (max 5000) for the export.
+- Front end: learning.js impBox(kind, title, {query}) + DO.impTpl/impChk/impRun, xlBtns(path, query, name) + DO.xlGet, DO.xlAtt; chosen file kept in S.impFiles / S.impPFile across the redraw.
+- Tests: test_session38.py, e2e_excel.py; test_session32 map updated.
 - Next: nothing agreed yet; ask the owner.
 

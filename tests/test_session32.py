@@ -15,7 +15,8 @@ OPEN = {
  ("POST", "/api/assignments/<int:aid>/grades"): AT, ("GET", "/api/assignments/<int:aid>/submissions"): AT, ("POST", "/api/assignments/<int:aid>/submit"): ("student",),
  ("POST", "/api/auth/change-password"): ALL, ("POST", "/api/auth/logout"): ALL, ("GET", "/api/auth/me"): ALL, ("GET", "/api/batches"): ALL,
  ("POST", "/api/batches/<int:bid>/assignments"): AT, ("GET", "/api/batches/<int:bid>/attendance"): AT, ("POST", "/api/batches/<int:bid>/attendance"): AT,
- ("GET", "/api/batches/<int:bid>/attendance/summary"): AT, ("GET", "/api/batches/<int:bid>/gradebook"): AT, ("POST", "/api/batches/<int:bid>/materials"): AT,
+ ("GET", "/api/batches/<int:bid>/attendance/summary"): AT, ("GET", "/api/batches/<int:bid>/gradebook"): AT, ("GET", "/api/batches/<int:bid>/gradebook.xlsx"): AT, ("GET", "/api/batches/<int:bid>/attendance.xlsx"): AT,
+ ("POST", "/api/import/grades"): AT, ("GET", "/api/import/grades/template.xlsx"): AT, ("POST", "/api/batches/<int:bid>/materials"): AT,
  ("PUT", "/api/batches/<int:bid>/meet-link"): AT, ("POST", "/api/batches/<int:bid>/recordings"): AT, ("POST", "/api/batches/<int:bid>/sessions"): AT,
  ("GET", "/api/batches/<int:bid>/students"): AT, ("GET", "/api/courses"): ALL, ("GET", "/api/enrollments"): ALL, ("GET", "/api/invoices/<int:iid>"): AS,
  ("POST", "/api/invoices/<int:iid>/slips"): ("student",), ("GET", "/api/materials"): ALL, ("DELETE", "/api/materials/<int:mid>"): AT, ("GET", "/api/materials/<int:mid>/file"): ALL,
@@ -33,7 +34,7 @@ OPEN = {
 NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "/api/admin/todo"), ("GET", "/api/users"), ("POST", "/api/whatsapp/prepare"), ("POST", "/api/whatsapp/sent")}
 AREA = [("/api/applications", "admissions"), ("/api/announcements", "classroom"), ("/api/audit", "audit"), ("/api/discounts", "fees"), ("/api/families", "fees"), ("/api/fees", "fees"),
         ("/api/invoices", "fees"), ("/api/payments", "fees"), ("/api/slips", "fees"), ("/api/students", "fees"), ("/api/earnings", "finance"), ("/api/expense", "finance"), ("/api/finance", "finance"), ("/api/recurring-expenses", "finance"),
-        ("/api/enrollments/<int:eid>/void-open-invoices", "fees"), ("/api/enrollment", "enrollments"), ("/api/import/enrolments", "enrollments"), ("/api/import", "people"),
+        ("/api/enrollments/<int:eid>/void-open-invoices", "fees"), ("/api/enrollment", "enrollments"), ("/api/import/enrolments", "enrollments"), ("/api/import/courses", "courses"), ("/api/import/batches", "batches"), ("/api/import/expenses", "finance"), ("/api/import", "people"),
         ("/api/settings", "settings"), ("/api/admin/storage", "settings"), ("/api/password-help", "people"), ("/api/notifications", "settings"), ("/api/student-information", "student_information"), ("/api/teacher-information", "teacher_information"),
         ("/api/substitutions", "batches"), ("/api/users", "people"), ("/api/courses", "courses"), ("/api/batches", "batches")]
 PUBLIC = {"/", "/<path:filename>", "/api/auth/login", "/api/auth/forgot", "/api/cron/generate-invoices", "/api/cron/reminders", "/api/health", "/api/public/apply",
