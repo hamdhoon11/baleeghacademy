@@ -20,7 +20,7 @@ OPEN = {
  ("GET", "/api/batches/<int:bid>/students"): AT, ("GET", "/api/courses"): ALL, ("GET", "/api/enrollments"): ALL, ("GET", "/api/invoices/<int:iid>"): AS,
  ("POST", "/api/invoices/<int:iid>/slips"): ("student",), ("GET", "/api/materials"): ALL, ("DELETE", "/api/materials/<int:mid>"): AT, ("GET", "/api/materials/<int:mid>/file"): ALL,
  ("GET", "/api/my/attendance"): ("student",), ("GET", "/api/my/batches"): ("student", "teacher"), ("GET", "/api/my/earnings"): ("teacher",), ("GET", "/api/my/fees"): ("student",),
- ("GET", "/api/my/fees/summary"): ("student",), ("GET", "/api/my/given-grades"): ("teacher",), ("GET", "/api/my/grades"): ("student",), ("GET", "/api/my/home"): ("student", "teacher"),
+ ("GET", "/api/my/fees/summary"): ("student",), ("GET", "/api/my/fees/statement.pdf"): ("student",), ("GET", "/api/my/given-grades"): ("teacher",), ("GET", "/api/my/grades"): ("student",), ("GET", "/api/my/home"): ("student", "teacher"),
  ("GET", "/api/my/information"): ("student", "teacher"), ("GET", "/api/my/substitutions"): ("teacher",), ("GET", "/api/notifications"): ALL,
  ("POST", "/api/notifications/<int:nid>/read"): ALL, ("POST", "/api/notifications/read-all"): ALL, ("GET", "/api/notifications/unread-count"): ALL,
  ("GET", "/api/payments/<int:pid>/receipt.pdf"): AS, ("GET", "/api/recordings"): ALL, ("DELETE", "/api/recordings/<int:rid>"): AT, ("GET", "/api/slips/<int:sid>/file"): AS,
@@ -32,7 +32,7 @@ OPEN = {
 # admin-only routes with no permission area: each checks inside the route, and test_03 / test_04 prove it.
 NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "/api/admin/todo"), ("GET", "/api/users"), ("POST", "/api/whatsapp/prepare"), ("POST", "/api/whatsapp/sent")}
 AREA = [("/api/applications", "admissions"), ("/api/announcements", "classroom"), ("/api/audit", "audit"), ("/api/discounts", "fees"), ("/api/families", "fees"), ("/api/fees", "fees"),
-        ("/api/invoices", "fees"), ("/api/payments", "fees"), ("/api/slips", "fees"), ("/api/earnings", "finance"), ("/api/expense", "finance"), ("/api/finance", "finance"),
+        ("/api/invoices", "fees"), ("/api/payments", "fees"), ("/api/slips", "fees"), ("/api/students", "fees"), ("/api/earnings", "finance"), ("/api/expense", "finance"), ("/api/finance", "finance"),
         ("/api/enrollments/<int:eid>/void-open-invoices", "fees"), ("/api/enrollment", "enrollments"), ("/api/import/enrolments", "enrollments"), ("/api/import", "people"),
         ("/api/settings", "settings"), ("/api/admin/storage", "settings"), ("/api/password-help", "people"), ("/api/notifications", "settings"), ("/api/student-information", "student_information"), ("/api/teacher-information", "teacher_information"),
         ("/api/substitutions", "batches"), ("/api/users", "people"), ("/api/courses", "courses"), ("/api/batches", "batches")]
@@ -118,7 +118,7 @@ class S32(unittest.TestCase):
         PARAM.update({"password-help": 1, "applications": i["application"], "assignments": i["assignment"], "batches": W["b1"], "courses": W["course"], "discounts": i["discount"], "enrollments": i["enrollment"],
             "expense-categories": i["exp_cat"], "expenses": i["expense"], "families": i["family"], "invoices": i["invoice"], "materials": i["material"], "notifications": 1, "payments": i["payment"],
             "recordings": i["recording"], "slips": i["slip"], "student-information": W["s1"][0], "submissions": i["submission"], "substitutions": 1, "teacher-information": W["t1"][0],
-            "tutorial-submissions": i["tut_sub"], "tutorials": i["tutorial"], "users": W["s1"][0], "student-history": W["s1"][0], "members": W["s1"][0]})
+            "tutorial-submissions": i["tut_sub"], "tutorials": i["tutorial"], "users": W["s1"][0], "student-history": W["s1"][0], "members": W["s1"][0], "students": W["s1"][0]})
         cls.P = {"none": {}, "admin": W["A"], "lim": W["H_lim"], "t1": W["H_t1"], "t2": W["H_t2"], "t3": W["H_t3"], "s1": W["H_s1"], "s2": W["H_s2"], "sw": W["H_sw"]}
         cls.ROLE = {"admin": "admin", "lim": "admin", "t1": "teacher", "t2": "teacher", "t3": "teacher", "s1": "student", "s2": "student", "sw": "student"}
 

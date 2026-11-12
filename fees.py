@@ -754,6 +754,37 @@ def register(app, c):
         resp.headers["Cache-Control"] = "private, no-store"
         return resp
 
+    # ---------- v0.8.36: fee statement (all invoices and payments of one student, as a PDF) ----------
+    def statement(sid):
+        u = one("SELECT u.id,u.full_name,s.student_code FROM users u LEFT JOIN students s ON s.user_id=u.id WHERE u.id=? AND u.role='student'", (sid,))
+        if not u: return None
+        t0 = today()
+        invs = [shape(r, t0) for r in rows(INV_SQL + " WHERE i.student_id=? AND i.status!='void' ORDER BY i.period, i.id", (sid,))]
+        pays = rows("SELECT p.*, i.period FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE p.student_id=? AND i.status!='void' ORDER BY p.paid_on, p.id", (sid,))
+        il = [{"number": i["number"], "period": i["period"], "course": i["course_name"] + " " + i["batch_code"], "due_date": i["due_date"],
+               "amount_due": i["amount_due_mvr"], "waived": i["waived_mvr"], "paid": i["paid_mvr"], "balance": i["balance"],
+               "status": "overdue" if i["overdue"] else i["status"]} for i in invs]
+        pl = [{"paid_on": p["paid_on"], "receipt_no": p["receipt_no"], "invoice_number": inv_no({"period": p["period"], "id": p["invoice_id"]}),
+               "method": METHOD_LABEL.get(p["method"], p["method"]), "amount": p["amount_mvr"], "reversed": bool(p["reversed_at"])} for p in pays]
+        tot = {"due": sum(i["amount_due"] - i["waived"] for i in il), "paid": sum(p["amount"] for p in pl if not p["reversed"]), "balance": sum(i["balance"] for i in il)}
+        data = receipts.build_statement({"academy": setting("academy_name", "Baleegh Academy"), "phone": setting("contact_phone"), "student": u["full_name"],
+                                         "student_code": u["student_code"], "generated": t0.isoformat(), "invoices": il, "payments": pl, "totals": tot})
+        audit_c("view_statement", "user", sid, g.user["role"]); db().commit()
+        resp = Response(data, mimetype="application/pdf")
+        resp.headers["Content-Disposition"] = f'attachment; filename="fee-statement-{sid}-{t0.isoformat()}.pdf"'
+        resp.headers["Cache-Control"] = "private, no-store"
+        return resp
+
+    @app.get("/api/my/fees/statement.pdf")
+    @auth("student", perm="fees")
+    def my_statement():
+        return statement(g.user["id"])
+
+    @app.get("/api/students/<int:sid>/statement.pdf")
+    @auth("admin", perm="fees")
+    def student_statement(sid):
+        return statement(sid) or err("Student not found", 404)
+
     # ---------- overdue and reminders ----------
     def template_text():
         return setting("reminder_template_en") or DEFAULT_REMINDER_EN

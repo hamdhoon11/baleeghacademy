@@ -140,7 +140,8 @@ const ui = (() => {
 
   // v0.8.34: a file viewer inside the page. Images always show; PDFs show where the browser can display them (navigator.pdfViewerEnabled);
   // otherwise (most Android phones) the dialog says so and offers Download. Download and Open in a new tab are always there.
-  function viewer({name, url, type, size}) {
+  // v0.8.36: extra (HTML under the file), okText/cancelText, collect and init turn it into a check dialog (the slip check); its value is returned
+  function viewer({name, url, type, size, title, extra, okText, cancelText, collect, init}) {
     const isImg = /^image\//.test(type), isPdf = type === "application/pdf";
     const canPdf = isPdf && navigator.pdfViewerEnabled !== false && !/Android/i.test(navigator.userAgent);
     const kb = size ? (size > 1048576 ? (size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(size / 1024)) + " KB") : "";
@@ -150,6 +151,7 @@ const ui = (() => {
     const body = `<div class="fv">${view}</div><p class="fv-meta hint"><bdi>${esc(name)}</bdi>${kb ? " · " + esc(kb) : ""}</p>`
       + `<div class="fv-act"><a class="btn" href="${esc(url)}" download="${esc(name)}">${esc(t("download"))}</a>`
       + `<a class="btn alt" href="${esc(url)}" target="_blank" rel="noopener">${esc(t("open_new_tab"))}</a></div>`;
+    if (extra != null) return open({title: title || name, body: body + extra, okText, cancelText: cancelText || t("Close"), collect, init, wide: true, view: true});
     return open({title: name, body, okText: t("Close"), noCancel: true, wide: true, view: true}).then(() => undefined);
   }
 

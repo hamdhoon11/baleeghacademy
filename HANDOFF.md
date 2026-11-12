@@ -551,3 +551,10 @@
 - Front end: forgotScreen() in index.html; nextSteps()/teacherToday() and DO.goTab/takeAtt/goGrade in learning.js; helpPanel()/todoPanel() and DO.phReset/phDismiss/todoGo in admin.js.
 - Security map (tests/test_session32.py): /api/auth/forgot is public by decision; /api/password-help is People; /api/admin/todo has no single area (it filters by area itself).
 - Next: Round 2 (Fees and Admissions).
+
+## Done: v0.8.36: Round 2 (see CHANGES-v0.8.36.md)
+- receipts.build_statement(); fees.py statement(sid) with GET /api/my/fees/statement.pdf (student, fees) and GET /api/students/<id>/statement.pdf (admin, Fees area); audit action view_statement.
+- app.py same_person(a): earlier applications / accounts by phone digits, email, name + date of birth (max 20), returned as `duplicates` by GET /api/applications/<id>; approval message ends with "Sign in at <host>".
+- Front end: ui.viewer accepts extra/okText/collect/init (check dialog) and fetchFile(path, {dialog}) returns its value; fees.js DO.fxCheck, fxDoVerify, DO.fxNext (Remind next), DO.fxMyStmt, DO.fxStmt; admin.js statement button in Student information and the duplicate warning in Admissions review.
+- Security map: /api/students is the Fees area; PARAM "students"; test_phase4 STUDENT_OK adds my_statement.
+- Next: Round 3.

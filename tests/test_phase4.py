@@ -692,7 +692,7 @@ class P4(unittest.TestCase):
         s = self.ok(self.J("get", "/api/my/fees/summary", self.S(w, 1))); self.assertEqual((s["balance_due"], s["overdue_count"]), (350, 1))   # the 100 payment was reversed above
 
     # ================= access control =================
-    STUDENT_OK = {"my_fees_summary", "my_fees", "slip_upload", "slip_file", "inv_get", "receipt_pdf"}
+    STUDENT_OK = {"my_statement", "my_fees_summary", "my_fees", "slip_upload", "slip_file", "inv_get", "receipt_pdf"}
 
     def test_39_every_fee_endpoint_enforces_roles(self):
         w = self.world(350, 1); s = self.S(w); t = self.login("t%dB1@t.test" % w["cid"])

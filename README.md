@@ -1,5 +1,7 @@
 # Baleegh Academy Portal
 
+**v0.8.36: Round 2.** One-tap slip check (slip and invoice facts in one dialog with Verify/Reject); "Remind next on WhatsApp" on Fees → Overdue; fee statement PDF for students and admins; duplicate-applicant warning on Admissions review; sign-in link in the approval message. See `CHANGES-v0.8.36.md`.
+
 **v0.8.35: Round 1.** Forgot password (request to admins, reset and send by WhatsApp); admin Dashboard "To do today"; teacher Home "Today" with Take attendance; student Home "What to do next"; PDF receipts and invoices print Arabic and Dhivehi names; voided invoices are never revenue and are out of the normal list (Status: Void finds them). See `CHANGES-v0.8.35.md`.
 
 **v0.8.34: downloads fixed.** (1) Files named in Arabic or Dhivehi crashed the download on a real server; the name is now sent in the standard way (English fallback plus the full name), and Dhivehi names keep their vowel marks. (2) On Vercel without a bucket, uploads were lost ("The file could not be found"); they are now kept in the database there. (3) PDFs and images open in a viewer inside the page with Download and Open buttons instead of a blank new tab (which failed on Android and in iPhone home-screen apps). (4) Settings -> Files and storage shows where files are kept, warns when they would be lost, and lists records whose file is already gone. (5) All CSV exports open correctly in Excel with Arabic and Dhivehi text. See `CHANGES-v0.8.34.md`.

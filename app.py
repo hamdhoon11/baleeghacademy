@@ -946,7 +946,25 @@ def create_app(config=None):
     @auth("admin", perm="admissions")
     def apps_get(aid):
         a = one(APP_SQL + " WHERE a.id=?", (aid,))
-        return jsonify(a) if a else err("Application not found", 404)
+        if not a: return err("Application not found", 404)
+        out = dict(a); out["duplicates"] = same_person(a)
+        return jsonify(out)
+
+    def same_person(a):
+        """v0.8.36: earlier applications or existing accounts that look like the same person: same phone (digits), same email, or same name and
+        date of birth. Shown as a warning on the review panel; nothing is blocked."""
+        ph, em = digits_intl(a["phone"] or ""), (a["email"] or "").strip().lower()
+        name, dob = (a["full_name"] or "").strip().lower(), a["date_of_birth"]
+        seen, out = set(), []
+        for r in rows("SELECT id, ref, full_name, phone, email, date_of_birth, status, created_at FROM applications WHERE id<>? ORDER BY id DESC LIMIT 2000", (a["id"],)):
+            why = [w for w, hit in (("phone", ph and len(ph) >= 7 and digits_intl(r["phone"] or "") == ph), ("email", em and (r["email"] or "").strip().lower() == em),
+                                    ("name and date of birth", name and dob and (r["full_name"] or "").strip().lower() == name and r["date_of_birth"] == dob)) if hit]
+            if why: out.append({"kind": "application", "id": r["id"], "label": f"{r['full_name']} ({r['ref']}, {r['status']})", "why": why, "at": r["created_at"]})
+        for r in rows("SELECT u.id, u.full_name, u.login_id, u.phone, u.email, u.role, u.is_active FROM users u WHERE LOWER(u.email)=? OR u.phone IS NOT NULL", (em,)):
+            if r["id"] in seen: continue
+            why = [w for w, hit in (("phone", ph and len(ph) >= 7 and digits_intl(r["phone"] or "") == ph), ("email", em and (r["email"] or "").strip().lower() == em)) if hit]
+            if why: seen.add(r["id"]); out.append({"kind": "account", "id": r["id"], "label": f"{r['full_name']} ({r['login_id'] or r['role']}{'' if r['is_active'] else ', inactive'})", "why": why})
+        return out[:20]
 
     @app.get("/api/applications/<int:aid>/file/<which>")
     @auth("admin", perm="admissions")
@@ -1000,7 +1018,7 @@ def create_app(config=None):
             msg = re.sub(r"\{(\w+)\}", lambda m_: str(vals.get(m_.group(1), m_.group(0))), tpl)
         else:
             msg = (f"Assalaamu alaikum {a['full_name']}, your application to {academy} (ref {a['ref']}) is approved. "
-                   f"Login ID: {login_id} | Temporary password: {temp} (you will be asked to change it).")
+                   f"Login ID: {login_id} | Temporary password: {temp} (you will be asked to change it). Sign in at {request.host_url}")
         if est == "waitlist": msg += " You are on the batch waitlist and we will confirm your seat."
         from urllib.parse import quote
         return jsonify(user_id=uid, email=a["email"], temp_password=temp, enrollment_status=est, message=msg,

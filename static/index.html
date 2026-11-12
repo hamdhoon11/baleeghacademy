@@ -356,6 +356,9 @@ async function fetchFile(path, opts = {}) {
   if (!blob.size) throw new Error(t("file_empty_download"));
   const typed = blob.type === type || !type ? blob : new Blob([blob], {type});
   const name = nameFromHeader(r, opts.name), url = URL.createObjectURL(typed);
+  if (opts.dialog) {   // v0.8.36: a check dialog around the file (any type: the viewer offers Download when it cannot show it)
+    try { return await ui.viewer({name, url, type, size: typed.size, ...opts.dialog}); } finally { URL.revokeObjectURL(url); }
+  }
   if (opts.preview && PREVIEW_TYPE.test(type)) {
     await ui.viewer({name, url, type, size: typed.size});   // resolves when the viewer is closed
     URL.revokeObjectURL(url);

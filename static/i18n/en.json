@@ -782,5 +782,22 @@
   "todo_attendance": "classes today without attendance",
   "todo_storage": "uploaded files are not being kept (see Settings)",
   "todo_all_clear": "Nothing is waiting. All clear.",
-  "No attendance yet": "No attendance yet"
+  "No attendance yet": "No attendance yet",
+  "fx_statement": "Download fee statement",
+  "fx_statement_hint": "All invoices and payments in one PDF.",
+  "fx_check_slip": "Check slip",
+  "fx_due": "Amount due",
+  "fx_paid_so_far": "Paid so far",
+  "fx_amount_needed": "Enter the amount received.",
+  "fx_match_full": "Matches the balance",
+  "fx_match_part": "Less than the balance",
+  "fx_match_over": "More than the balance",
+  "fx_remind_next": "Remind next on WhatsApp",
+  "fx_remind_left": "{n} not reminded today.",
+  "fx_remind_done": "Everyone with a phone number was reminded today.",
+  "ap_dup_title": "This may be someone already known:",
+  "ap_dup_phone": "same phone",
+  "ap_dup_email": "same email",
+  "ap_dup_name_and_date_of_birth": "same name and date of birth",
+  "ap_dup_account": "has an account"
 }

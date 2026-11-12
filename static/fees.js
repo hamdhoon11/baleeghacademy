@@ -62,7 +62,7 @@ async function fxStudent() {
     ${S.fxu === i.id ? form(i) : i.can_upload ? `<button class="btn" data-do="fxUp" data-id="${i.id}">${t("fx_upload_slip")}</button>` : ""}</div>`;
   const hist = d.payments.length ? d.payments.map(p => `<div class="cl"><div>${ltr(p.paid_on)} · ${mvr(p.amount_mvr)} · ${t("fx_m_" + p.method)}<br><span class="hint">${ltr(p.receipt_no)} · ${ltr(p.period)}</span></div>
     ${p.reversed_at ? tag(t("fx_reversed"), "bad") : `<button class="btn sm" data-do="fxRcpt" data-id="${p.id}" data-no="${esc(p.receipt_no)}">${t("fx_receipt")}</button>`}</div>`).join("") : `<p>${t("empty")}</p>`;
-  return `<h1>${t("fees")}</h1><div class="panel"><h2>${t("fx_bank")}</h2>${bank}</div>${d.invoices.length ? d.invoices.map(card).join("") : `<div class="panel"><p>${t("fx_no_invoices")}</p></div>`}
+  return `<h1>${t("fees")}</h1><p><button class="btn alt" data-do="fxMyStmt">${t("fx_statement")}</button> <span class="hint">${t("fx_statement_hint")}</span></p><div class="panel"><h2>${t("fx_bank")}</h2>${bank}</div>${d.invoices.length ? d.invoices.map(card).join("") : `<div class="panel"><p>${t("fx_no_invoices")}</p></div>`}
     <div class="panel"><h2>${t("fx_history")}</h2>${hist}</div>`;
 }
 
@@ -72,13 +72,34 @@ const fxAsk = (title, opts = {}) => ui.ask(title, {label: t("fx_prompt_reason"),
 const fxSet = (k, v) => { S.fxf = {...(S.fxf || {}), [k]: v}; };
 
 DO.fxView = async d => { await viewFile(`/slips/${d.id}/file`, d.name || "slip"); return false; };
-DO.fxVerify = async d => {
-  const amount = $("#fxv_" + d.id).value.trim();
-  if (d.dup === "1" && !await ui.confirm(t("fx_confirm_dup"), {danger: true, okText: t("fx_verify")})) return false;
-  const r = await api(`/slips/${d.id}/verify`, "POST", {amount_mvr: amount, confirm_duplicate: d.dup === "1"});
+const fxDoVerify = async (id, amount, dup) => {
+  if (dup && !await ui.confirm(t("fx_confirm_dup"), {danger: true, okText: t("fx_verify")})) return false;
+  const r = await api(`/slips/${id}/verify`, "POST", {amount_mvr: amount, confirm_duplicate: dup});
   flash(`${t("fx_verified")}: ${r.receipt_no}`, true);
 };
+DO.fxVerify = d => fxDoVerify(d.id, $("#fxv_" + d.id).value.trim(), d.dup === "1");
 DO.fxReject = async d => { const r = await fxAsk(t("reject"), {label: t("fx_prompt_reject")}); if (!r) return false; await api(`/slips/${d.id}/reject`, "POST", {reason: r}); flash(t("saved"), true); };
+DO.fxMyStmt = async () => { await download("/my/fees/statement.pdf", "fee-statement.pdf"); return false; };
+DO.fxStmt = async d => { await download(`/students/${d.id}/statement.pdf`, `fee-statement-${d.id}.pdf`); return false; };
+// v0.8.36: one-tap check. The slip and the invoice facts side by side, with Verify and Reject in the same dialog
+const fxMatch = s => s.amount_mvr === s.balance ? tag(t("fx_match_full"), "ok") : s.amount_mvr < s.balance ? tag(t("fx_match_part"), "warn") : tag(t("fx_match_over"), "bad");
+DO.fxCheck = async d => {
+  const s = (S.fxSlipList || []).find(x => x.id === +d.id); if (!s) return;
+  const def = Math.min(s.amount_mvr, s.balance) || s.amount_mvr;
+  const extra = `<div class="fx-check"><p><b>${esc(s.student_name)}</b> · ${ltr(s.invoice_number)} · ${esc(s.course_name)} ${esc(s.batch_code)}</p>
+    <table><tbody><tr><th>${t("fx_amount_sent")}</th><td>${mvr(s.amount_mvr)} ${fxMatch(s)}</td></tr><tr><th>${t("fx_due")}</th><td>${mvr(s.amount_due_mvr)}</td></tr>
+    <tr><th>${t("fx_paid_so_far")}</th><td>${mvr(s.paid_mvr)}</td></tr><tr><th>${t("fx_balance")}</th><td>${mvr(s.balance)}</td></tr>
+    <tr><th>${t("fx_transfer_date")}</th><td>${ltr(s.transfer_date)}</td></tr>${s.reference ? `<tr><th>${t("fx_reference")}</th><td>${ltr(s.reference)}</td></tr>` : ""}</tbody></table>
+    ${s.duplicates.length ? `<div class="msg err">${t("fx_dup_warn")} ${s.duplicates.map(x => ltr(x.invoice_number) + " " + esc(x.student_name)).join(", ")}</div>` : ""}
+    <label>${t("fx_amount_received")}<input name="amount" type="number" min="1" step="1" inputmode="numeric" value="${def}"></label>
+    <p><button type="button" class="btn sm danger" data-act="reject">${t("reject")}</button></p></div>`;
+  const v = await fetchFile(`/slips/${s.id}/file`, {name: s.file_name || "slip", dialog: {title: t("fx_check_slip") + " · " + s.student_name, extra, okText: t("fx_verify"),
+    collect: f => { const a = f.elements.amount.value.trim(); if (!(+a > 0)) { f.elements.amount.setAttribute("aria-invalid", "true"); throw new Error(t("fx_amount_needed")); } return {amount: a}; },
+    init: (dl, id, finish) => { dl.querySelector('[data-act="reject"]').onclick = () => finish("reject"); }}});
+  if (v === "reject") return DO.fxReject({id: s.id});
+  if (v && v.amount) return fxDoVerify(s.id, v.amount, !!s.duplicate_verified);
+  return false;
+};
 DO.fxGen = async () => {
   const r = await api("/invoices/generate", "POST", {month: val("fxg_m")});
   S.fxGenResult = r.details.filter(x => x.reason !== "already_invoiced");   // shown under the button: who was skipped and why
@@ -108,6 +129,13 @@ DO.fxRemind = async d => {   // open the chat first (popup blockers need it insi
   if (d.url) window.open(d.url, "_blank", "noopener");
   await api(`/invoices/${d.id}/reminders`, "POST", {channel: d.ch, to: d.to}); flash(t("fx_reminder_logged"), true);
 };
+// v0.8.36: step through everyone not reminded today, oldest first; WhatsApp to the student (or the guardian when only that number is there)
+DO.fxNext = async () => {
+  const i = (S.fxOverdue || []).filter(x => !x.reminded_today && Object.keys(x.links).length).sort((a, b) => b.days_overdue - a.days_overdue)[0];
+  if (!i) return;
+  const who = i.links.student ? "student" : Object.keys(i.links)[0];
+  return DO.fxRemind({id: i.id, ch: "whatsapp", to: who, url: i.links[who].whatsapp});
+};
 DO.fxEmail = async d => { await api(`/invoices/${d.id}/reminders/email`, "POST", {}); flash(t("fx_email_sent"), true); };
 DO.fxPrCsv = async () => { const q = fxPrQuery(); await download("/fees/payment-report.csv?" + q, `payments-${fxPrMonth()}.csv`); return false; };
 DO.fxPrXlsx = async () => { const q = fxPrQuery(); await download("/fees/payment-report.xlsx?" + q, `payments-${fxPrMonth()}.xlsx`); return false; };
@@ -120,12 +148,12 @@ const invRow = i => `<div class="cl ${i.status === "void" ? "off" : ""}"><div><b
 
 const FX = {
   async slips() {
-    const l = await api("/slips?status=pending");
+    const l = await api("/slips?status=pending"); S.fxSlipList = l;
     const hl = S.fxhl; if (hl) mount(() => { const c = document.querySelector(`[data-inv="${hl}"]`); S.fxhl = null; if (c) { c.scrollIntoView({block: "center"}); c.focus({preventScroll: true}); } });
     return `<div class="panel"><h2>${t("fx_tab_slips")}</h2>${l.length ? l.map(s => `<div class="sub${hl === s.invoice_id ? " next" : ""}" data-inv="${s.invoice_id}" tabindex="-1"><b>${esc(s.student_name)}</b> · ${ltr(s.invoice_number)} · ${esc(s.course_name)} ${esc(s.batch_code)}<br>
       ${t("fx_amount_sent")}: ${mvr(s.amount_mvr)} · ${t("fx_balance")}: ${mvr(s.balance)} · ${t("fx_transfer_date")}: ${ltr(s.transfer_date)}${s.reference ? ` · ${t("fx_reference")}: ${ltr(s.reference)}` : ""}
       ${s.duplicates.length ? `<div class="msg err">${t("fx_dup_warn")} ${s.duplicates.map(x => ltr(x.invoice_number) + " " + esc(x.student_name)).join(", ")}</div>` : ""}
-      <div class="rowflex row"><button class="btn sm" data-do="fxView" data-id="${s.id}" data-name="${esc(s.file_name)}">${t("fx_view_slip")}</button>
+      <div class="rowflex row"><button class="btn sm" data-do="fxCheck" data-id="${s.id}">${t("fx_check_slip")}</button><button class="btn sm alt" data-do="fxView" data-id="${s.id}" data-name="${esc(s.file_name)}">${t("fx_view_slip")}</button>
       <label style="flex:0 1 150px">${t("fx_amount_received")}<input id="fxv_${s.id}" type="number" min="1" step="1" inputmode="numeric" value="${Math.min(s.amount_mvr, s.balance) || s.amount_mvr}"></label>
       <button class="btn" data-do="fxVerify" data-id="${s.id}" data-dup="${s.duplicate_verified ? 1 : 0}">${t("fx_verify")}</button><button class="btn alt" data-do="fxReject" data-id="${s.id}">${t("reject")}</button></div></div>`).join("") : `<p>${t("fx_no_slips")}</p>`}</div>`;
   },
@@ -168,7 +196,10 @@ const FX = {
   async overdue() {
     const r = await api("/fees/overdue"), l = r.items;
     const btn = (i, who, ch, url) => `<button class="btn sm" data-do="fxRemind" data-id="${i.id}" data-ch="${ch}" data-to="${who}" data-url="${esc(url)}">${ch === "whatsapp" ? t("fx_whatsapp") : t("fx_viber")}${who === "guardian" ? " · " + t("fx_guardian") : ""}</button>`;
-    return `<div class="panel"><h2>${t("fx_tab_overdue")}</h2>${r.email_enabled ? "" : `<p class="hint">${t("fx_email_off")}</p>`}${l.length ? l.map(i => `<div class="sub"><b>${esc(i.student_name)}</b> · ${ltr(i.number)} · ${mvr(i.balance)}<br><span class="hint">${t("fx_overdue_by")} ${ltr(i.days_overdue)} · ${t("fx_due_on")} ${ltr(i.due_date)}</span>
+    S.fxOverdue = l;
+    const left = l.filter(i => !i.reminded_today && Object.keys(i.links).length).length;
+    const next = l.length ? `<p class="rowflex">${left ? `<button class="btn" data-do="fxNext">${t("fx_remind_next")}</button>` : ""}<span class="hint">${left ? t("fx_remind_left").replace("{n}", left) : t("fx_remind_done")}</span></p>` : "";
+    return `<div class="panel"><h2>${t("fx_tab_overdue")}</h2>${next}${r.email_enabled ? "" : `<p class="hint">${t("fx_email_off")}</p>`}${l.length ? l.map(i => `<div class="sub"><b>${esc(i.student_name)}</b> · ${ltr(i.number)} · ${mvr(i.balance)}<br><span class="hint">${t("fx_overdue_by")} ${ltr(i.days_overdue)} · ${t("fx_due_on")} ${ltr(i.due_date)}</span>
       ${i.last_reminder ? `<div class="msg ${i.reminded_today ? "err" : "ok"}">${t("fx_last_reminder")}: ${esc(i.last_reminder.channel)} · ${ltr(i.last_reminder.sent_at.slice(0, 10))} · ${esc(i.last_reminder.by_name || "")}${i.reminded_today ? " · " + t("fx_reminded_today") : ""}</div>` : ""}
       <div class="seg">${Object.entries(i.links).map(([who, k]) => btn(i, who, "whatsapp", k.whatsapp) + btn(i, who, "viber", k.viber)).join("") || `<span class="hint">${t("fx_no_phone")}</span>`}${r.email_enabled ? `<button class="btn sm" data-do="fxEmail" data-id="${i.id}">${t("fx_email")}</button>` : ""}</div></div>`).join("") : `<p>${t("fx_no_overdue")}</p>`}</div>`;
   },
