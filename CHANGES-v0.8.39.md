@@ -28,5 +28,5 @@ Builds on v0.8.38. Six fixes from the code review of the live repository. No scr
 ## Checks run
 - Unit tests: whole suite in one run, 467 tests, all pass. New `tests/test_session39.py` (11): weak keys refused on a hosted app and a token forged with the example key refused; hosted seed refuses a missing, example or short admin password and creates nothing; withdrawal at 02:00 Maldives time gets the Maldives date; sign-in limit shared by two copies of the app, per account and per address, and lifted after five minutes; header trusted only behind a proxy; Forgot and apply limits shared; sign-out, password change, reset and admin password end old sign-ins; tokens from before the update keep working; the page stores the new token; git ignores data and secrets.
 - Three older tests updated for the new behaviour: `test_phase2` (rate-limit test uses its own address), `test_session35` (signs in again after a reset), `test_warm_connection` (sets a real key). The `test_session13` date test, which failed between 00:00 and 05:00, passes.
-- Browser: `e2e_ui.py`, `e2e_browser.py`, `e2e_navigation.py`, `e2e_permissions.py` pass. The other ten scripts were not run.
+- Browser: `e2e_ui.py`, `e2e_browser.py`, `e2e_navigation.py`, `e2e_permissions.py` pass. The other nine scripts were not run.
 - Not tested: a real Vercel deployment, PostgreSQL, real phones.
