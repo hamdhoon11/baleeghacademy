@@ -853,7 +853,9 @@ def create_app(config=None):
                        whatsapp=digits_intl(s.get("contact_phone", "")), tagline=g_("tagline"), contact_email=g_("contact_email"),
                        address=g_("address"), website_url=g_("website_url"), facebook_url=g_("facebook_url"), banner=g_("portal_banner"),
                        applications_open=g_("applications_open") != "0", applications_closed_message=g_("applications_closed_message"),
-                       minor_age=int(g_("minor_age")))
+                       minor_age=int(g_("minor_age")),
+                       # Session 21 (v0.8.33): the real upload limits, so the forms can check a file before sending it (on Vercel both are 4 MB)
+                       upload_max_mb=MAX_FILE // (1024 * 1024), learning_max_mb=common.cap_mb(int(app.config.get("LEARNING_MAX_MB", 20))))
 
     @app.get("/api/public/batches")
     def public_batches():

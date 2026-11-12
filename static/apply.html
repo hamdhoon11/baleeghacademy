@@ -38,7 +38,7 @@ input[type=file]{padding:.45rem;font-size:.9rem}
 .btn.alt{background:var(--sun);color:var(--ink)}
 .btn.block{width:100%}.btn[disabled]{opacity:.55;cursor:not-allowed}
 .msg{padding:.7rem .9rem;border-radius:var(--r-sm);margin-bottom:.9rem;border-inline-start:4px solid currentColor}.err{background:#f8e1dc;color:var(--coral)}.ok{background:#dff1e3;color:#1f6b35}
-.hint{font-size:.85rem;color:var(--ink2);margin:.2rem 0 1rem}.hp{position:absolute;left:-9999px}
+.hint{font-size:.85rem;color:var(--ink2);margin:.2rem 0 1rem}.fileerr{display:block;margin:.35rem 0 0;font-size:.85rem}[aria-invalid=true]{border-color:var(--coral)}.hp{position:absolute;inset-inline-start:-9999px}
 :focus-visible{outline:3px solid var(--sun);outline-offset:2px}
 @media(max-width:600px){form#f,#guardian{grid-template-columns:1fr}.panel{padding:1.1rem}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -58,13 +58,13 @@ input[type=file]{padding:.45rem;font-size:.9rem}
   <label class="full"><span data-t="a_email">Email (your login will use this)</span><input name="email" type="email" required autocomplete="email"></label>
   <label class="full"><span data-t="a_course">Course</span><select name="course_id" id="course" required></select></label>
   <label class="full"><span data-t="a_batch">Preferred batch</span><select name="batch_id" id="batch"></select></label>
-  <label class="full"><span data-t="a_id">Copy of your ID card (PDF, JPG or PNG, up to 5 MB)</span><input name="id_card" type="file" accept=".pdf,.jpg,.jpeg,.png" required></label>
+  <label class="full"><span data-t="a_id">Copy of your ID card (PDF, JPG or PNG, up to 4 MB)</span><input name="id_card" type="file" accept=".pdf,.jpg,.jpeg,.png" required></label>
   <div id="guardian" hidden>
     <h2 data-t="a_guardian">Guardian details (required under 18)</h2>
     <label class="full"><span data-t="a_gname">Guardian full name</span><input name="guardian_name"></label>
     <label><span data-t="a_grel">Relationship</span><input name="guardian_relationship"></label>
     <label><span data-t="a_gphone">Guardian phone</span><input name="guardian_phone" type="tel"></label>
-    <label class="full"><span data-t="a_gid">Copy of guardian's ID card</span><input name="guardian_id" type="file" accept=".pdf,.jpg,.jpeg,.png"></label>
+    <label class="full"><span data-t="a_gid">Copy of guardian's ID card (PDF, JPG or PNG, up to 4 MB)</span><input name="guardian_id" type="file" accept=".pdf,.jpg,.jpeg,.png"></label>
   </div>
   <p class="hint full" data-t="a_privacy">Your ID copies are stored privately and only academy admins can open them.</p>
   <button class="btn block full" id="go"><span data-t="a_submit">Submit application</span></button>
@@ -79,24 +79,50 @@ input[type=file]{padding:.45rem;font-size:.9rem}
 </main>
 <script>
 const API = window.PORTAL_API || "";
-const EN = {a_name:"Full name",a_dob:"Date of birth",a_grade:"Grade (if you are in school)",a_phone:"Phone number",a_email:"Email (your login will use this)",a_island:"Island",a_course:"Course",a_batch:"Preferred batch",a_id:"Copy of your ID card (PDF, JPG or PNG, up to 5 MB)",a_guardian:"Guardian details (required under 18)",a_gname:"Guardian full name",a_grel:"Relationship",a_gphone:"Guardian phone",a_gid:"Copy of guardian's ID card",a_privacy:"Your ID copies are stored privately and only academy admins can open them.",a_submit:"Submit application",a_check:"Check your application",a_ref:"Reference number",a_lookup:"Check status",a_wa:"Chat with us on WhatsApp",title:"Apply to Baleegh Academy",sent:"Application received. Your reference is",keep:"Keep this reference and your phone number to check your status.",any:"No preference",spots:"seats left",full:"full, waitlist",st_pending:"Under review",st_approved:"Approved. We will message you your login details.",st_rejected:"Not accepted",st_waitlist:"On the waiting list"};
-let wa = "";
+const EN = {a_name:"Full name",a_dob:"Date of birth",a_grade:"Grade (if you are in school)",a_phone:"Phone number",a_email:"Email (your login will use this)",a_island:"Island",a_course:"Course",a_batch:"Preferred batch",a_id:"Copy of your ID card (PDF, JPG or PNG, up to {mb} MB)",a_guardian:"Guardian details (required under 18)",a_gname:"Guardian full name",a_grel:"Relationship",a_gphone:"Guardian phone",a_gid:"Copy of guardian's ID card (PDF, JPG or PNG, up to {mb} MB)",a_privacy:"Your ID copies are stored privately and only academy admins can open them.",a_submit:"Submit application",a_check:"Check your application",a_ref:"Reference number",a_lookup:"Check status",a_wa:"Chat with us on WhatsApp",title:"Apply to Baleegh Academy",sent:"Application received. Your reference is",keep:"Keep this reference and your phone number to check your status.",any:"No preference",spots:"seats left",full:"full, waitlist",st_pending:"Under review",st_approved:"Approved. We will message you your login details.",st_rejected:"Not accepted",st_waitlist:"On the waiting list",
+  load_failed:"The course list could not be loaded. Check your connection and try again.",retry:"Try again",no_courses:"No courses are open for applications right now. Please contact us on WhatsApp.",
+  file_wrong_type:"This file type is not accepted. Use {types}.",file_too_big:"This file is larger than {mb} MB. Choose a smaller file or a photo with lower resolution.",file_empty:"This file is empty.",
+  offline:"Could not reach the server. Check your connection and try again.",server_error:"Something went wrong. Please try again.",too_large:"The files are too large to send. Each file must be {mb} MB or smaller."};
+let wa = "", maxMb = 4;   // Session 21: the real limit comes from /public/info; 4 MB is the safe value (Vercel) when it cannot be read
 const t = k => EN[k] || k;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const show = (m, ok) => { $("#out").innerHTML = `<div class="msg ${ok ? "ok" : "err"}" role="status">${m}</div>`; window.scrollTo(0, 0); };
+// The same check as checkFile() in index.html (this page does not load the portal script): "" when fine, otherwise the message.
+function checkFile(input, maxMbArg, types) {
+  const f = input && input.files && input.files[0]; if (!f) return "";
+  const list = String(types ?? input.accept ?? "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+  const name = f.name.toLowerCase(), ext = name.includes(".") ? name.slice(name.lastIndexOf(".")) : "", mime = (f.type || "").toLowerCase();
+  const exts = list.filter(x => x.startsWith("."));
+  const okType = !list.length || list.some(x => x.startsWith(".") ? x === ext : x.endsWith("/*") ? mime.startsWith(x.slice(0, -1)) : x === mime && (!exts.length || exts.includes(ext)));
+  if (!okType) return t("file_wrong_type").replace("{types}", (exts.length ? exts : list).map(x => x.replace(".", "").toUpperCase()).filter((x, i, a) => a.indexOf(x) === i).join(", "));
+  if (maxMbArg && f.size > maxMbArg * 1024 * 1024) return t("file_too_big").replace("{mb}", maxMbArg);
+  if (!f.size) return t("file_empty");
+  return "";
+}
+// read a reply that may not be JSON (Vercel can answer 413 with HTML before the app runs)
+async function readJson(r) { try { return await r.json(); } catch (_) { return {}; } }
 function applyText() {
-  document.querySelectorAll("[data-t]").forEach(e => e.textContent = t(e.dataset.t));
+  document.querySelectorAll("[data-t]").forEach(e => e.textContent = t(e.dataset.t).replace("{mb}", maxMb));
   $("#title").textContent = t("title");
 }
 let batches = [], minorAge = 18;
 async function init() {
-  const [courses, bs, info] = await Promise.all(["/public/courses", "/public/batches", "/public/info"].map(p => fetch(API + "/api" + p).then(r => r.json())));
-  batches = bs; wa = info.whatsapp; minorAge = info.minor_age || 18;
+  $("#out").innerHTML = "";
+  let courses, bs, info;
+  try {
+    [courses, bs, info] = await Promise.all(["/public/courses", "/public/batches", "/public/info"].map(p => fetch(API + "/api" + p).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })));
+  } catch (_) {   // Session 21: say so and offer a retry instead of an empty course list
+    $("#out").innerHTML = `<div class="msg err" role="alert">${esc(t("load_failed"))} <button type="button" class="btn alt" id="retry">${esc(t("retry"))}</button></div>`;
+    $("#retry").onclick = init; $("#go").disabled = true; applyText(); return;
+  }
+  batches = bs; wa = info.whatsapp; minorAge = info.minor_age || 18; maxMb = info.upload_max_mb || 4;
   if (info.applications_open === false) { $("#f").hidden = true; const m = document.createElement("div"); m.className = "msg err"; m.textContent = info.applications_closed_message || "Applications are closed at the moment. Please contact us on WhatsApp."; $("#f").before(m); }
   $("#wa").href = "https://wa.me/" + wa + "?text=" + encodeURIComponent("Assalaamu alaikum, I have a question about joining " + info.academy_name);
   const open = courses.filter(c => c.status === "open");
   $("#course").innerHTML = open.map(c => `<option value="${c.id}">${esc(c.name)} ${esc(c.level || "")} (MVR ${c.monthly_fee_mvr}/month)</option>`).join("");
+  $("#go").disabled = !open.length;
+  if (!open.length && info.applications_open !== false) show(esc(t("no_courses")));
   fillBatches(); applyText();
 }
 function fillBatches() {
@@ -111,25 +137,35 @@ $("#dob").onchange = () => {
   if (n.getMonth() < d.getMonth() || (n.getMonth() === d.getMonth() && n.getDate() < d.getDate())) age--;
   $("#guardian").hidden = age >= minorAge;
 };
+// every file is checked as soon as it is picked: a wrong type or a file over the limit is cleared with a message under it
+document.querySelectorAll("#f input[type=file]").forEach(el => el.addEventListener("change", () => {
+  const msg = checkFile(el, maxMb), old = el.parentElement.querySelector(".fileerr"); if (old) old.remove();
+  el.removeAttribute("aria-invalid");
+  if (msg) { el.value = ""; el.setAttribute("aria-invalid", "true"); const m = document.createElement("span"); m.className = "msg err fileerr"; m.setAttribute("role", "alert"); m.textContent = msg; el.after(m); }
+}));
 $("#f").onsubmit = async e => {
-  e.preventDefault(); $("#go").disabled = true;
+  e.preventDefault();
+  for (const el of document.querySelectorAll("#f input[type=file]")) { const m = checkFile(el, maxMb); if (m) { el.focus(); return show(esc(m)); } }
+  $("#go").disabled = true;
   try {
-    const r = await fetch(API + "/api/public/apply", {method: "POST", body: new FormData($("#f"))});
-    const j = await r.json();
-    if (!r.ok) return show(esc(j.error || "Something went wrong"));
+    const r = await fetch(API + "/api/public/apply", {method: "POST", body: new FormData($("#f"))});   // the honeypot field "website" is sent as it is; the server ignores bots that fill it
+    const j = await readJson(r);
+    if (!r.ok) return show(esc(j.error || (r.status === 413 ? t("too_large").replace("{mb}", maxMb) : t("server_error"))));
     const phone = $("#f").phone.value;
     const link = "https://wa.me/" + wa + "?text=" + encodeURIComponent("Assalaamu alaikum, I applied to Baleegh Academy. Reference " + j.ref);
     show(`${esc(t("sent"))} <b>${esc(j.ref)}</b>. ${esc(t("keep"))} <a href="${link}" target="_blank" rel="noopener">WhatsApp</a>`, true);
     $("#f").reset(); $("#guardian").hidden = true; $("#sref").value = j.ref; $("#sphone").value = phone;
-  } catch { show("Could not reach the server. Check your connection and try again."); }
+  } catch { show(esc(t("offline"))); }
   finally { $("#go").disabled = false; }
 };
 $("#sf").onsubmit = async e => {
   e.preventDefault();
-  const r = await fetch(API + "/api/public/apply/status", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ref: $("#sref").value, phone: $("#sphone").value})});
-  const j = await r.json();
-  if (!r.ok) return show(esc(j.error));
-  show(esc(t("st_" + j.status)) + (j.reason ? ": " + esc(j.reason) : ""), j.status !== "rejected");
+  try {
+    const r = await fetch(API + "/api/public/apply/status", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ref: $("#sref").value, phone: $("#sphone").value})});
+    const j = await readJson(r);
+    if (!r.ok) return show(esc(j.error || t("server_error")));
+    show(esc(t("st_" + j.status)) + (j.reason ? ": " + esc(j.reason) : ""), j.status !== "rejected");
+  } catch { show(esc(t("offline"))); }
 };
 init();
 </script>

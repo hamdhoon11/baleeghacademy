@@ -31,8 +31,8 @@ try:
             pg = br.new_context(viewport={"width": 390, "height": 800}).new_page()
             pg.on("pageerror", lambda e: errors.append(str(e)))
             return pg
-        def login(pg, e, w): pg.goto(BASE + "/"); pg.fill("#le", e); pg.fill("#lp", w); pg.click("#fl button"); pg.wait_for_selector("nav")
-        def schedule(pg): pg.click("nav [data-v=classroom]"); pg.wait_for_selector("[data-do=ctab][data-v=schedule]"); pg.click("[data-do=ctab][data-v=schedule]"); pg.wait_for_selector("#fx")
+        def login(pg, e, w): e2e_shim.login(pg, BASE, e, w, db=env["DATABASE_PATH"])   # Session 22: forced change, course chooser, waits for the app
+        def schedule(pg): pg.click("nav [data-v=classroom]"); pg.wait_for_selector("[data-tabs=classroom] [data-key=schedule]"); pg.click("[data-tabs=classroom] [data-key=schedule]"); pg.wait_for_selector("#fx")
 
         t = page_for(); login(t, "teacher@baleegh.test", "ChangeMe-Teach1"); schedule(t)
         check(t.locator("#ml").count() == 1 and t.locator("#xm").count() == 1, "teacher sees the class link box and the one-off link field")
@@ -51,8 +51,9 @@ try:
         check(l.locator("#ml").count() == 0 and l.locator("#xm").count() == 0 and l.locator("[data-do=saveLink]").count() == 0, "a teacher without Class links cannot edit it")
         check(l.locator("a[href='https://meet.google.com/limited-ccc']").count() == 1, "but still sees the link, read-only")
         check(l.locator("text=Class links permission").count() >= 1, "and is told who can change it")
-        t.click("nav [data-v=home]"); t.click("nav [data-v=classroom]"); t.wait_for_selector("select[data-ch=batch]")
-        check([o for o in t.locator("select[data-ch=batch] option").all_inner_texts() if "L1" in o] == [], "a teacher does not see another teacher's batch")
+        t.click("nav [data-v=home]"); t.click("nav [data-v=classroom]"); t.wait_for_selector("[data-tabs=classroom]")   # Session 15: a teacher picks the batch in the header (#sbsel)
+        opts = t.locator("#sbsel option").all_inner_texts() if t.locator("#sbsel").count() else [t.inner_text("main h2")]
+        check([o for o in opts if "L1" in o] == [], "a teacher does not see another teacher's batch")
         br.close()
 finally:
     srv.terminate(); shutil.rmtree(tmp, ignore_errors=True)

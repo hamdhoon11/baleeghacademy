@@ -32,8 +32,8 @@ try:
             pg = br.new_context(viewport={"width": 390, "height": 800}).new_page()
             pg.on("pageerror", lambda e: errors.append(str(e)))
             return pg
-        def login(pg, e, w): pg.goto(BASE + "/"); pg.fill("#le", e); pg.fill("#lp", w); pg.click("#fl button"); pg.wait_for_selector("nav")
-        def recs(pg): pg.click("nav [data-v=classroom]"); pg.wait_for_selector("[data-do=ctab][data-v=recordings]"); pg.click("[data-do=ctab][data-v=recordings]"); pg.wait_for_selector("h2:has-text('Recordings')")
+        def login(pg, e, w): e2e_shim.login(pg, BASE, e, w, db=env["DATABASE_PATH"])   # Session 22: forced change, course chooser, waits for the app
+        def recs(pg): pg.click("nav [data-v=classroom]"); pg.wait_for_selector("[data-tabs=classroom] [data-key=recordings]"); pg.click("[data-tabs=classroom] [data-key=recordings]"); pg.wait_for_selector("h2:has-text('Recordings')")
 
         t = page_for(); login(t, "teacher@baleegh.test", "ChangeMe-Teach1"); recs(t)
         t.wait_for_selector("#fr"); check(t.locator("#fr").count() == 1, "teacher sees the Add a recording form")
@@ -49,8 +49,8 @@ try:
         check(s.locator("[data-do=delRec]").count() == 0, "student cannot delete")
         check(s.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "student page fits the phone width")
 
-        l = page_for(); login(l, "t2@s.test", "Password123"); l.click("nav [data-v=classroom]"); l.wait_for_selector("select[data-ch=batch]")
-        l.click("[data-do=ctab][data-v=recordings]"); l.wait_for_selector("h2:has-text('Recordings')")
+        l = page_for(); login(l, "t2@s.test", "Password123"); l.click("nav [data-v=classroom]"); l.wait_for_selector("[data-tabs=classroom]")   # one batch: no picker, the batch name is the heading
+        l.click("[data-tabs=classroom] [data-key=recordings]"); l.wait_for_selector("h2:has-text('Recordings')")
         check(l.locator(".cl:has-text('Lesson 1 recording')").count() == 0, "another teacher does not see it")
         n = page_for(); login(n, "t3@s.test", "Password123"); recs(n)
         check(n.locator("#fr").count() == 0 and n.locator("text=Add class recordings permission").count() == 1, "a teacher without Add class recordings sees no form and is told who to ask")

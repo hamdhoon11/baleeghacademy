@@ -754,13 +754,13 @@ class P4(unittest.TestCase):
     def test_43_language_files(self):
         en = json.load(open(os.path.join(ROOT, "static/i18n/en.json")))
         self.assertNotIn("reminder_template_dv", en)
-        js = open(os.path.join(ROOT, "static/fees.js"), encoding="utf-8").read()
+        js = "".join(open(os.path.join(ROOT, "static", f), encoding="utf-8").read() for f in ("fees.js", "admin.js"))   # v0.8.33: the fee cards of the Dashboard live in admin.js (Session 8)
         used = set(re.findall(r"""\bt\(\s*["']([a-z0-9_]+)["']\s*\)""", js))
-        for pre, opts in (("fx_st_", ("unpaid", "slip_submitted", "paid", "void", "waived", "overdue", "partial")), ("fx_m_", ("bank_transfer", "cash", "other")), ("fx_tab_", ("slips", "invoices", "record", "discounts", "overdue", "report", "payrep"))):
+        for pre, opts in (("fx_st_", ("unpaid", "slip_submitted", "paid", "void", "waived", "overdue", "partial")), ("fx_m_", ("bank_transfer", "cash", "cheque", "other")), ("fx_tab_", ("slips", "invoices", "record", "discounts", "overdue", "report", "payrep"))):
             used |= {pre + o for o in opts}
         used |= {"fees"}
         missing = sorted(k for k in used if k not in en)
-        self.assertEqual(missing, [], "keys used in fees.js but missing from en.json")
+        self.assertEqual(missing, [], "keys used in fees.js/admin.js but missing from en.json")
         fx = {k for k in en if k.startswith("fx_")}
         self.assertEqual(sorted(fx - used), [], "unused fx_ keys in en.json")
         for k in ("invoice_due_day", "first_invoice_mode", "first_invoice_grace_days", "receipt_prefix", "reminder_template_en"): self.assertIn(k, en, "setting label " + k)

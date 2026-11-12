@@ -16,6 +16,8 @@ Scheduled (Vercel Cron, daily 02:30 UTC = 07:30 Maldives; Bearer CRON_SECRET, sa
 
 Events create notifications through `ns.notify(...)` (called by fees, learning and substitutions before their own commit, so a rolled-back
 request leaves no notification behind). Scheduled reminders use a dedupe key, so running twice in one day sends nothing twice.
+Links (Session 16, v0.8.33): "tab" or "tab:id" (assignments:<assignment id>, fees:<invoice id>, classroom:<batch id>). The page opens the
+tab and then the item; rows written before v0.8.33 hold a plain tab name and still work.
 Nothing here sends email, WhatsApp or SMS: the Fees -> Overdue screen still does that by hand.
 """
 import datetime as dt, hmac, os
@@ -149,7 +151,7 @@ def register(app, c, now):
             for r in rows(f"SELECT i.id,i.student_id,i.period,i.due_date,{bal} AS bal,c.name AS course FROM invoices i JOIN courses c ON c.id=i.course_id "
                           f"WHERE i.status='unpaid' AND i.due_date>=? AND i.due_date<=? AND {bal}>0", (t.isoformat(), (t + dt.timedelta(days=days)).isoformat())):
                 out["fee_due_soon"] += push([r["student_id"]], "fee_due_soon", "Fee due soon",
-                                            f"{r['course']} ({r['period']}): {r['bal']} MVR is due on {r['due_date']}.", "fees", f"due:{r['id']}")
+                                            f"{r['course']} ({r['period']}): {r['bal']} MVR is due on {r['due_date']}.", f"fees:{r['id']}", f"due:{r['id']}")
         # 2. overdue fees: first the day after the due date, then every N days (one dedupe bucket per N days, so a missed day still sends once)
         every = num("remind_overdue_every_days")
         over = rows(f"SELECT i.id,i.student_id,i.period,i.due_date,{bal} AS bal,c.name AS course FROM invoices i JOIN courses c ON c.id=i.course_id "
@@ -159,7 +161,7 @@ def register(app, c, now):
                 late = (t - dt.date.fromisoformat(r["due_date"])).days
                 out["fee_overdue"] += push([r["student_id"]], "fee_overdue", "Fee overdue",
                                            f"{r['course']} ({r['period']}): {r['bal']} MVR was due on {r['due_date']} ({late} day{'s' if late != 1 else ''} ago).",
-                                           "fees", f"overdue:{r['id']}:{(late - 1) // every}")
+                                           f"fees:{r['id']}", f"overdue:{r['id']}:{(late - 1) // every}")
         # 3. assignments due soon, for students who have not handed in
         days = num("remind_assignment_days_before")
         if days:
@@ -167,7 +169,7 @@ def register(app, c, now):
                           "JOIN users u ON u.id=e.student_id AND u.is_active=1 WHERE a.due_date IS NOT NULL AND SUBSTR(a.due_date,1,10)>=? AND SUBSTR(a.due_date,1,10)<=? "
                           "AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.assignment_id=a.id AND s.student_id=e.student_id AND s.submitted_at IS NOT NULL)",
                           (t.isoformat(), (t + dt.timedelta(days=days)).isoformat())):
-                out["assignment_due"] += push([r["student_id"]], "assignment_due", "Assignment due soon", f"{r['title']} is due on {r['due_date'][:10]}.", "assignments", f"assign:{r['id']}")
+                out["assignment_due"] += push([r["student_id"]], "assignment_due", "Assignment due soon", f"{r['title']} is due on {r['due_date'][:10]}.", f"assignments:{r['id']}", f"assign:{r['id']}")
         # 4. one daily line for admins who handle fees
         fee_admins = admins_with("fees")
         slips = one("SELECT COUNT(*) n FROM payment_slips WHERE status='pending'")["n"]
