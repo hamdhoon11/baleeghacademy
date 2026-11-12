@@ -1165,6 +1165,9 @@ def create_app(config=None):
     learning.register(app, ns)
     import filecheck
     filecheck.register(app, ns)
+    import resetdata   # v0.8.41: "Clear portal data" (full admins, Settings): deletes everything entered and keeps the admins
+    resetdata.register(app, ns, dbx.read_schema(BASE),
+                       lambda uid, pw: check_password_hash(one("SELECT password_hash FROM users WHERE id=?", (uid,))["password_hash"], pw))
     import passhelp
     passhelp.register(app, ns)   # v0.8.35: "Forgot password" requests go to admins (no email needed)
     import todo

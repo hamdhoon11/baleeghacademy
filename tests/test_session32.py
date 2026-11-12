@@ -35,7 +35,7 @@ NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "
 AREA = [("/api/applications", "admissions"), ("/api/announcements", "classroom"), ("/api/audit", "audit"), ("/api/discounts", "fees"), ("/api/families", "fees"), ("/api/fees", "fees"),
         ("/api/invoices", "fees"), ("/api/payments", "fees"), ("/api/slips", "fees"), ("/api/students", "fees"), ("/api/earnings", "finance"), ("/api/expense", "finance"), ("/api/finance", "finance"), ("/api/recurring-expenses", "finance"),
         ("/api/enrollments/<int:eid>/void-open-invoices", "fees"), ("/api/enrollment", "enrollments"), ("/api/import/enrolments", "enrollments"), ("/api/import/courses", "courses"), ("/api/import/batches", "batches"), ("/api/import/expenses", "finance"), ("/api/import", "people"),
-        ("/api/settings", "settings"), ("/api/admin/storage", "settings"), ("/api/password-help", "people"), ("/api/notifications", "settings"), ("/api/student-information", "student_information"), ("/api/teacher-information", "teacher_information"),
+        ("/api/settings", "settings"), ("/api/admin/storage", "settings"), ("/api/admin/reset-data", "settings"), ("/api/password-help", "people"), ("/api/notifications", "settings"), ("/api/student-information", "student_information"), ("/api/teacher-information", "teacher_information"),
         ("/api/substitutions", "batches"), ("/api/users", "people"), ("/api/courses", "courses"), ("/api/batches", "batches")]
 PUBLIC = {"/", "/<path:filename>", "/api/auth/login", "/api/auth/forgot", "/api/cron/generate-invoices", "/api/cron/reminders", "/api/health", "/api/public/apply",
           "/api/public/apply/status", "/api/public/batches", "/api/public/courses", "/api/public/info"}
