@@ -305,7 +305,7 @@ views.settings = async () => {
     p.addEventListener("input", mark); p.addEventListener("change", mark);
   });
   const store = await storagePanel();
-  return `<h1>${t("settings")}</h1>${store.banner}${tabs({id: "settings", items: sc.groups.map(x => [x.id, t(x.title)]), current: g.id, onSelect: setSelect, label: t("settings")})}<div class="mt1 panel" id="setp"><h2>${esc(t(g.title))}</h2>${g.hint ? `<p class="hint">${esc(t(g.hint))}</p>` : ""}${g.items.map(input).join("")}<p><button class="btn" data-do="saveSet">${t("save")}</button> <span class="tag warn" id="setDirty" hidden>${esc(t("Unsaved changes"))}</span></p><p class="hint">${esc(t("Empty fields use the default. Every change is written to the audit log."))}</p></div>${store.panel}`;
+  return `<h1>${t("settings")}</h1>${store.banner}${tabs({id: "settings", items: sc.groups.map(x => [x.id, t(x.title)]), current: g.id, onSelect: setSelect, label: t("settings")})}<div class="mt1 panel" id="setp"><h2>${esc(t(g.title))}</h2>${g.hint ? `<p class="hint">${esc(t(g.hint))}</p>` : ""}${g.items.map(input).join("")}<p><button class="btn" data-do="saveSet">${t("save")}</button> <span class="tag warn" id="setDirty" hidden>${esc(t("Unsaved changes"))}</span></p><p class="hint">${esc(t("Empty fields use the default. Every change is written to the audit log."))}</p></div>${store.panel}${resetPanel()}`;
 };
 DO.setTab = d => { S.sg = d.g; };
 
@@ -634,6 +634,29 @@ async function storagePanel(bannerOnly) {
   return {banner, panel};
 }
 DO.stCheck = async () => { S.stMissing = await api("/admin/storage/missing"); };
+
+// ---------- v0.8.41: clear portal data (full admins only). Preview first, then the admin's password and the words DELETE ALL DATA ----------
+function resetPanel() {
+  if (S.user.role !== "admin" || S.user.permissions) return "";
+  return `<div class="panel mt1" id="resetp"><h2>${esc(t("rd_title"))}</h2><p class="hint">${esc(t("rd_hint"))}</p>`
+    + `<p><button type="button" class="btn danger" data-do="rdStart">${esc(t("rd_button"))}</button></p></div>`;
+}
+DO.rdStart = async () => {
+  const p = await api("/admin/reset-data", "POST", {});   // a preview: nothing is changed
+  if (!p.total) { flash(t("rd_nothing"), true); return false; }
+  const kept = t("rd_kept").replace("{a}", p.kept.admins);
+  if (!await ui.confirm(t("rd_confirm").replace("{n}", fmtNum(p.total)), {danger: true, title: t("rd_title"), okText: t("rd_continue"),
+    details: p.items.map(x => t(x.label) + ": " + fmtNum(x.rows)).concat([kept])})) return false;
+  const v = await ui.form(t("rd_title"), [
+    {id: "numbers", label: t("rd_numbers"), type: "select", options: [["keep", t("rd_numbers_keep")], ["restart", t("rd_numbers_restart")]], value: "keep"},
+    {id: "password", label: t("rd_password"), type: "password", required: true, autocomplete: "current-password"},
+    {id: "confirm", label: t("rd_type").replace("{p}", p.phrase), required: true, autocomplete: "off", placeholder: p.phrase}],
+    {okText: t("rd_button"), danger: true, hint: t("rd_form_hint"), validate: x => x.confirm === p.phrase ? "" : t("rd_type").replace("{p}", p.phrase)});
+  if (!v) return false;
+  const r = await api("/admin/reset-data", "POST", {apply: true, password: v.password, confirm: v.confirm, reset_numbers: v.numbers === "restart"});
+  S.stMissing = null; staleBadges();
+  flash(t("rd_done").replace("{n}", fmtNum(r.total)), true);
+};
 
 // v0.8.35: "To do today" on the admin Dashboard: one tap to each thing that is waiting
 function todoPanel(d) {
