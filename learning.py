@@ -782,7 +782,7 @@ def register(app, c):
         fees = None
         if can("fees"):
             t = today().isoformat()
-            invs = rows("SELECT i.id,i.period,i.description,i.amount_due_mvr,i.paid_mvr,i.waived_mvr,i.due_date,i.status FROM invoices i WHERE i.student_id=? AND i.status!='void' "
+            invs = rows("SELECT i.id,i.period,i.description,i.kind,i.amount_due_mvr,i.paid_mvr,i.waived_mvr,i.due_date,i.status FROM invoices i WHERE i.student_id=? AND i.status!='void' "
                         "ORDER BY i.period DESC,i.id DESC LIMIT 36", (uid,))
             for i in invs:
                 i["balance"] = max(0, i["amount_due_mvr"] - i["paid_mvr"] - i["waived_mvr"]) if i["status"] in ("unpaid", "slip_submitted") else 0

@@ -110,12 +110,35 @@ def register(app, c, today):
             tot["students"] += 1; tot["fee"] += row["monthly_fee_mvr"]; tot["due"] += due - waived
             tot["paid"] += paid; tot["balance"] += balance; tot["invoice_count"] += 1 if has else 0
             tot[st + "_count"] += 1
-        return month, out, tot
+        # v0.8.46: invoices made by hand that month (a student or someone not in the portal; any revenue type). Same filters where they apply.
+        osql = ("SELECT i.id, i.period, i.description, i.amount_mvr, i.amount_due_mvr, i.waived_mvr, i.status AS inv_status, i.student_id, i.customer_name, "
+                "COALESCE(u.full_name, i.customer_name) AS student_name, st.student_code, c.id AS course_id, c.name AS course_name, c.kind, b.id AS batch_id, b.code AS batch_code, rt.name AS revenue_type_name "
+                "FROM invoices i LEFT JOIN users u ON u.id=i.student_id LEFT JOIN students st ON st.user_id=i.student_id LEFT JOIN courses c ON c.id=i.course_id LEFT JOIN batches b ON b.id=i.batch_id "
+                "LEFT JOIN revenue_types rt ON rt.id=i.revenue_type_id WHERE i.kind='manual' AND i.period=? AND i.status!='void'"
+                + "".join(" AND " + x for x in w) + " ORDER BY COALESCE(u.full_name, i.customer_name), i.id")
+        others, otot = [], {"invoices": 0, "due": 0, "paid": 0, "balance": 0}
+        for r in rows(osql, (month, *a)):
+            pays = rows("SELECT amount_mvr, paid_on, method, receipt_no FROM payments WHERE invoice_id=? AND reversed_at IS NULL ORDER BY paid_on, id", (r["id"],))
+            paid = sum(p["amount_mvr"] for p in pays)
+            balance = pay.Payments.balance({"status": r["inv_status"], "amount_due_mvr": r["amount_due_mvr"], "waived_mvr": r["waived_mvr"], "paid_mvr": paid})
+            st = status_of(True, r["amount_due_mvr"], r["waived_mvr"], paid, balance, r["inv_status"])
+            if want and st != want: continue
+            others.append({"invoice_id": r["id"], "invoice_no": inv_no({"id": r["id"], "period": r["period"]}), "student_id": r["student_id"], "student_code": r["student_code"],
+                           "student_name": r["student_name"], "walk_in": r["student_id"] is None, "revenue_type_name": r["revenue_type_name"] or "", "description": r["description"],
+                           "course_name": r["course_name"], "batch_code": r["batch_code"], "month": month, "amount_due_mvr": r["amount_due_mvr"], "waived_mvr": r["waived_mvr"],
+                           "paid_mvr": paid, "balance_mvr": balance, "status": st, "status_label": STATUS_KEYS[st],
+                           "payments": [{"paid_on": p["paid_on"], "amount_mvr": p["amount_mvr"], "method": p["method"], "receipt_no": p["receipt_no"]} for p in pays],
+                           "last_payment": pays[-1]["paid_on"] if pays else None})
+            otot["invoices"] += 1; otot["due"] += r["amount_due_mvr"] - r["waived_mvr"]; otot["paid"] += paid; otot["balance"] += balance
+        return month, out, tot, others, otot
 
-    def sheet(out):
+    def sheet(out, others=()):
         return [[r["student_code"] or "", r["student_name"], r["course_name"], "Tuition class" if r["kind"] == "tuition" else "Course", r["batch_code"],
                  r["month"], r["monthly_fee_mvr"], r["amount_due_mvr"], r["paid_mvr"], r["balance_mvr"], r["status_label"], r["invoice_no"] or "",
-                 ", ".join(f"{p['paid_on']} ({p['amount_mvr']})" for p in r["payments"]), r["last_payment"] or ""] for r in out]
+                 ", ".join(f"{p['paid_on']} ({p['amount_mvr']})" for p in r["payments"]), r["last_payment"] or ""] for r in out] + [
+                [r["student_code"] or "", r["student_name"] + (" (not in the portal)" if r["walk_in"] else ""), r["course_name"] or r["description"], r["revenue_type_name"], r["batch_code"] or "",
+                 r["month"], r["amount_due_mvr"], r["amount_due_mvr"] - r["waived_mvr"], r["paid_mvr"], r["balance_mvr"], r["status_label"], r["invoice_no"],
+                 ", ".join(f"{p['paid_on']} ({p['amount_mvr']})" for p in r["payments"]), r["last_payment"] or ""] for r in others]   # v0.8.46: hand-made invoices; Type = revenue type
 
     def args_of():
         return {k: request.args.get(k, "") for k in ("month", "course_id", "batch_id", "kind", "status")}
@@ -123,19 +146,19 @@ def register(app, c, today):
     @app.get("/api/fees/payment-report")
     @auth("admin", perm=AREA)
     def payrep():
-        try: month, out, tot = build(args_of())
+        try: month, out, tot, others, otot = build(args_of())
         except ValueError as x: return err(str(x))
-        return jsonify(month=month, filters={k: v for k, v in args_of().items() if v and k != "month"}, totals=tot, rows=out)
+        return jsonify(month=month, filters={k: v for k, v in args_of().items() if v and k != "month"}, totals=tot, rows=out, other_rows=others, other_totals=otot)
 
     def download(ext):
-        try: month, out, tot = build(args_of())
+        try: month, out, tot, others, otot = build(args_of())
         except ValueError as x: return err(str(x))
         if ext == "csv":
             buf = io.StringIO(); w = csv.writer(buf); w.writerow(HEADERS)
-            for r in sheet(out): w.writerow([csv_safe(v) for v in r])
+            for r in sheet(out, others): w.writerow([csv_safe(v) for v in r])
             body, mime = "\ufeff" + buf.getvalue(), "text/csv; charset=utf-8"   # v0.8.34: BOM for Excel
         else:
-            body, mime = to_xlsx(sheet(out), HEADERS, "Payments " + month), XLSX_MIME
+            body, mime = to_xlsx(sheet(out, others), HEADERS, "Payments " + month), XLSX_MIME
         audit("export_payment_report", "report", None, f"{ext} {month} {len(out)} rows"); db().commit()
         resp = Response(body, mimetype=mime)
         resp.headers["Content-Disposition"] = f'attachment; filename="payments-{month}.{ext}"'
@@ -155,8 +178,9 @@ def register(app, c, today):
     def student_history(sid):
         s = one("SELECT u.id, u.full_name, st.student_code FROM users u LEFT JOIN students st ON st.user_id=u.id WHERE u.id=? AND u.role='student'", (sid,))
         if not s: return err("Student not found", 404)
-        invs = rows("SELECT i.id, i.period, i.amount_mvr, i.discount_mvr, i.amount_due_mvr, i.waived_mvr, i.due_date, i.status, c.name AS course_name, c.kind, b.code AS batch_code "
-                    "FROM invoices i LEFT JOIN courses c ON c.id=i.course_id LEFT JOIN batches b ON b.id=i.batch_id WHERE i.student_id=? ORDER BY i.period DESC, i.id DESC", (sid,))
+        invs = rows("SELECT i.id, i.period, i.description, i.kind, rt.name AS revenue_type_name, i.amount_mvr, i.discount_mvr, i.amount_due_mvr, i.waived_mvr, i.due_date, i.status, c.name AS course_name, c.kind, b.code AS batch_code "
+                    "FROM invoices i LEFT JOIN courses c ON c.id=i.course_id LEFT JOIN batches b ON b.id=i.batch_id "
+                    "LEFT JOIN revenue_types rt ON rt.id=COALESCE(i.revenue_type_id, (SELECT r2.id FROM revenue_types r2 WHERE r2.code=i.kind)) WHERE i.student_id=? ORDER BY i.period DESC, i.id DESC", (sid,))
         tot = {"due": 0, "paid": 0, "balance": 0}
         for i in invs:
             ps = rows("SELECT id, amount_mvr, paid_on, method, receipt_no, reversed_at FROM payments WHERE invoice_id=? ORDER BY paid_on, id", (i["id"],))
