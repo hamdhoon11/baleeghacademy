@@ -76,6 +76,8 @@ const ui = (() => {
     let ctl;
     if (fl.type === "select") ctl = `<select id="${id}"${req}${desc}>${(fl.options || []).map(o => `<option value="${esc(o[0])}" ${String(o[0]) === String(v) ? "selected" : ""}>${esc(o[1])}</option>`).join("")}</select>`;
     else if (fl.type === "textarea") ctl = `<textarea id="${id}" rows="${fl.rows || 4}"${req}${attrs}${desc}>${esc(v)}</textarea>`;
+    else if (fl.type === "file") ctl = `<input id="${id}" type="file"${fl.accept ? ` accept="${esc(fl.accept)}"` : ""}${req}${desc}>`;   // v0.8.43
+    else if (fl.type === "checkbox") return `<label for="${id}" class="inl"><input id="${id}" type="checkbox"${fl.value ? " checked" : ""}${desc}> ${esc(fl.label)}${hint}</label>`;
     else ctl = `<input id="${id}" type="${esc(fl.type || "text")}" value="${esc(v)}"${req}${attrs}${desc}>`;
     return `<label for="${id}">${esc(fl.label)}${fl.required ? ` <span class="req" aria-hidden="true">*</span>` : ""}${ctl}${hint}</label>`;
   }
@@ -83,7 +85,10 @@ const ui = (() => {
     const out = {};
     f.querySelectorAll("[aria-invalid]").forEach(x => x.removeAttribute("aria-invalid"));
     for (const fl of fields) {
-      const el = f.querySelector("#" + px + "_" + fl.id), v = el.value.trim();
+      const el = f.querySelector("#" + px + "_" + fl.id);
+      if (fl.type === "checkbox") { out[fl.id] = el.checked; continue; }
+      if (fl.type === "file") { const file = el.files[0] || null; if (fl.required && !file) { el.setAttribute("aria-invalid", "true"); el.focus(); throw new Error(t("dlg_required").replace("{f}", fl.label)); } out[fl.id] = file; continue; }
+      const v = el.value.trim();
       const bad = msg => { el.setAttribute("aria-invalid", "true"); el.focus(); throw new Error(msg); };
       if (fl.required && !v) bad(t("dlg_required").replace("{f}", fl.label));
       if (fl.type === "number" && v !== "") {
