@@ -160,6 +160,53 @@ DO.fxBulkPaid = async () => {
   if (!v) return false;
   const msg = await fxSendPaid(ids, v); S.bulk.inv = []; flash(msg, true);
 };
+// ---- v0.8.45: revenue types, manual invoices, editing an invoice ----
+async function fxTypes(fresh) { if (fresh || !S.fxTypeList) S.fxTypeList = await api("/revenue-types"); return S.fxTypeList; }
+function fxBatchOpts() {
+  const s = $("#fxm_b"); if (!s) return;
+  const sid = +val("fxm_s"), mine = (S.fxEnr || []).filter(e => e.student_id === sid && ["active", "completed", "dropped"].includes(e.status));
+  s.innerHTML = `<option value="">${esc(t("fx_no_batch"))}</option>` + mine.map(e => `<option value="${e.batch_id}">${esc(e.course_name + " " + e.batch_code)}</option>`).join("");
+}
+async function fxManualSend() {
+  const fd = new FormData(), w = val("fxm_w");
+  if (w === "student") { if (!val("fxm_s")) throw new Error(t("fx_choose_student")); fd.append("student_id", val("fxm_s")); if (val("fxm_b")) fd.append("batch_id", val("fxm_b")); }
+  else { if (!val("fxm_cn")) throw new Error(t("fx_type_customer")); fd.append("customer_name", val("fxm_cn")); fd.append("customer_phone", val("fxm_cp")); }
+  fd.append("revenue_type_id", val("fxm_t")); fd.append("amount_mvr", wholeNum("fxm_a", "fx_amount_mvr", {min: 1, empty: false}));
+  for (const [k, id] of [["description", "fxm_d"], ["invoice_date", "fxm_id"], ["due_date", "fxm_dd"], ["note", "fxm_n"]]) fd.append(k, val(id));
+  if ($("#fxm_p").checked) {
+    fd.append("paid", "1"); fd.append("paid_amount_mvr", val("fxm_pa")); fd.append("method", val("fxm_pm")); fd.append("paid_on", val("fxm_pd")); fd.append("reference", val("fxm_pr"));
+    if ($("#fxm_pt").checked) fd.append("notify", "1");
+    if ($("#fxm_f").files[0]) fd.append("file", $("#fxm_f").files[0]);
+  }
+  const r = await apiForm("/invoices/manual", fd), i = r.invoice;
+  return t("fx_invoice_made").replace("{no}", i.number).replace("{name}", i.student_name) + (r.payments.length ? " " + t("fx_marked_paid").replace("{n}", 1).replace("{m}", fmtNum(r.payments[0].amount_mvr)) : "") + (r.warnings.length ? " " + r.warnings.join(" ") : "");
+}
+DO.fxRtRename = async d => {
+  const v = await ui.ask(t("fx_rename") + ": " + d.name, {label: t("fx_type_name"), value: d.name, required: true}); if (v === null) return false;
+  await api("/revenue-types/" + d.id, "PATCH", {name: v}); S.fxTypeList = null; flash(t("saved"), true);
+};
+DO.fxRtToggle = async d => { await api("/revenue-types/" + d.id, "PATCH", {is_active: d.on === "1"}); S.fxTypeList = null; flash(t("saved"), true); };
+document.addEventListener("submit", async e => {
+  if (e.target.id !== "fxrt") return; e.preventDefault();
+  try { await api("/revenue-types", "POST", {name: val("fxrt_n")}); S.fxTypeList = null; flash(t("saved"), true); render(); } catch (x) { flash(x.message, false); }
+});
+DO.fxEdit = async d => {
+  const i = (S.fxInvList || []).find(x => x.id === +d.id) || await api("/invoices/" + d.id), types = await fxTypes();
+  const opts = types.filter(r => r.is_active || r.id === i.revenue_type).map(r => [String(r.id), r.name]);
+  const v = await ui.form(t("edit") + " · " + i.number, [
+    {id: "amount", label: t("fx_amount_mvr"), type: "number", required: true, min: 1, step: 1, inputmode: "numeric", value: i.amount_mvr, hint: i.discount_mvr ? t("fx_edit_disc_hint").replace("{m}", fmtNum(i.discount_mvr)) : t("fx_edit_amount_hint").replace("{m}", fmtNum(i.paid_mvr))},
+    {id: "reason", label: t("fx_edit_reason"), hint: t("fx_edit_reason_hint")},
+    {id: "type", label: t("fx_revenue_type"), type: "select", options: opts, value: String(i.revenue_type)},
+    {id: "desc", label: t("fx_description"), required: true, value: i.description},
+    {id: "due", label: t("fx_due_on"), type: "date", required: true, value: i.due_date},
+    ...(i.walk_in ? [{id: "cn", label: t("fx_customer_name"), required: true, value: i.student_name}, {id: "cp", label: t("phone"), value: i.student_phone || ""}] : [])],
+    {okText: t("save"), hint: i.student_name + " · " + t("fx_balance") + ": MVR " + fmtNum(i.balance), validate: v => +v.amount !== i.amount_mvr && !v.reason ? t("fx_edit_reason_needed") : null});
+  if (!v) return false;
+  const b = {revenue_type_id: v.type, description: v.desc, due_date: v.due};
+  if (+v.amount !== i.amount_mvr) { b.amount_mvr = v.amount; b.reason = v.reason; }
+  if (i.walk_in) { b.customer_name = v.cn; b.customer_phone = v.cp; }
+  const r = await api("/invoices/" + i.id, "PATCH", b); flash(r.changed ? t("saved") : t("fx_nothing_changed"), true);
+};
 DO.fxEnd = async d => { await api("/discounts/" + d.id, "DELETE"); flash(t("saved"), true); };
 DO.fxFamDel = async d => { await api(`/families/${d.fid}/members/${d.sid}`, "DELETE"); flash(t("saved"), true); };
 DO.fxRemind = async d => {   // open the chat first (popup blockers need it inside the click), then record that it was sent
@@ -182,8 +229,8 @@ DO.fxXlsx = async () => { const m = val("fxr_m") || fxMonth(); await download("/
 DO.fxCsv = async () => { const m = val("fxr_m") || fxMonth(); await download("/fees/report.csv?month=" + m, `fees-${m}.csv`); return false; };
 
 const FX_OPEN = i => ["unpaid", "slip_submitted"].includes(i.status);
-const invRow = i => `<div class="cl ${i.status === "void" ? "off" : ""}"><div>${FX_OPEN(i) ? bulkBox("inv", i.id, i.number + " " + i.student_name) + " " : ""}<b>${esc(i.student_name)}</b> ${fxBadge(i)}<br><span class="hint">${ltr(i.number)} · ${esc(i.course_name)} ${esc(i.batch_code)} · ${t("fx_due_on")} ${ltr(i.due_date)}</span><br>${mvr(i.amount_due_mvr)} · ${t("fx_balance")}: ${mvr(i.balance)}${i.status_reason ? `<br><span class="hint">${esc(i.status_reason)}</span>` : ""}</div>
-  <div class="seg"><button class="btn sm" data-do="fxInvPdf" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_invoice_pdf")}</button>${["unpaid", "slip_submitted"].includes(i.status) && i.balance > 0 ? `<button class="btn sm" data-do="fxPaid" data-id="${i.id}" data-no="${esc(i.number)}" data-name="${esc(i.student_name)}" data-bal="${i.balance}">${t("fx_mark_paid")}</button>` : ""}${["unpaid", "slip_submitted"].includes(i.status) ? `<button class="btn sm" data-do="fxDisc" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_discount")}</button><button class="btn sm" data-do="fxWaive" data-id="${i.id}">${t("fx_waive")}</button><button class="btn sm" data-do="fxVoid" data-id="${i.id}">${t("fx_void")}</button>` : ""}${["void", "waived"].includes(i.status) ? `<button class="btn sm" data-do="fxReopen" data-id="${i.id}">${t("fx_reopen")}</button>` : ""}</div></div>`;
+const invRow = i => `<div class="cl ${i.status === "void" ? "off" : ""}"><div>${FX_OPEN(i) ? bulkBox("inv", i.id, i.number + " " + i.student_name) + " " : ""}<b>${esc(i.student_name)}</b> ${fxBadge(i)}${i.walk_in ? " " + tag(t("fx_not_in_portal")) : ""}<br><span class="hint">${ltr(i.number)} · ${i.course_name ? esc(i.course_name) + " " + esc(i.batch_code || "") : esc(i.description)} · ${esc(i.revenue_type_name || "")} · ${t("fx_due_on")} ${ltr(i.due_date)}</span><br>${mvr(i.amount_due_mvr)} · ${t("fx_balance")}: ${mvr(i.balance)}${i.status_reason ? `<br><span class="hint">${esc(i.status_reason)}</span>` : ""}</div>
+  <div class="seg"><button class="btn sm" data-do="fxInvPdf" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_invoice_pdf")}</button>${i.status !== "void" ? `<button class="btn sm alt" data-do="fxEdit" data-id="${i.id}">${t("edit")}</button>` : ""}${["unpaid", "slip_submitted"].includes(i.status) && i.balance > 0 ? `<button class="btn sm" data-do="fxPaid" data-id="${i.id}" data-no="${esc(i.number)}" data-name="${esc(i.student_name)}" data-bal="${i.balance}">${t("fx_mark_paid")}</button>` : ""}${["unpaid", "slip_submitted"].includes(i.status) ? `<button class="btn sm" data-do="fxDisc" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_discount")}</button><button class="btn sm" data-do="fxWaive" data-id="${i.id}">${t("fx_waive")}</button><button class="btn sm" data-do="fxVoid" data-id="${i.id}">${t("fx_void")}</button>` : ""}${["void", "waived"].includes(i.status) ? `<button class="btn sm" data-do="fxReopen" data-id="${i.id}">${t("fx_reopen")}</button>` : ""}</div></div>`;
 
 const FX = {
   async slips() {
@@ -198,14 +245,50 @@ const FX = {
   },
   async invoices() {
     const f = S.fxf || {}, q = new URLSearchParams();
-    if (f.month) q.set("month", f.month); if (f.status) q.set("status", f.status); if (f.q) q.set("q", f.q);
-    const l = await api("/invoices?" + q); S.fxInvList = l;
-    mount(() => { const ff = $("#fxff"); if (ff) { $("#fxf_s").value = f.status || ""; ff.onsubmit = e => { e.preventDefault(); fxSet("month", val("fxf_m")); fxSet("status", val("fxf_s")); fxSet("q", val("fxf_q")); render(); }; } });
+    if (f.month) q.set("month", f.month); if (f.status) q.set("status", f.status); if (f.q) q.set("q", f.q); if (f.rt) q.set("revenue_type", f.rt);
+    const [l, types] = await Promise.all([api("/invoices?" + q), fxTypes()]); S.fxInvList = l;
+    mount(() => { const ff = $("#fxff"); if (ff) { $("#fxf_s").value = f.status || ""; $("#fxf_t").value = f.rt || ""; ff.onsubmit = e => { e.preventDefault(); fxSet("month", val("fxf_m")); fxSet("status", val("fxf_s")); fxSet("q", val("fxf_q")); fxSet("rt", val("fxf_t")); render(); }; } });
     return `<div class="panel"><h2>${t("fx_generate")}</h2><div class="rowflex row"><label>${t("fx_from_month")}<input id="fxg_f" type="month"></label><label>${t("fx_month")}<input id="fxg_m" type="month" value="${fxMonth()}"></label><button class="btn alt" data-do="fxGen">${t("fx_generate")}</button></div><p class="hint">${t("fx_generate_hint")} ${t("fx_from_month_hint")}</p>${fxSkipList()}</div>
       <div class="panel"><form id="fxff" class="row"><label>${t("fx_month")}<input id="fxf_m" type="month" value="${esc(f.month || "")}"></label>
       <label>${t("status")}<select id="fxf_s"><option value="">${t("fx_all_but_void")}</option><option value="all">${t("fx_all_with_void")}</option>${["unpaid", "slip_submitted", "overdue", "paid", "waived", "void"].map(s => `<option value="${s}">${t("fx_st_" + s)}</option>`).join("")}</select></label>
+      <label>${t("fx_revenue_type")}<select id="fxf_t"><option value="">${t("all")}</option>${types.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join("")}</select></label>
       <label>${t("fx_search")}<input id="fxf_q" value="${esc(f.q || "")}"></label><button class="btn">${t("fx_filter")}</button></form><p>${xlBtns("/invoices/export", q.toString(), "invoices")}</p></div>
       <div class="panel">${bulkBar("inv", [["fxBulkPaid", "fx_mark_paid"], ["fxBulkWaive", "fx_waive"], ["fxBulkVoid", "fx_void", true]], l.filter(FX_OPEN).map(i => i.id))}${bulkAll("inv", l.filter(FX_OPEN).map(i => i.id))}${l.length ? l.map(invRow).join("") : `<p>${t("empty")}</p>`}</div>`;
+  },
+  // v0.8.45: an invoice made by hand: a student (optionally tied to one of their batches) or someone not in the portal; can be paid in the same step
+  async manual() {
+    const [types, studs, enr] = await Promise.all([fxTypes(true), api("/users?role=student"), api("/enrollments")]);
+    const act = types.filter(r => r.is_active);
+    S.fxEnr = enr;
+    mount(() => {
+      const who = () => { const w = val("fxm_w"); $("#fxm_sbox").hidden = w !== "student"; $("#fxm_cbox").hidden = w !== "customer"; fxBatchOpts(); };
+      const paid = () => { $("#fxm_pbox").hidden = !$("#fxm_p").checked; };
+      if ($("#fxm_w")) { $("#fxm_w").onchange = who; $("#fxm_s").onchange = fxBatchOpts; $("#fxm_p").onchange = paid; who(); paid(); }
+      onSubmit("fxm", fxManualSend);
+    });
+    const typeRow = r => `<div class="cl${r.is_active ? "" : " off"}"><div><b>${esc(r.name)}</b> ${r.built_in ? tag(t("fx_built_in")) : ""} ${r.is_active ? "" : tag(t("inactive"), "warn")}<br><span class="hint">${t("fx_n_invoices").replace("{n}", r.invoices)}</span></div>
+      <div class="seg"><button class="btn sm alt" data-do="fxRtRename" data-id="${r.id}" data-name="${esc(r.name)}">${t("fx_rename")}</button>${r.built_in ? "" : `<button class="btn sm" data-do="fxRtToggle" data-id="${r.id}" data-on="${r.is_active ? 0 : 1}">${r.is_active ? t("fx_turn_off") : t("fx_turn_on")}</button>`}</div></div>`;
+    return `<div class="panel"><h2>${t("fx_tab_manual")}</h2><p class="hint">${t("fx_manual_hint")}</p><form id="fxm" class="row">
+      <label>${t("fx_bill_to")}<select id="fxm_w"><option value="student">${t("fx_bill_student")}</option><option value="customer">${t("fx_bill_customer")}</option></select></label>
+      <div id="fxm_sbox" class="rowflex full">${pickField("fxm_s", "student", [["", "-"], ...studs.filter(u => u.is_active !== 0).map(u => [u.id, u.full_name + (u.login_id ? " (" + u.login_id + ")" : "")])], "")}
+        <label>${t("fx_link_batch")}<select id="fxm_b"></select><span class="hint">${t("fx_link_batch_hint")}</span></label></div>
+      <div id="fxm_cbox" class="rowflex full" hidden><label>${t("fx_customer_name")}<input id="fxm_cn" maxlength="100"></label><label>${t("phone")}<input id="fxm_cp" maxlength="30" inputmode="tel"></label></div>
+      <label>${t("fx_revenue_type")}<select id="fxm_t">${act.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join("")}</select></label>
+      <label>${t("fx_description")}<input id="fxm_d" maxlength="200" placeholder="${esc(t("fx_description_ph"))}"></label>
+      <label>${t("fx_amount_mvr")}<input id="fxm_a" type="number" min="1" step="1" inputmode="numeric" required></label>
+      <label>${t("fx_invoice_date")}<input id="fxm_id" type="date" value="${mvToday()}"><span class="hint">${t("fx_invoice_date_hint")}</span></label>
+      <label>${t("fx_due_date_opt")}<input id="fxm_dd" type="date"></label>
+      <label>${t("fx_note")}<input id="fxm_n" maxlength="300"></label>
+      <label class="inl full"><input id="fxm_p" type="checkbox"> ${t("fx_already_paid")}</label>
+      <div id="fxm_pbox" class="rowflex full" hidden>
+        <label>${t("fx_amount_paid_opt")}<input id="fxm_pa" type="number" min="1" step="1" inputmode="numeric"><span class="hint">${t("fx_amount_paid_hint")}</span></label>
+        ${field("fxm_pm", t("fx_method"), "", ["bank_transfer", "cash", "other"].map(m => [m, t("fx_m_" + m)]))}
+        <label>${t("fx_paid_on")}<input id="fxm_pd" type="date" max="${mvToday()}" value="${mvToday()}"></label><label>${t("fx_reference")}<input id="fxm_pr" maxlength="80"></label>
+        <label>${t("fx_attach_slip")}<input id="fxm_f" type="file" accept="${FX_SLIP_ACCEPT}"><span class="hint">${t("fx_attach_slip_hint")}</span></label>
+        <label class="inl"><input id="fxm_pt" type="checkbox"> ${t("fx_tell_student")}</label></div>
+      <button class="btn alt">${t("fx_create_invoice")}</button></form></div>
+      <div class="panel"><h2>${t("fx_revenue_types")}</h2><p class="hint">${t("fx_revenue_types_hint")}</p>${types.map(typeRow).join("")}
+      <form id="fxrt" class="row"><label>${t("fx_new_type")}<input id="fxrt_n" maxlength="60" required></label><button class="btn alt">${t("add")}</button></form></div>`;
   },
   async record() {
     const [inv, pays] = await Promise.all([api("/invoices?status=open"), api("/payments")]);
@@ -272,7 +355,7 @@ const FX = {
       <div class="panel"><h2>${t("fx_who_owes")}</h2>${r.owing.map(o => `<div class="cl"><div><b>${esc(o.student_name)}</b> ${o.overdue ? tag(t("fx_st_overdue"), "bad") : ""}<br><span class="hint">${ltr(o.number)} · ${esc(o.course_name)} ${esc(o.batch_code)}</span></div>${mvr(o.balance)}</div>`).join("") || `<p>${t("fx_nobody_owes")}</p>`}</div>`;
   },
 };
-const FX_TABS = ["slips", "invoices", "record", "discounts", "overdue", "report", "payrep"];
+const FX_TABS = ["slips", "invoices", "manual", "record", "discounts", "overdue", "report", "payrep"];
 
 async function fxAdmin() {
   if (!S.fxCaughtUp) { S.fxCaughtUp = true; try { await api("/invoices/catch-up", "POST"); } catch (x) { /* not allowed or offline: the Fees screen still opens */ } }   // bills anyone enrolled since the last run

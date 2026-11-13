@@ -124,9 +124,12 @@ def register(app, c):
         return jsonify(error=e.msg, **e.extra), e.code
 
     # ---------- invoice shapes ----------
-    INV_SQL = ("SELECT i.*, u.full_name AS student_name, u.phone AS student_phone, u.email AS student_email, c.name AS course_name, b.code AS batch_code, "
-               "e.status AS enrollment_status FROM invoices i JOIN users u ON u.id=i.student_id JOIN courses c ON c.id=i.course_id "
-               "JOIN batches b ON b.id=i.batch_id JOIN enrollments e ON e.id=i.enrollment_id")
+    # v0.8.45: LEFT JOINs. A manual invoice may have no enrolment/course/batch, and no portal account at all (customer_name instead).
+    RT_JOIN = " LEFT JOIN revenue_types rt ON rt.id=COALESCE(i.revenue_type_id, (SELECT r2.id FROM revenue_types r2 WHERE r2.code=i.kind))"
+    INV_SQL = ("SELECT i.*, COALESCE(u.full_name, i.customer_name) AS student_name, COALESCE(u.phone, i.customer_phone) AS student_phone, u.email AS student_email, "
+               "c.name AS course_name, b.code AS batch_code, e.status AS enrollment_status, rt.id AS revenue_type, rt.name AS revenue_type_name "
+               "FROM invoices i LEFT JOIN users u ON u.id=i.student_id LEFT JOIN courses c ON c.id=i.course_id "
+               "LEFT JOIN batches b ON b.id=i.batch_id LEFT JOIN enrollments e ON e.id=i.enrollment_id" + RT_JOIN)
 
     def shape(i, t=None):
         t = t or today()
@@ -137,6 +140,7 @@ def register(app, c):
         d["overdue"] = bool(is_open and i["due_date"] < t.isoformat())
         d["days_overdue"] = (t - dt.date.fromisoformat(i["due_date"])).days if d["overdue"] else 0
         d["partly_paid"] = bool(is_open and i["paid_mvr"] > 0)
+        d["walk_in"] = i["student_id"] is None   # v0.8.45: a customer who is not in the portal
         return d
 
     def get_invoice(iid):
@@ -328,8 +332,8 @@ def register(app, c):
         if not i: return err("Invoice not found", 404)
         c_ = one("SELECT level FROM courses WHERE id=?", (i["course_id"],))
         data = receipts.build_invoice({"academy": setting("academy_name", "Baleegh Academy"), "phone": setting("contact_phone"), "invoice_no": i["number"],
-                                       "student_id": i["student_id"], "student": i["student_name"], "course": i["course_name"] + (" " + c_["level"] if c_ and c_["level"] else ""),
-                                       "batch": i["batch_code"], "period": i["period"], "due_date": i["due_date"], "amount": i["amount_mvr"], "discount": i["discount_mvr"],
+                                       "student_id": i["student_id"], "student": i["student_name"], "course": (i["course_name"] + (" " + c_["level"] if c_ and c_["level"] else "")) if i["course_name"] else i["description"],
+                                       "batch": i["batch_code"] or "-", "period": i["period"], "due_date": i["due_date"], "amount": i["amount_mvr"], "discount": i["discount_mvr"],
                                        "amount_due": i["amount_due_mvr"], "paid": i["paid_mvr"], "balance": i["balance"], "status": i["status"]})
         audit_c("view_invoice_pdf", "invoice", iid, None); db().commit()
         resp = Response(data, mimetype="application/pdf")
@@ -360,9 +364,12 @@ def register(app, c):
         if q:
             m = re.match(r"^INV-\d{6}-(\d+)$", q.upper())
             if m: w.append("i.id=?"); a.append(int(m.group(1)))
-            else: w.append("LOWER(u.full_name) LIKE ?"); a.append("%" + q.lower() + "%")
+            else: w.append("(LOWER(COALESCE(u.full_name, i.customer_name)) LIKE ? OR LOWER(i.description) LIKE ?)"); a += ["%" + q.lower() + "%"] * 2
+        if request.args.get("revenue_type"):   # v0.8.45
+            if not request.args["revenue_type"].isdigit(): return err("Bad revenue type")
+            w.append("rt.id=?"); a.append(int(request.args["revenue_type"]))
         lim = min(max(request.args.get("limit", 500, type=int), 1), 5000)   # v0.8.38: the Excel export asks for up to 5000
-        sql = INV_SQL + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY i.period DESC, u.full_name, i.id LIMIT ?"
+        sql = INV_SQL + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY i.period DESC, COALESCE(u.full_name, i.customer_name), i.id LIMIT ?"
         t0 = today()
         return jsonify([shape(r, t0) for r in rows(sql, a + [lim])])
 
@@ -419,6 +426,166 @@ def register(app, c):
         P.recompute(iid)
         audit_c("invoice_discount", "invoice", iid, f"-{applied} MVR ({d['kind']} {value}): {reason}"); db().commit()
         return jsonify(applied=applied, invoice=get_invoice(iid))
+
+    # ---------- v0.8.45: revenue types ----------
+    def revenue_type(rid, active_only=True):
+        try: rid = int(rid)
+        except (TypeError, ValueError): return None
+        r = one("SELECT * FROM revenue_types WHERE id=?", (rid,))
+        return r if r and (r["is_active"] or not active_only) else None
+
+    @app.get("/api/revenue-types")
+    @auth("admin", perm="fees")
+    def rt_list():
+        out = rows("SELECT rt.*, (SELECT COUNT(*) FROM invoices i WHERE i.revenue_type_id=rt.id OR (i.revenue_type_id IS NULL AND i.kind=rt.code)) AS invoices "
+                   "FROM revenue_types rt ORDER BY rt.is_active DESC, rt.code IS NULL, rt.name")
+        for r in out: r["built_in"] = bool(r["code"])
+        return jsonify(out)
+
+    def rt_name(d):
+        name = re.sub(r"\s+", " ", str(d.get("name") or "")).strip()
+        if not name: return None, err("Give the revenue type a name")
+        if len(name) > 60: return None, err("Keep the name under 60 characters")
+        return name, None
+
+    @app.post("/api/revenue-types")
+    @auth("admin", perm="fees")
+    def rt_create():
+        name, e_ = rt_name(body())
+        if e_: return e_
+        if one("SELECT 1 x FROM revenue_types WHERE LOWER(name)=?", (name.lower(),)): return err("There is already a revenue type with that name", 409)
+        rid = db().execute("INSERT INTO revenue_types(name,is_active,created_at) VALUES(?,1,?)", (name, stamp())).lastrowid
+        audit_c("revenue_type_create", "revenue_type", rid, name); db().commit()
+        return jsonify(id=rid, name=name), 201
+
+    @app.patch("/api/revenue-types/<int:rid>")
+    @auth("admin", perm="fees")
+    def rt_update(rid):
+        d, r = body(), revenue_type(rid, active_only=False)
+        if not r: return err("Revenue type not found", 404)
+        if "name" in d:
+            name, e_ = rt_name(d)
+            if e_: return e_
+            if one("SELECT 1 x FROM revenue_types WHERE LOWER(name)=? AND id<>?", (name.lower(), rid)): return err("There is already a revenue type with that name", 409)
+            db().execute("UPDATE revenue_types SET name=? WHERE id=?", (name, rid))
+            audit_c("revenue_type_rename", "revenue_type", rid, f"{r['name']} -> {name}")
+        if "is_active" in d:
+            on = 1 if d["is_active"] in (True, 1, "1", "true") else 0
+            if not on and r["code"]: return err("The built-in types (monthly and registration fees) are used by the portal and cannot be turned off", 409)
+            db().execute("UPDATE revenue_types SET is_active=? WHERE id=?", (on, rid))
+            audit_c("revenue_type_" + ("on" if on else "off"), "revenue_type", rid, r["name"])
+        db().commit()
+        return jsonify(ok=True)
+
+    # ---------- v0.8.45: manual invoices (a student, or a customer who is not in the portal) ----------
+    @app.post("/api/invoices/manual")
+    @auth("admin", perm="fees")
+    def inv_manual():
+        """Multipart (when a slip is attached) or JSON. Who: student_id, or customer_name (+ customer_phone). What: revenue_type_id, amount_mvr,
+        description, invoice_date (its month is the invoice's period), due_date, batch_id (optional, one of the student's batches: then the
+        invoice counts for that course/batch in reports, and for the teacher's earnings when the type is Monthly fees), note.
+        paid=1 records the payment in the same step (method, paid_on, reference, file, notify), for money already received."""
+        d = request.form.to_dict() if request.form else body()
+        sid = str(d.get("student_id") or "").strip()
+        cname = re.sub(r"\s+", " ", str(d.get("customer_name") or "")).strip()
+        cphone = str(d.get("customer_phone") or "").strip()[:30] or None
+        if sid and cname: return err("Choose a student or type a customer name, not both")
+        if not sid and not cname: return err("Choose a student, or type the customer's name")
+        if len(cname) > 100: return err("Keep the customer name under 100 characters")
+        st = None
+        if sid:
+            st = one("SELECT id, full_name FROM users WHERE id=? AND role='student'", (int(sid) if sid.isdigit() else -1,))
+            if not st: return err("Student not found", 404)
+        rt = revenue_type(d.get("revenue_type_id"))
+        if not rt: return err("Choose the revenue type")
+        try: amount = pay.as_int(d.get("amount_mvr"))
+        except pay.PayError as x: return money_err(x)
+        try: idate = dt.date.fromisoformat((d.get("invoice_date") or "").strip() or today().isoformat())
+        except ValueError: return err("Enter a real invoice date")
+        if idate > today() + dt.timedelta(days=62): return err("The invoice date is too far ahead")
+        try: due = dt.date.fromisoformat((d.get("due_date") or "").strip() or idate.isoformat())
+        except ValueError: return err("Enter a real due date")
+        if due < idate: return err("The due date cannot be before the invoice date")
+        course_id = batch_id = None
+        if str(d.get("batch_id") or "").strip():
+            if not st: return err("A course or batch can only be linked for a student in the portal")
+            b = one("SELECT b.id, b.course_id FROM batches b JOIN enrollments e ON e.batch_id=b.id WHERE b.id=? AND e.student_id=?",
+                    (int(d["batch_id"]) if str(d["batch_id"]).isdigit() else -1, st["id"]))
+            if not b: return err("That student is not in that batch")
+            course_id, batch_id = b["course_id"], b["id"]
+        desc = re.sub(r"\s+", " ", str(d.get("description") or "")).strip()[:200] or rt["name"]
+        paid = str(d.get("paid", "")).lower() in ("1", "true", "on", "yes")
+        method, pd, slip = d.get("method") or "bank_transfer", None, None
+        if paid:
+            if method not in ("bank_transfer", "cash", "other"): return err("Choose how it was paid: bank transfer, cash or other")
+            pd, e_ = paid_date(d)
+            if e_: return e_
+            pamt = str(d.get("paid_amount_mvr") or "").strip() or None
+            if pamt:
+                try:
+                    if pay.as_int(pamt) > amount: return err("The amount paid is more than the invoice")
+                except pay.PayError as x: return money_err(x)
+            slip, e_ = take_slip()
+            if e_: return e_
+        try:
+            iid = db().execute("INSERT INTO invoices(enrollment_id,student_id,course_id,batch_id,period,description,kind,amount_mvr,discount_mvr,amount_due_mvr,due_date,status,"
+                               "notes,created_by,created_at,customer_name,customer_phone,revenue_type_id) VALUES(NULL,?,?,?,?,?,'manual',?,0,?,?,'unpaid',?,?,?,?,?,?)",
+                               (st["id"] if st else None, course_id, batch_id, idate.isoformat()[:7], desc, amount, amount, due.isoformat(),
+                                (d.get("note") or "").strip()[:300] or None, g.user["id"], stamp(), None if st else cname, None if st else cphone, rt["id"])).lastrowid
+            who = st["full_name"] if st else cname + " (not in the portal)"
+            audit_c("invoice_manual", "invoice", iid, f"{who}: {rt['name']}, {amount} MVR, {desc}")
+            out, warn = record_paid([get_invoice(iid)], pamt, method, pd, d, slip) if paid else ([], [])
+            db().commit()
+        except pay.PayError as x:
+            db().rollback(); drop_slip(slip)
+            return money_err(x)
+        except Exception:
+            db().rollback(); drop_slip(slip)
+            raise
+        return jsonify(invoice=get_invoice(iid), payments=out, warnings=warn), 201
+
+    # ---------- v0.8.45: edit an invoice (amount, description, due date, revenue type; name and phone of a customer not in the portal) ----------
+    @app.patch("/api/invoices/<int:iid>")
+    @auth("admin", perm="fees")
+    def inv_edit(iid):
+        d = body()
+        inv = get_invoice(iid)
+        if not inv: return err("Invoice not found", 404)
+        if inv["status"] == "void": return err("This invoice is void; reopen it first", 409)
+        sets, args, notes = [], [], []
+        if "amount_mvr" in d and str(d["amount_mvr"]).strip() != str(inv["amount_mvr"]):
+            if inv["status"] == "waived": return err("This invoice is waived; reopen it before changing the amount", 409)
+            try: amount = pay.as_int(d["amount_mvr"])
+            except pay.PayError as x: return money_err(x)
+            if amount < inv["discount_mvr"]: return err(f"The amount cannot be less than the MVR {inv['discount_mvr']} discount on it", 409)
+            if amount - inv["discount_mvr"] < inv["paid_mvr"] + inv["waived_mvr"]:
+                return err(f"MVR {inv['paid_mvr']} is already paid on this invoice; reverse a payment first to bring it lower", 409)
+            if not reason_of(d): return err("Give a reason for changing the amount")
+            sets += ["amount_mvr=?", "amount_due_mvr=?"]; args += [amount, amount - inv["discount_mvr"]]
+            notes.append(f"amount {inv['amount_mvr']} -> {amount} MVR ({reason_of(d)})")
+        if "description" in d:
+            desc = re.sub(r"\s+", " ", str(d["description"] or "")).strip()[:200]
+            if not desc: return err("The description cannot be empty")
+            if desc != inv["description"]: sets.append("description=?"); args.append(desc); notes.append("description")
+        if "due_date" in d and d["due_date"] != inv["due_date"]:
+            try: due = dt.date.fromisoformat(str(d["due_date"]).strip())
+            except ValueError: return err("Enter a real due date")
+            sets.append("due_date=?"); args.append(due.isoformat()); notes.append(f"due {inv['due_date']} -> {due.isoformat()}")
+        if "revenue_type_id" in d and str(d["revenue_type_id"]) != str(inv["revenue_type"]):
+            rt = revenue_type(d["revenue_type_id"])
+            if not rt: return err("Choose the revenue type")
+            sets.append("revenue_type_id=?"); args.append(rt["id"]); notes.append(f"type {inv['revenue_type_name']} -> {rt['name']}")
+        for k, lim in (("customer_name", 100), ("customer_phone", 30)):
+            if k in d:
+                if not inv["walk_in"]: return err("Name and phone can be changed only for a customer who is not in the portal")
+                v = re.sub(r"\s+", " ", str(d[k] or "")).strip()[:lim]
+                if k == "customer_name" and not v: return err("The customer name cannot be empty")
+                sets.append(f"{k}=?"); args.append(v or None); notes.append(k.replace("_", " "))
+        if not sets: return jsonify(invoice=inv, changed=False)
+        db().execute(f"UPDATE invoices SET {', '.join(sets)} WHERE id=?", tuple(args) + (iid,))
+        P.recompute(iid)
+        audit_c("invoice_edit", "invoice", iid, "; ".join(notes)); db().commit()
+        return jsonify(invoice=get_invoice(iid), changed=True)
 
     def invoice_state_change(iid, new_status):
         d = body()
@@ -671,8 +838,8 @@ def register(app, c):
     def with_dupes(s):
         s = dict(s)
         s["duplicates"] = [{"slip_id": d["id"], "invoice_number": inv_no({"period": d["period"], "id": d["invoice_id"]}), "student_name": d["student_name"], "status": d["status"]}
-                           for d in rows("SELECT s.id, s.invoice_id, s.status, i.period, u.full_name AS student_name FROM payment_slips s JOIN invoices i ON i.id=s.invoice_id "
-                                         "JOIN users u ON u.id=s.student_id WHERE s.file_hash=? AND s.id!=? ORDER BY s.id", (s["file_hash"], s["id"]))]
+                           for d in rows("SELECT s.id, s.invoice_id, s.status, i.period, COALESCE(u.full_name, i.customer_name) AS student_name FROM payment_slips s JOIN invoices i ON i.id=s.invoice_id "
+                                         "LEFT JOIN users u ON u.id=s.student_id WHERE s.file_hash=? AND s.id!=? ORDER BY s.id", (s["file_hash"], s["id"]))]
         s["duplicate_verified"] = any(d["status"] == "verified" for d in s["duplicates"])
         return s
 
@@ -681,8 +848,8 @@ def register(app, c):
     def slips_list():
         st = request.args.get("status", "pending")
         if st not in ("pending", "verified", "rejected", "reversed", "all"): return err("Unknown status")
-        sql = ("SELECT s.*, i.period, i.amount_due_mvr, i.waived_mvr, i.paid_mvr, i.status AS invoice_status, u.full_name AS student_name, c.name AS course_name, b.code AS batch_code "
-               "FROM payment_slips s JOIN invoices i ON i.id=s.invoice_id JOIN users u ON u.id=s.student_id JOIN courses c ON c.id=i.course_id JOIN batches b ON b.id=i.batch_id")
+        sql = ("SELECT s.*, i.period, i.amount_due_mvr, i.waived_mvr, i.paid_mvr, i.status AS invoice_status, COALESCE(u.full_name, i.customer_name) AS student_name, COALESCE(c.name, i.description) AS course_name, b.code AS batch_code "
+               "FROM payment_slips s JOIN invoices i ON i.id=s.invoice_id LEFT JOIN users u ON u.id=s.student_id LEFT JOIN courses c ON c.id=i.course_id LEFT JOIN batches b ON b.id=i.batch_id")
         data = rows(sql + ("" if st == "all" else " WHERE s.status=?") + " ORDER BY s.id DESC LIMIT 300", () if st == "all" else (st,))
         out = []
         for s in data:
@@ -758,6 +925,45 @@ def register(app, c):
             if int(x) not in out: out.append(int(x))
         return out
 
+    # v0.8.45: the parts of "mark paid" shared with the manual invoice form (which can record the payment in the same step)
+    def paid_date(d):
+        paid_on = (d.get("paid_on") or "").strip() or today().isoformat()
+        try: pd = dt.date.fromisoformat(paid_on)
+        except ValueError: return None, err("Enter a real payment date")
+        if pd > today(): return None, err("The payment date cannot be in the future")
+        return pd, None
+
+    def take_slip():
+        f = request.files.get("file")
+        if not (f and f.filename): return None, None
+        try: return common.save_private(f, store, "slips"), None
+        except ValueError as x: return None, err(str(x))
+
+    def drop_slip(slip):
+        if slip: store.delete("slips", slip[0])
+
+    def record_paid(invs, amount, method, pd, d, slip):
+        """Record the payments (and the verified slip rows) without committing. Raises pay.PayError."""
+        out, warn = [], []
+        name, digest, shown = slip or (None, None, None)
+        for inv in invs:
+            amt = amount or inv["balance"]
+            slip_id = None
+            if name:
+                claimed = pay.as_int(amt)
+                slip_id = db().execute("INSERT INTO payment_slips(invoice_id,student_id,file,file_name,file_hash,amount_mvr,transfer_date,reference,status,reviewed_by,reviewed_at,created_at) "
+                                       "VALUES(?,?,?,?,?,?,?,?,'verified',?,?,?)",
+                                       (inv["id"], inv["student_id"], name, shown, digest, claimed, pd.isoformat(), (d.get("reference") or "").strip()[:80] or None,
+                                        g.user["id"], stamp(), stamp())).lastrowid
+            p = P.record(inv["id"], amt, method, pd.isoformat(), d.get("reference"), d.get("note"), slip_id, g.user["id"])
+            audit_c("payment_record", "payment", p["id"], f"invoice {inv['id']}, {p['amount_mvr']} MVR {method}, {p['receipt_no']}, marked paid" + (f", slip {slip_id} attached" if slip_id else ""))
+            if one("SELECT 1 x FROM payment_slips WHERE invoice_id=? AND status='pending'", (inv["id"],)):
+                warn.append(f"{inv['number']}: the student also sent a slip that is waiting in Slips to check. Reject it there if it is the same payment.")
+            if inv["student_id"] and str(d.get("notify", "")).lower() in ("1", "true", "on", "yes"):
+                c.notify([inv["student_id"]], "slip_verified", "Payment received", f"We received {p['amount_mvr']} MVR. Receipt {p['receipt_no']}.", f"fees:{inv['id']}")
+            out.append(p)
+        return out, warn
+
     @app.post("/api/payments/mark-paid")
     @auth("admin", perm="fees")
     def pay_mark_paid():
@@ -778,41 +984,18 @@ def register(app, c):
             if not inv: return err(f"Invoice {iid} not found", 404)
             if inv["status"] not in OPEN or inv["balance"] <= 0: return err(f"{inv['number']} ({inv['student_name']}) is {inv['status']}, nothing to pay", 409)
             invs.append(inv)
-        paid_on = (d.get("paid_on") or "").strip() or today().isoformat()
-        try: pd = dt.date.fromisoformat(paid_on)
-        except ValueError: return err("Enter a real payment date")
-        if pd > today(): return err("The payment date cannot be in the future")
-        f = request.files.get("file")
-        name = digest = shown = None
-        if f and f.filename:
-            try: name, digest, shown = common.save_private(f, store, "slips")
-            except ValueError as x: return err(str(x))
-        out, warn = [], []
+        pd, e_ = paid_date(d)
+        if e_: return e_
+        slip, e_ = take_slip()
+        if e_: return e_
         try:
-            for inv in invs:
-                amt = amount or inv["balance"]
-                slip_id = None
-                if name:
-                    claimed = pay.as_int(amt)
-                    slip_id = db().execute("INSERT INTO payment_slips(invoice_id,student_id,file,file_name,file_hash,amount_mvr,transfer_date,reference,status,reviewed_by,reviewed_at,created_at) "
-                                           "VALUES(?,?,?,?,?,?,?,?,'verified',?,?,?)",
-                                           (inv["id"], inv["student_id"], name, shown, digest, claimed, pd.isoformat(), (d.get("reference") or "").strip()[:80] or None,
-                                            g.user["id"], stamp(), stamp())).lastrowid
-                p = P.record(inv["id"], amt, method, pd.isoformat(), d.get("reference"), d.get("note"), slip_id, g.user["id"])
-                audit_c("payment_record", "payment", p["id"], f"invoice {inv['id']}, {p['amount_mvr']} MVR {method}, {p['receipt_no']}, marked paid" + (f", slip {slip_id} attached" if slip_id else ""))
-                if one("SELECT 1 x FROM payment_slips WHERE invoice_id=? AND status='pending'", (inv["id"],)):
-                    warn.append(f"{inv['number']}: the student also sent a slip that is waiting in Slips to check. Reject it there if it is the same payment.")
-                if str(d.get("notify", "")).lower() in ("1", "true", "on", "yes"):
-                    c.notify([inv["student_id"]], "slip_verified", "Payment received", f"We received {p['amount_mvr']} MVR. Receipt {p['receipt_no']}.", f"fees:{inv['id']}")
-                out.append(p)
+            out, warn = record_paid(invs, amount, method, pd, d, slip)
             db().commit()
         except pay.PayError as x:
-            db().rollback()
-            if name: store.delete("slips", name)
+            db().rollback(); drop_slip(slip)
             return money_err(x)
         except Exception:
-            db().rollback()
-            if name: store.delete("slips", name)
+            db().rollback(); drop_slip(slip)
             raise
         return jsonify(payments=out, invoices=[get_invoice(i["id"]) for i in invs], total_mvr=sum(p["amount_mvr"] for p in out), warnings=warn), 201
 
@@ -825,7 +1008,8 @@ def register(app, c):
             if not PERIOD.match(m): return err("Month must look like 2026-03")
             w += ["p.paid_on>=?", "p.paid_on<?"]; a += [m + "-01", next_month_start(m).isoformat()]
         if request.args.get("invoice_id", "").isdigit(): w.append("p.invoice_id=?"); a.append(int(request.args["invoice_id"]))
-        sql = ("SELECT p.*, i.period, u.full_name AS student_name, s.file_name AS slip_file_name FROM payments p JOIN invoices i ON i.id=p.invoice_id JOIN users u ON u.id=p.student_id"
+        sql = ("SELECT p.*, i.period, i.description, COALESCE(u.full_name, i.customer_name) AS student_name, s.file_name AS slip_file_name, rt.name AS revenue_type_name "
+               "FROM payments p JOIN invoices i ON i.id=p.invoice_id LEFT JOIN users u ON u.id=p.student_id" + RT_JOIN +
                " LEFT JOIN payment_slips s ON s.id=p.slip_id"
                + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY p.id DESC LIMIT 500")
         out = rows(sql, a)
@@ -847,11 +1031,11 @@ def register(app, c):
     @app.get("/api/payments/<int:pid>/receipt.pdf")
     @auth("admin", "student", perm="fees")
     def receipt_pdf(pid):
-        p = one("SELECT p.*, i.period, u.full_name AS student_name, c.name AS cname, c.level, b.code FROM payments p JOIN invoices i ON i.id=p.invoice_id "
-                "JOIN users u ON u.id=p.student_id JOIN courses c ON c.id=i.course_id JOIN batches b ON b.id=i.batch_id WHERE p.id=?", (pid,))
+        p = one("SELECT p.*, i.period, i.description, COALESCE(u.full_name, i.customer_name) AS student_name, c.name AS cname, c.level, b.code FROM payments p JOIN invoices i ON i.id=p.invoice_id "
+                "LEFT JOIN users u ON u.id=p.student_id LEFT JOIN courses c ON c.id=i.course_id LEFT JOIN batches b ON b.id=i.batch_id WHERE p.id=?", (pid,))
         if not p or (g.user["role"] == "student" and p["student_id"] != g.user["id"]): return err("Receipt not found", 404)
         data = receipts.build({"academy": setting("academy_name", "Baleegh Academy"), "phone": setting("contact_phone"), "receipt_no": p["receipt_no"], "paid_on": p["paid_on"],
-                               "student": p["student_name"], "course": p["cname"] + (" " + p["level"] if p["level"] else ""), "batch": p["code"],
+                               "student": p["student_name"], "course": (p["cname"] + (" " + p["level"] if p["level"] else "")) if p["cname"] else p["description"], "batch": p["code"] or "-",
                                "invoice_no": inv_no({"period": p["period"], "id": p["invoice_id"]}), "period": p["period"], "amount": p["amount_mvr"],
                                "method": METHOD_LABEL.get(p["method"], p["method"]), "reference": p["reference"], "reversed": bool(p["reversed_at"])})
         audit_c("view_receipt", "payment", pid, g.user["role"]); db().commit()
@@ -867,7 +1051,7 @@ def register(app, c):
         t0 = today()
         invs = [shape(r, t0) for r in rows(INV_SQL + " WHERE i.student_id=? AND i.status!='void' ORDER BY i.period, i.id", (sid,))]
         pays = rows("SELECT p.*, i.period FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE p.student_id=? AND i.status!='void' ORDER BY p.paid_on, p.id", (sid,))
-        il = [{"number": i["number"], "period": i["period"], "course": i["course_name"] + " " + i["batch_code"], "due_date": i["due_date"],
+        il = [{"number": i["number"], "period": i["period"], "course": (i["course_name"] + " " + (i["batch_code"] or "")).strip() if i["course_name"] else i["description"], "due_date": i["due_date"],
                "amount_due": i["amount_due_mvr"], "waived": i["waived_mvr"], "paid": i["paid_mvr"], "balance": i["balance"],
                "status": "overdue" if i["overdue"] else i["status"]} for i in invs]
         pl = [{"paid_on": p["paid_on"], "receipt_no": p["receipt_no"], "invoice_number": inv_no({"period": p["period"], "id": p["invoice_id"]}),
@@ -903,7 +1087,7 @@ def register(app, c):
         """Message text and click-to-chat links for one overdue invoice (student, and guardian when under 18 and a number is on file)."""
         st = one("SELECT u.phone, s.guardian_name, s.guardian_phone FROM users u LEFT JOIN students s ON s.user_id=u.id WHERE u.id=?", (i["student_id"],)) or {}
         vals = {"name": i["student_name"], "amount": i["balance"], "invoice": i["number"], "due_date": i["due_date"], "period": i["period"],
-                "academy": setting("academy_name", "Baleegh Academy"), "course": i["course_name"], "days_overdue": i["days_overdue"], "guardian": st.get("guardian_name") or ""}
+                "academy": setting("academy_name", "Baleegh Academy"), "course": i["course_name"] or i["description"], "days_overdue": i["days_overdue"], "guardian": st.get("guardian_name") or ""}
         text = fill(template_text(), vals)
         links = {}
         for who, phone in (("student", st.get("phone") or i.get("student_phone")), ("guardian", st.get("guardian_phone"))):
@@ -916,7 +1100,7 @@ def register(app, c):
     def overdue_list():
         t = today()
         out = []
-        for r in rows(INV_SQL + " WHERE i.status IN ('unpaid','slip_submitted') AND i.due_date<? AND i.amount_due_mvr-i.waived_mvr-i.paid_mvr>0 ORDER BY i.due_date, u.full_name", (t.isoformat(),)):
+        for r in rows(INV_SQL + " WHERE i.status IN ('unpaid','slip_submitted') AND i.due_date<? AND i.amount_due_mvr-i.waived_mvr-i.paid_mvr>0 ORDER BY i.due_date, COALESCE(u.full_name, i.customer_name)", (t.isoformat(),)):
             i = shape(r, t)
             i["message"], i["links"] = reminder_info(i)
             rem = rows("SELECT r.channel, r.recipient, r.sent_at, u.full_name AS by_name FROM reminders r LEFT JOIN users u ON u.id=r.sent_by WHERE r.invoice_id=? ORDER BY r.id DESC", (i["id"],))
@@ -968,13 +1152,13 @@ def register(app, c):
     # ---------- monthly report, dashboard ----------
     def report(month):
         t = today()
-        invs = [shape(r, t) for r in rows(INV_SQL + " WHERE i.period=? AND i.status!='void' ORDER BY u.full_name, i.id", (month,))]
+        invs = [shape(r, t) for r in rows(INV_SQL + " WHERE i.period=? AND i.status!='void' ORDER BY COALESCE(u.full_name, i.customer_name), i.id", (month,))]
         tot = {"invoiced": sum(i["amount_due_mvr"] - i["waived_mvr"] for i in invs), "collected": sum(i["paid_mvr"] for i in invs),
                "outstanding": sum(i["balance"] for i in invs), "overdue_count": sum(1 for i in invs if i["overdue"]), "invoice_count": len(invs),
                "waived": sum(i["waived_mvr"] for i in invs), "discounts": sum(i["discount_mvr"] for i in invs)}
         per = {}
         for i in invs:
-            p = per.setdefault(i["course_id"], {"course_id": i["course_id"], "course_name": i["course_name"], "invoiced": 0, "collected": 0, "outstanding": 0, "invoices": 0})
+            p = per.setdefault(i["course_id"], {"course_id": i["course_id"], "course_name": i["course_name"] or "Other (no course)", "invoiced": 0, "collected": 0, "outstanding": 0, "invoices": 0})
             p["invoiced"] += i["amount_due_mvr"] - i["waived_mvr"]; p["collected"] += i["paid_mvr"]; p["outstanding"] += i["balance"]; p["invoices"] += 1
         owing = [{k: i[k] for k in ("id", "number", "student_id", "student_name", "course_name", "batch_code", "balance", "due_date", "overdue", "days_overdue", "status")} for i in invs if i["balance"] > 0]
         return {"month": month, "totals": tot, "by_course": list(per.values()), "owing": owing, "invoices": invs}

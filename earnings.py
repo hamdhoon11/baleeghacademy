@@ -39,9 +39,9 @@ def compute(q, month, pct):
     """q(sql, args) -> list of dict-like rows. Returns [{batch_id, teacher_id, collected, teacher_share, academy_share}] for batches with activity."""
     # +amount in the month it was paid, -amount in the month it was reversed (a payment paid and reversed in one month nets to zero)
     plus = {r[0]: int(r[1]) for r in q("SELECT i.batch_id, SUM(p.amount_mvr) FROM payments p JOIN invoices i ON i.id=p.invoice_id "
-                                       "WHERE i.status<>'void' AND i.kind<>'registration' AND SUBSTR(p.paid_on,1,7)=? GROUP BY i.batch_id", (month,))}
+                                       "WHERE i.status<>'void' AND i.kind<>'registration' AND i.batch_id IS NOT NULL AND (i.kind<>'manual' OR i.revenue_type_id=(SELECT rt.id FROM revenue_types rt WHERE rt.code='monthly')) AND SUBSTR(p.paid_on,1,7)=? GROUP BY i.batch_id", (month,))}
     minus = {r[0]: int(r[1]) for r in q("SELECT i.batch_id, SUM(p.amount_mvr) FROM payments p JOIN invoices i ON i.id=p.invoice_id "
-                                        "WHERE p.reversed_at IS NOT NULL AND i.status<>'void' AND i.kind<>'registration' AND SUBSTR(p.reversed_at,1,7)=? GROUP BY i.batch_id", (month,))}
+                                        "WHERE p.reversed_at IS NOT NULL AND i.status<>'void' AND i.kind<>'registration' AND i.batch_id IS NOT NULL AND (i.kind<>'manual' OR i.revenue_type_id=(SELECT rt.id FROM revenue_types rt WHERE rt.code='monthly')) AND SUBSTR(p.reversed_at,1,7)=? GROUP BY i.batch_id", (month,))}
     teachers = {r[0]: r[1] for r in q("SELECT id, teacher_id FROM batches")}
     out = []
     for b in sorted(set(plus) | set(minus)):

@@ -276,12 +276,20 @@ CREATE TABLE IF NOT EXISTS family_members (
   family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE,
   concession_applies INTEGER NOT NULL DEFAULT 1                -- admin chooses which children get the concession
 );
+-- v0.8.45: revenue types (what an invoice is for). Built-in: monthly and registration (code = the invoice kind they stand for); the office can add more.
+CREATE TABLE IF NOT EXISTS revenue_types (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  code TEXT UNIQUE,                                            -- 'monthly' / 'registration' for the built-in two, NULL for types added later
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS invoices (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  enrollment_id INTEGER NOT NULL REFERENCES enrollments(id),
-  student_id INTEGER NOT NULL REFERENCES users(id),
-  course_id INTEGER NOT NULL REFERENCES courses(id),           -- snapshot, for reports
-  batch_id INTEGER NOT NULL REFERENCES batches(id),
+  enrollment_id INTEGER REFERENCES enrollments(id),            -- v0.8.45: NULL on a manual invoice not tied to an enrolment
+  student_id INTEGER REFERENCES users(id),                     -- v0.8.45: NULL for a customer who is not in the portal (customer_name)
+  course_id INTEGER REFERENCES courses(id),           -- snapshot, for reports
+  batch_id INTEGER REFERENCES batches(id),
   period TEXT NOT NULL CHECK (length(period) = 7),             -- 'YYYY-MM'
   description TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'monthly',                         -- Session 31: monthly or registration (period is then 'REG-FEE'; never part of teacher earnings)
@@ -297,6 +305,9 @@ CREATE TABLE IF NOT EXISTS invoices (
   notes TEXT,
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL,
+  customer_name TEXT,                                          -- v0.8.45: manual invoice for someone not in the portal (walk-in / cash customer)
+  customer_phone TEXT,
+  revenue_type_id INTEGER REFERENCES revenue_types(id),        -- v0.8.45: NULL = the built-in type whose code is `kind`
   UNIQUE (enrollment_id, period),
   CHECK (discount_mvr <= amount_mvr),
   CHECK (amount_due_mvr = amount_mvr - discount_mvr)
@@ -320,7 +331,7 @@ CREATE TABLE IF NOT EXISTS discounts (
 CREATE TABLE IF NOT EXISTS payment_slips (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   invoice_id INTEGER NOT NULL REFERENCES invoices(id),
-  student_id INTEGER NOT NULL REFERENCES users(id),
+  student_id INTEGER REFERENCES users(id),                     -- v0.8.45: NULL for a slip the office attached for a customer not in the portal
   file TEXT NOT NULL,                                          -- private storage name, never a public URL
   file_name TEXT,
   file_hash TEXT NOT NULL,                                     -- sha256, to warn when the same slip is used twice
@@ -336,7 +347,7 @@ CREATE TABLE IF NOT EXISTS payment_slips (
 CREATE TABLE IF NOT EXISTS payments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   invoice_id INTEGER NOT NULL REFERENCES invoices(id),
-  student_id INTEGER NOT NULL REFERENCES users(id),
+  student_id INTEGER REFERENCES users(id),                     -- v0.8.45: NULL when the invoice is for a customer not in the portal
   amount_mvr INTEGER NOT NULL CHECK (amount_mvr > 0),
   method TEXT NOT NULL CHECK (method IN ('bank_transfer','cash','other','gateway')),   -- 'gateway' is reserved for a future online gateway
   paid_on TEXT NOT NULL,

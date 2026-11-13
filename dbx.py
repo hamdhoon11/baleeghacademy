@@ -139,6 +139,48 @@ class Cur:
         return iter(self.fetchall())
 
 
+# v0.8.45: manual invoices (a student without an enrolment, or a customer not in the portal) and revenue types.
+V0845_INVOICE_NULLABLE = ("enrollment_id", "student_id", "course_id", "batch_id")
+
+
+def not_null_columns(conn, table):
+    if conn.pg:
+        r = conn.raw.cursor().execute("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=%s AND is_nullable='NO'", (table,))
+        return {x[0] for x in r.fetchall()}
+    return {r[1] for r in conn.raw.execute(f"PRAGMA table_info({table})") if r[3]}
+
+
+def upgrade_v0845(conn):
+    """Additive, and only loosens rules: three new invoice columns, NOT NULL dropped from the invoice's student/enrolment/course/batch and the
+    payment's student. No row is changed. PostgreSQL: ALTER COLUMN ... DROP NOT NULL. SQLite cannot drop NOT NULL with ALTER TABLE, so the
+    stored table definition is edited in place (the documented way for changes that leave the stored rows exactly as they are)."""
+    for col, decl in (("customer_name", "TEXT"), ("customer_phone", "TEXT"), ("revenue_type_id", "INTEGER REFERENCES revenue_types(id)")):
+        if col not in conn.columns("invoices"): conn.execute(f"ALTER TABLE invoices ADD COLUMN {col} {decl}")
+    loosen = [("invoices", c) for c in V0845_INVOICE_NULLABLE if c in not_null_columns(conn, "invoices")]
+    for t in ("payments", "payment_slips"):
+        if "student_id" in not_null_columns(conn, t): loosen.append((t, "student_id"))
+    if loosen and conn.pg:
+        for t, c in loosen: conn.execute(f"ALTER TABLE {t} ALTER COLUMN {c} DROP NOT NULL")
+    elif loosen:
+        for t in sorted({t for t, _ in loosen}):
+            sql = conn.raw.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (t,)).fetchone()[0]
+            new = sql
+            for tt, c in loosen:
+                if tt == t: new = re.sub(rf"(\b{c}\s+INTEGER)\s+NOT\s+NULL", r"\1", new, count=1)
+            if new == sql: continue
+            ver = conn.raw.execute("PRAGMA schema_version").fetchone()[0]
+            conn.raw.execute("PRAGMA writable_schema=ON")
+            conn.raw.execute("UPDATE sqlite_master SET sql=? WHERE type='table' AND name=?", (new, t))
+            conn.raw.execute(f"PRAGMA schema_version={ver + 1}")
+            conn.raw.execute("PRAGMA writable_schema=OFF")
+        bad = conn.raw.execute("PRAGMA integrity_check").fetchone()[0]
+        if bad != "ok": raise RuntimeError("v0.8.45 upgrade: integrity check failed: " + str(bad))
+    for name, code in (("Monthly fees", "monthly"), ("Registration fees", "registration")):
+        if not conn.execute("SELECT 1 FROM revenue_types WHERE code=?", (code,)).fetchone():
+            taken = conn.execute("SELECT 1 FROM revenue_types WHERE name=?", (name,)).fetchone()
+            conn.execute("INSERT INTO revenue_types(name, code, is_active, created_at) VALUES(?,?,1,?)", (name + (" (built-in)" if taken else ""), code, dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")))
+
+
 class Conn:
     def __init__(self, url=None, path=None, id_tables=()):
         self.pg = is_postgres(url)
@@ -254,6 +296,7 @@ def init_schema(conn, base):
     # v0.8.37: tutorial grading and recurring expenses. Additive only: existing tutorials get "out of 100", existing answers stay ungraded (migrate_v0837.py shows this first).
     for tbl, col, decl in V0837_COLUMNS:
         if col not in conn.columns(tbl): conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {schema_to_pg(decl) if conn.pg else decl}")
+    upgrade_v0845(conn)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_batch ON audit_log(batch_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id)")
     import auditlog; auditlog.install_triggers(conn)   # Session 21: the log can be added to but never changed or deleted

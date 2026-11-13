@@ -43,11 +43,12 @@ def register(app, c, today):
             app.add_url_rule(path.format(ext=ext), f"{endpoint}_{ext}", auth(*roles, perm=perm)(lambda ext=ext, **kw: fn(ext, **kw)))
 
     def invoices_export(ext):
-        code, body = X.call("GET", "/api/invoices", query={**{k: v for k, v in request.args.items() if k in ("month", "status", "q", "student_id")}, "limit": "5000"})
+        code, body = X.call("GET", "/api/invoices", query={**{k: v for k, v in request.args.items() if k in ("month", "status", "q", "student_id", "revenue_type")}, "limit": "5000"})
         if code != 200: return err(body.get("error") or "Could not read the invoices", code)
-        head = ["invoice", "period", "kind", "student", "course", "batch", "due_date", "amount_due_mvr", "waived_mvr", "paid_mvr", "balance_mvr", "status", "overdue", "days_overdue", "status_reason"]
+        head = ["invoice", "period", "kind", "student", "course", "batch", "due_date", "amount_due_mvr", "waived_mvr", "paid_mvr", "balance_mvr", "status", "overdue", "days_overdue", "status_reason", "revenue_type", "description"]   # v0.8.45: the last two
         table = [[i["number"], i["period"], i.get("kind") or "monthly", i["student_name"], i["course_name"], i["batch_code"], i["due_date"], i["amount_due_mvr"], i["waived_mvr"],
-                  i["paid_mvr"], i["balance"], i["status"], "yes" if i["overdue"] else "no", i["days_overdue"], i.get("status_reason") or ""] for i in body]
+                  i["paid_mvr"], i["balance"], i["status"], "yes" if i["overdue"] else "no", i["days_overdue"], i.get("status_reason") or "",
+                  i.get("revenue_type_name") or "", i.get("description") or ""] for i in body]
         logged(f"export_invoices_{ext}", f"{len(table)} rows; {dict(request.args)}")
         return X.send_table(ext, "invoices", head, table, "Invoices")
     ext_rule("/api/invoices/export.{ext}", "sh_invoices", invoices_export, perm="fees")

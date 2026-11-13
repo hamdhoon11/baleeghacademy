@@ -442,23 +442,25 @@ const fnTable = (head, body) => body ? `<div class="scrollx"><table><thead><tr>$
 async function fnDashPanel() {   // financial dashboard and revenue (Session 24). Revenue = real payments only.
   S.fr = S.fr || {f: {}};
   const q = Object.keys(S.fr.f).filter(k => S.fr.f[k]).map(k => k + "=" + encodeURIComponent(S.fr.f[k])).join("&");
-  const [dash, rev, courses, batches] = await Promise.all([api("/finance/dashboard?" + q.replace(/course_id=\d+&?|batch_id=\d+&?|kind=\w+&?/g, "")), api("/finance/revenue?" + q), api("/courses"), api("/batches")]);
+  const [dash, rev, courses, batches, types] = await Promise.all([api("/finance/dashboard?" + q.replace(/course_id=\d+&?|batch_id=\d+&?|kind=\w+&?|revenue_type=\d+&?/g, "")), api("/finance/revenue?" + q), api("/courses"), api("/batches"), api("/revenue-types").catch(() => [])]);
+  S.fnTypes = types;   // v0.8.45 (needs the Fees area too; without it the filter just lists nothing)
   const f = S.fr.f;
   mount(() => {
-    ["date_from", "date_to", "course_id", "batch_id", "kind"].forEach(k => { const el = $("#fr_" + k); if (el && f[k]) el.value = f[k]; });
-    onSubmit("ffr", async () => { S.fr = {f: Object.fromEntries(["date_from", "date_to", "course_id", "batch_id", "kind"].filter(k => val("fr_" + k) !== "").map(k => [k, val("fr_" + k)]))}; });
+    ["date_from", "date_to", "course_id", "batch_id", "kind", "revenue_type"].forEach(k => { const el = $("#fr_" + k); if (el && f[k]) el.value = f[k]; });
+    onSubmit("ffr", async () => { S.fr = {f: Object.fromEntries(["date_from", "date_to", "course_id", "batch_id", "kind", "revenue_type"].filter(k => val("fr_" + k) !== "").map(k => [k, val("fr_" + k)]))}; });
   });
   const card = (k, v) => `<div class="stat"><b>${v}</b>${esc(t(k))}</div>`;
   const cards = `<div class="stats">${card("Revenue", fnMoney(dash.revenue))}${card("Expenses", fnMoney(dash.expenses))}${card(dash.net < 0 ? "Net loss" : "Net profit", fnMoney(dash.net))}${card("Outstanding fees", fnMoney(dash.outstanding_fees))}${card("Teacher earnings", fnMoney(dash.teacher_earnings))}${card("Academy revenue", fnMoney(dash.academy_revenue))}${card("Paid to teachers", fnMoney(dash.teacher_paid))}</div>`;
   const filt = form("ffr", field("fr_date_from", "From", "date") + field("fr_date_to", "To", "date")
     + field("fr_course_id", "Course", "text", [["", t("all")], ...courses.map(c => [c.id, c.name])]) + field("fr_batch_id", "batch", "text", [["", t("all")], ...batches.map(b => [b.id, b.course_name + " " + b.code])])
-    + field("fr_kind", "Type", "text", [["", t("all")], ["course", t("Course")], ["tuition", t("Tuition class")]]), "Filter");
+    + field("fr_kind", "Type", "text", [["", t("all")], ["course", t("Course")], ["tuition", t("Tuition class")]]) + field("fr_revenue_type", "fx_revenue_type", "text", [["", t("all")], ...(S.fnTypes || []).map(r => [r.id, r.name])]), "Filter");
   const m = fnTable(["Month", "Collected", "Payments"], rev.by_month.map(r => `<tr><td>${esc(r.month)}</td><td>${fnMoney(r.collected)}</td><td>${r.payments}</td></tr>`).join(""));
-  const c = fnTable(["Course", "Type", "Collected"], rev.by_course.map(r => `<tr><td>${esc(r.course_name)}</td><td>${esc(t(r.kind === "tuition" ? "Tuition class" : "Course"))}</td><td>${fnMoney(r.collected)}</td></tr>`).join(""));
-  const b = fnTable(["batch", "Course", "Collected"], rev.by_batch.map(r => `<tr><td>${esc(r.batch_code)}</td><td>${esc(r.course_name)}</td><td>${fnMoney(r.collected)}</td></tr>`).join(""));
+  const ty = fnTable(["fx_revenue_type", "Collected", "Payments"], (rev.by_type || []).map(r => `<tr><td>${esc(r.revenue_type_name || "-")}</td><td>${fnMoney(r.collected)}</td><td>${r.payments}</td></tr>`).join(""));   // v0.8.45
+  const c = fnTable(["Course", "Type", "Collected"], rev.by_course.map(r => `<tr><td>${esc(r.course_name || t("fx_no_course"))}</td><td>${esc(r.kind ? t(r.kind === "tuition" ? "Tuition class" : "Course") : "-")}</td><td>${fnMoney(r.collected)}</td></tr>`).join(""));
+  const b = fnTable(["batch", "Course", "Collected"], rev.by_batch.map(r => `<tr><td>${esc(r.batch_code || "-")}</td><td>${esc(r.course_name || t("fx_no_course"))}</td><td>${fnMoney(r.collected)}</td></tr>`).join(""));
   return `<h2>${t("Financial dashboard")}</h2><p class="hint">${esc(dash.date_from || "")} → ${esc(dash.date_to || "")}</p>${cards}`
     + `<div class="panel"><h2>${t("Revenue")}</h2><p class="hint">${t("Revenue is money actually received (reversed payments are not counted).")}</p>${filt}`
-    + `<p>${t("Total collected")}: <b>${fnMoney(rev.total_collected)}</b> · ${t("Outstanding")}: <b>${fnMoney(rev.outstanding)}</b> · ${t("Course")}: ${fnMoney(rev.by_kind.course)} · ${t("Tuition class")}: ${fnMoney(rev.by_kind.tuition)}</p>${m}${c}${b}</div>`;
+    + `<p>${t("Total collected")}: <b>${fnMoney(rev.total_collected)}</b> · ${t("Outstanding")}: <b>${fnMoney(rev.outstanding)}</b> · ${t("Course")}: ${fnMoney(rev.by_kind.course)} · ${t("Tuition class")}: ${fnMoney(rev.by_kind.tuition)}${rev.by_kind.other ? ` · ${t("fx_no_course")}: ${fnMoney(rev.by_kind.other)}` : ""}</p>${ty}${m}${c}${b}</div>`;
 }
 async function fnExpensesPanels() {   // expenses, categories, receipts (Session 23). Needs the "finance" area; the server refuses everyone else.
   S.fn = S.fn || {page: 1, f: {}, edit: null};

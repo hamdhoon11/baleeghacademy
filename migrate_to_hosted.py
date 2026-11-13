@@ -39,6 +39,7 @@ def migrate(app, src_db, uploads, dry_run=False, log=print):
             log(f"  {t}: {len(data)} row(s)")
             if dry_run or not data: continue
             if t == "counters": dst.execute("DELETE FROM counters")   # the schema pre-fills the receipt counter; use the real one
+            if t == "revenue_types": dst.execute("DELETE FROM revenue_types")   # v0.8.45: the start-up pre-fills the two built-in types; use the real ones
             for row in data:
                 dst.execute(f"INSERT INTO {t}({','.join(cols)}) VALUES({','.join('?' * len(cols))})", row)
         if not dry_run:
