@@ -942,6 +942,10 @@
   "fx_from_month": "From (optional)",
   "fx_from_month_hint": "To bill earlier months too, choose a 'From' month: every month from there to the chosen month is generated.",
   "start_date_optional": "Start date (optional)",
-  "start_date_hint": "Only for students who began earlier. Every month from the start month is billed.",
-  "earlier_invoices_made": "{n} invoices made for the earlier months."
+  "start_date_hint": "For students who began earlier. Every month from the start month to now is billed (months already billed are not doubled).",
+  "earlier_invoices_made": "{n} invoices made for the earlier months.",
+  "Set start date": "Set start date",
+  "Change start date": "Change start date",
+  "Choose the start date": "Choose the start date",
+  "invoices_before_start": "{n} invoices are dated before the new start date; void them in Fees if they should not be paid."
 }
