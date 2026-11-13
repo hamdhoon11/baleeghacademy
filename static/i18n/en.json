@@ -987,5 +987,8 @@
   "fx_edit_reason_hint": "Kept in the Activity log.",
   "fx_edit_reason_needed": "Give a reason for changing the amount",
   "fx_nothing_changed": "Nothing changed.",
-  "fx_no_course": "Other (no course)"
+  "fx_no_course": "Other (no course)",
+  "fx_by_type": "By revenue type",
+  "fx_other_invoices": "Other invoices this month",
+  "fx_other_invoices_hint": "Invoices made by hand (Fees → New invoice) for this month: students and people not in the portal, any revenue type. The figures above are monthly course fees only."
 }

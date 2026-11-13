@@ -64,6 +64,14 @@ try:
         a.wait_for_selector("dialog.dlg :text('Give a reason for changing the amount')"); check(True, "reason asked when the amount changes")
         a.locator("dialog.dlg input").nth(1).fill("April price"); SHOT(a, "edit"); a.click("dialog.dlg button[value=ok]"); a.wait_for_selector("text=Saved")
         check(sql("SELECT amount_due_mvr FROM invoices WHERE student_id=? AND kind='manual'", (sid,)) == [(120,)], "amount changed to 120")
+        # ---- v0.8.46: the Fees reports show them ----
+        a.click("[data-tabs=fees] [data-key=report]"); a.wait_for_selector("#fxr_m"); a.fill("#fxr_m", "2026-04"); a.click("#fxr button:not([type=button])")
+        a.wait_for_selector("h2:has-text('By revenue type')"); txt = a.inner_text("body")
+        check("Books" in txt and "Registration fees" in txt, "Fees > Report: by revenue type for April")
+        a.click("[data-tabs=fees] [data-key=payrep]"); a.wait_for_selector("#fxp_m"); a.fill("#fxp_m", "2026-04"); a.click("#fxpr button:not([type=button])")
+        a.wait_for_selector("h2:has-text('Other invoices this month')"); a.wait_for_selector("td:has-text('Walk-in Ahmed')")
+        check(a.locator("td:has-text('Old Student')").count() >= 1, "Payment report: other invoices list the walk-in and the student")
+        SHOT(a, "payrep")
         # ---- Finance: revenue by type ----
         a.click("nav [data-v=finance]"); a.wait_for_selector("text=Total collected")
         txt = a.inner_text("main") if a.locator("main").count() else a.inner_text("body")

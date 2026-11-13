@@ -1160,8 +1160,13 @@ def register(app, c):
         for i in invs:
             p = per.setdefault(i["course_id"], {"course_id": i["course_id"], "course_name": i["course_name"] or "Other (no course)", "invoiced": 0, "collected": 0, "outstanding": 0, "invoices": 0})
             p["invoiced"] += i["amount_due_mvr"] - i["waived_mvr"]; p["collected"] += i["paid_mvr"]; p["outstanding"] += i["balance"]; p["invoices"] += 1
-        owing = [{k: i[k] for k in ("id", "number", "student_id", "student_name", "course_name", "batch_code", "balance", "due_date", "overdue", "days_overdue", "status")} for i in invs if i["balance"] > 0]
-        return {"month": month, "totals": tot, "by_course": list(per.values()), "owing": owing, "invoices": invs}
+        by_type = {}   # v0.8.46
+        for i in invs:
+            p = by_type.setdefault(i["revenue_type"], {"revenue_type": i["revenue_type"], "revenue_type_name": i["revenue_type_name"] or "-", "invoiced": 0, "collected": 0, "outstanding": 0, "invoices": 0})
+            p["invoiced"] += i["amount_due_mvr"] - i["waived_mvr"]; p["collected"] += i["paid_mvr"]; p["outstanding"] += i["balance"]; p["invoices"] += 1
+        owing = [{k: i[k] for k in ("id", "number", "student_id", "student_name", "course_name", "batch_code", "balance", "due_date", "overdue", "days_overdue", "status",
+                                    "description", "revenue_type_name", "walk_in")} for i in invs if i["balance"] > 0]
+        return {"month": month, "totals": tot, "by_course": list(per.values()), "by_type": sorted(by_type.values(), key=lambda x: -x["invoiced"]), "owing": owing, "invoices": invs}
 
     @app.get("/api/fees/report")
     @auth("admin", perm="fees")
@@ -1176,9 +1181,9 @@ def register(app, c):
         import excelio
         month = request.args.get("month") or month_of(today())
         if not PERIOD.match(month): return err("Month must look like 2026-03")
-        head = ["invoice", "period", "student", "course", "batch", "fee_mvr", "discount_mvr", "amount_due_mvr", "waived_mvr", "paid_mvr", "balance_mvr", "due_date", "status", "overdue"]
-        table = [[i["number"], i["period"], i["student_name"], i["course_name"], i["batch_code"], i["amount_mvr"], i["discount_mvr"], i["amount_due_mvr"],
-                  i["waived_mvr"], i["paid_mvr"], i["balance"], i["due_date"], i["status"], "yes" if i["overdue"] else "no"] for i in report(month)["invoices"]]
+        head = ["invoice", "period", "student", "course", "batch", "fee_mvr", "discount_mvr", "amount_due_mvr", "waived_mvr", "paid_mvr", "balance_mvr", "due_date", "status", "overdue", "revenue_type", "description"]   # v0.8.46: the last two
+        table = [[i["number"], i["period"], i["student_name"], i["course_name"] or "", i["batch_code"] or "", i["amount_mvr"], i["discount_mvr"], i["amount_due_mvr"],
+                  i["waived_mvr"], i["paid_mvr"], i["balance"], i["due_date"], i["status"], "yes" if i["overdue"] else "no", i["revenue_type_name"] or "", i["description"]] for i in report(month)["invoices"]]
         audit_c(f"export_fees_{ext}", "report", None, month); db().commit()
         return excelio.send_table(ext, f"fees-{month}", head, table, f"Fees {month}")
 
