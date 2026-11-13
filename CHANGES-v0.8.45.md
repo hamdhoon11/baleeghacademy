@@ -28,8 +28,8 @@ Asked: a way to add invoices by hand, for existing students and for people not i
 - `migrate_to_hosted.py` copies the revenue types over the built-in ones.
 - Taking a backup in your database provider before deploying is still sensible.
 
-## Found, not changed
-- `schema.sql` defines `substitutions` (which refers to `sessions`) before `sessions`. PostgreSQL refuses that on a brand-new empty database. Your live database already has all its tables, so it is not affected. Worth fixing before setting up a fresh deployment.
+## Also fixed
+- `schema.sql` defined `substitutions` (which refers to `sessions`) before `sessions`, so a brand-new empty PostgreSQL database could not be set up. The table is now defined after `sessions`. Checked: the whole schema builds on an empty PostgreSQL 16 database (39 tables). Existing databases are not affected.
 
 ## Checks run
 - Unit tests: whole suite, 506 tests, all pass. New `tests/test_session45.py` (10): revenue types (built-in, add, duplicate, rename, built-ins cannot be turned off, a turned-off type cannot be used, rights); a walk-in invoice paid with a slip (receipt, invoice PDF, slip, not visible to a student, payments list, search, type filter); a student invoice tied to a batch (student sees it; both statements); 11 refusals that save nothing; part paid then mark paid; editing amounts (reason, not below paid, status worked out again, type/description/due date, rights, activity log); editing a walk-in's name; revenue by type adds up to the total; month report and Excel; overdue WhatsApp link for a walk-in; the daily reminder run; teacher earnings rules; **upgrade of an older database** (NOT NULL loosened, rows unchanged, integrity ok, second run changes nothing). `test_session32` security map has the new routes.

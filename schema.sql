@@ -93,22 +93,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE TABLE IF NOT EXISTS audit_unlock (flag INTEGER NOT NULL);
 -- Session 22: a substitute teacher for one class or a date range. batches.teacher_id never changes.
 -- Access runs from class_date to COALESCE(ends_on, class_date), both inclusive (Maldives dates); removed_at ends it early.
-CREATE TABLE IF NOT EXISTS substitutions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  batch_id INTEGER NOT NULL REFERENCES batches(id),
-  class_date TEXT NOT NULL,
-  session_id INTEGER REFERENCES sessions(id),
-  original_teacher_id INTEGER REFERENCES users(id),
-  substitute_teacher_id INTEGER NOT NULL REFERENCES users(id),
-  reason TEXT,
-  created_by INTEGER REFERENCES users(id),
-  ends_on TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  removed_at TEXT,
-  removed_by INTEGER REFERENCES users(id)
-);
-CREATE INDEX IF NOT EXISTS idx_subs_teacher ON substitutions(substitute_teacher_id);
-CREATE INDEX IF NOT EXISTS idx_subs_batch ON substitutions(batch_id);
 CREATE INDEX IF NOT EXISTS idx_batches_teacher ON batches(teacher_id);
 CREATE INDEX IF NOT EXISTS idx_enroll_student ON enrollments(student_id);
 CREATE INDEX IF NOT EXISTS idx_enroll_batch ON enrollments(batch_id);
@@ -155,6 +139,23 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (batch_id, session_date, start_time)
 );
+-- v0.8.45: moved below sessions (it refers to sessions; PostgreSQL needs that table to exist first)
+CREATE TABLE IF NOT EXISTS substitutions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL REFERENCES batches(id),
+  class_date TEXT NOT NULL,
+  session_id INTEGER REFERENCES sessions(id),
+  original_teacher_id INTEGER REFERENCES users(id),
+  substitute_teacher_id INTEGER NOT NULL REFERENCES users(id),
+  reason TEXT,
+  created_by INTEGER REFERENCES users(id),
+  ends_on TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  removed_at TEXT,
+  removed_by INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_subs_teacher ON substitutions(substitute_teacher_id);
+CREATE INDEX IF NOT EXISTS idx_subs_batch ON substitutions(batch_id);
 CREATE TABLE IF NOT EXISTS attendance (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
