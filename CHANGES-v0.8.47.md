@@ -1,8 +1,9 @@
-# v0.8.47: Who's online, and sign out / pause / suspend accounts (full admins only)
+# v0.8.47: Who's online, sign-in history, and sign out / pause / suspend accounts (full admins only)
 
 Builds on v0.8.46. **Database change: additive only** (new columns on `users`, added automatically on start; no row is changed, no migration script to run).
 
 Asked: the admin should see who is online and offline right now, and be able to suspend, kick out or pause accounts. Only for the superadmin.
+Then, approved extras: bulk actions, sign-in history, Dashboard card and notices.
 
 "Superadmin" = a **full admin** (an admin with no permission limit), the same rule the People screen already uses for changing permissions.
 
@@ -22,16 +23,25 @@ Asked: the admin should see who is online and offline right now, and be able to 
 - Limited admins, teachers and students: no tab, and every call is refused (403). Works on other full admins too (the one acting always stays a working full admin).
 - "Disabled" accounts (People → Account active unticked) are shown but left to People.
 
+## Approved extras
+- **Bulk actions:** tick people (or "Select all shown") and Sign out, Pause, Suspend or Restore them together. One pause end time for everyone. You and anyone the action does not fit are skipped and named ("Done for 2 of 3").
+- **Sign out everyone:** everyone except you, or only all students / teachers / other admins, with an optional reason.
+- **Message to the person (optional)** on Pause and Suspend: shown under the sign-in error ("Message from the academy: …"). The reason stays staff-only.
+- **Sign-in history** (History button on every row): devices used with IP and count, the last 60 attempts (signed in / wrong password / account paused…), and the account actions taken and by whom. Every attempt is now recorded (table `login_events`, kept 180 days; never a password).
+- **Warnings:** a row is tagged "3 failed sign-ins (24 h)" (3 or more) or "New device: Phone · Chrome" (last sign-in in the past week from a kind of device not used in the 90 days before). A Warnings card filters them.
+- **Dashboard** (full admins): "Who's online" panel with online counts by role, paused/suspended counts, failed sign-ins in the last 24 h, and an Open button.
+- **Pause ended notice:** when a pause ends, it is cleared, written to the activity log (`account_pause_ended`), and every full admin gets a notification "Pause ended: X can sign in again". It is created the next time a full admin uses the portal (or opens the page), so it can arrive a little after the exact time.
+
 ## How it works (for the next session)
-- `presence.py` (new): routes, `blocked()`, `touch()`, `signed_in()`, `device()`.
-- Columns on `users` (`dbx.V0847_USER_COLUMNS`, also in schema.sql): last_seen_at, last_login_at, signed_out_at, last_ip, last_agent, token_version, suspended_at, suspend_reason, paused_until, pause_reason, account_changed_by.
+- `presence.py` (new): routes, `blocked()`, `log_login()`, `signed_in()`, `device()`; `app.extensions["presence"]` = touch, sweep.
+- Columns on `users` (`dbx.V0847_USER_COLUMNS`, also in schema.sql): last_seen_at, last_login_at, signed_out_at, last_ip, last_agent, token_version, suspended_at, suspend_reason, paused_until, pause_reason, account_changed_by, account_message. New table `login_events`.
 - Tokens now carry `tv` (token_version). Sign out / pause / suspend raise it, so open sessions get 401 on their next request. Old tokens without `tv` count as 0 and keep working.
 - `auth()` writes last_seen at most every 30 seconds per person. An open portal stays "online" through the existing 60-second notification check.
 - Tab rule: `settings_schema.FULL_ONLY` (a tab only a full admin ever gets).
-- Routes: `GET /api/admin/presence`, `POST /api/admin/accounts/<id>/signout|pause|suspend|restore` (in the test_session32 map as NO_AREA).
+- Routes: `GET /api/admin/presence`, `GET /api/admin/presence/summary`, `GET /api/admin/accounts/<id>/history`, `POST /api/admin/accounts/<id>/signout|pause|suspend|restore`, `POST /api/admin/accounts/bulk`, `POST /api/admin/accounts/signout-all` (all in the test_session32 map as NO_AREA).
 
 ## Checks run
-- New `tests/test_session47.py` (10): online/away/offline and logout; at most one write per 30 s; sign out on two devices; pause by hours lifts by itself, message only after the right password; pause until a date, bad input; suspend (reason required, not shown to the person, never lifts), restore; only full admins (limited admin, teacher, student, no token); not on yourself, works on another admin; old tokens; upgrade of a v0.8.8 database.
-- Unit tests: whole suite, 518 tests. All pass except `test_session13 test_02`, which fails only between midnight and 05:00 Maldives time (an older issue: the withdrawal date defaults to the UTC date). Not caused by this change.
-- Browser: new `tests/e2e_presence.py` at 1280 px and 390 px (49 checks, all pass): student shows online on a phone, sign out, pause with reason, the student's message, restore, suspend, filter, limited admin has no tab.
+- New `tests/test_session47.py` (14): online/away/offline and logout; at most one write per 30 s; sign out on two devices; pause by hours lifts by itself, message only after the right password; pause until a date, bad input; suspend (reason required, not shown to the person, never lifts), restore; only full admins (limited admin, teacher, student, no token); not on yourself, works on another admin; old tokens; bulk (yourself skipped, one end time, the end time cannot be sent by the page), sign out everyone (by role, never yourself); history, failed and new-device flags, summary; pause-ended notice to full admins only, once per pause; message to the person; upgrade of a v0.8.8 database.
+- Unit tests: whole suite, 522 tests. All pass except `test_session13 test_02`, which fails only between midnight and 05:00 Maldives time (an older issue: the withdrawal date defaults to the UTC date). Not caused by this change.
+- Browser: new `tests/e2e_presence.py` at 1280 px and 390 px (33 checks, all pass): student shows online on a phone, sign out, pause with reason, the student's message, restore, suspend, filter, limited admin has no tab; Dashboard panel, failed sign-in tag, bulk pause with a message, history dialog, bulk restore, sign out all students.
 - Not tested: the hosted PostgreSQL database and Vercel, real phones.

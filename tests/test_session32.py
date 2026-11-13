@@ -34,7 +34,9 @@ OPEN = {
 NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "/api/admin/todo"), ("GET", "/api/users"), ("POST", "/api/whatsapp/prepare"), ("POST", "/api/whatsapp/sent"),
            # v0.8.47: full admins only, checked inside presence.py (there is no area a limited admin could be given)
            ("GET", "/api/admin/presence"), ("POST", "/api/admin/accounts/<int:uid>/signout"), ("POST", "/api/admin/accounts/<int:uid>/pause"),
-           ("POST", "/api/admin/accounts/<int:uid>/suspend"), ("POST", "/api/admin/accounts/<int:uid>/restore")}
+           ("POST", "/api/admin/accounts/<int:uid>/suspend"), ("POST", "/api/admin/accounts/<int:uid>/restore"),
+           ("GET", "/api/admin/presence/summary"), ("GET", "/api/admin/accounts/<int:uid>/history"), ("POST", "/api/admin/accounts/bulk"),
+           ("POST", "/api/admin/accounts/signout-all")}
 AREA = [("/api/applications", "admissions"), ("/api/announcements", "classroom"), ("/api/audit", "audit"), ("/api/discounts", "fees"), ("/api/families", "fees"), ("/api/fees", "fees"),
         ("/api/invoices", "fees"), ("/api/payments", "fees"), ("/api/slips", "fees"), ("/api/revenue-types", "fees"), ("/api/students", "fees"), ("/api/earnings", "finance"), ("/api/expense", "finance"), ("/api/finance", "finance"), ("/api/recurring-expenses", "finance"),
         ("/api/enrollments/<int:eid>/void-open-invoices", "fees"), ("/api/enrollment", "enrollments"), ("/api/import/enrolments", "enrollments"), ("/api/import/courses", "courses"), ("/api/import/batches", "batches"), ("/api/import/expenses", "finance"), ("/api/import", "people"),

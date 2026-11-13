@@ -152,6 +152,65 @@ class Presence(unittest.TestCase):
         self.sql_("UPDATE users SET token_version=0 WHERE id=?", (self.s2,))
         self.assertEqual(self.c.get("/api/auth/me", headers={"Authorization": "Bearer " + tok}).status_code, 200)
 
+    def test_10_bulk_actions(self):
+        ids = [self.s1, self.s2, self.adm]   # yourself is skipped, the others are done
+        r = self.c.post("/api/admin/accounts/bulk", json={"ids": ids, "action": "pause", "hours": 3, "reason": "Holiday", "_until": ["2099-01-01 00:00:00", None]}, headers=self.H).get_json()
+        self.assertEqual((r["done"], [x["id"] for x in r["skipped"]]), (2, [self.adm]))
+        until = self.sql_("SELECT paused_until FROM users WHERE id=?", (self.s1,))[0][0]
+        self.assertFalse(until.startswith("2099"))   # the end time comes from hours, never from the request body
+        self.assertEqual(self.sql_("SELECT paused_until FROM users WHERE id=?", (self.s2,))[0][0], until)   # one end time for everyone
+        r = self.c.post("/api/admin/accounts/bulk", json={"ids": [self.s1, self.s2], "action": "suspend"}, headers=self.H)
+        self.assertEqual(r.status_code, 400)   # a reason is required
+        r = self.c.post("/api/admin/accounts/bulk", json={"ids": [self.s1, self.s2, self.t1], "action": "restore"}, headers=self.H).get_json()
+        self.assertEqual(r["done"], 2); self.assertEqual(r["skipped"][0]["id"], self.t1)   # t1 was not paused
+        for body in ({"ids": [], "action": "signout"}, {"ids": [self.s1], "action": "explode"}):
+            self.assertEqual(self.c.post("/api/admin/accounts/bulk", json=body, headers=self.H).status_code, 400)
+        L = self.tok("lim@s47.test", PW)
+        self.assertEqual(self.c.post("/api/admin/accounts/bulk", json={"ids": [self.s1], "action": "signout"}, headers=L).status_code, 403)
+
+    def test_11_sign_out_everyone(self):
+        S, T = self.tok("s1@s47.test", PW), self.tok("t1@s47.test", PW)
+        r = self.c.post("/api/admin/accounts/signout-all", json={"role": "student", "reason": "Exam"}, headers=self.H).get_json()
+        self.assertEqual(r["count"], 2)
+        self.assertEqual(self.c.get("/api/auth/me", headers=S).status_code, 401)
+        self.assertEqual(self.c.get("/api/auth/me", headers=T).status_code, 200)   # teachers untouched
+        self.c.post("/api/admin/accounts/signout-all", json={}, headers=self.H)
+        self.assertEqual(self.c.get("/api/auth/me", headers=T).status_code, 401)
+        self.assertEqual(self.c.get("/api/auth/me", headers=self.H).status_code, 200)   # never yourself
+        self.assertTrue(self.sql_("SELECT 1 FROM audit_log WHERE action='account_signout_all'"))
+
+    def test_12_history_failed_and_new_device(self):
+        for _ in range(3): self.c.post("/api/auth/login", json={"login": "s2@s47.test", "password": "nope"})
+        self.tok("s2@s47.test", PW, "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/130.0 Safari/537.36")
+        self.tok("s2@s47.test", PW, "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/130.0 Safari/537.36")
+        self.tok("s2@s47.test", PW, UA_PHONE)
+        p = self.person(self.s2)
+        self.assertGreaterEqual(p["failed_24h"], 3); self.assertEqual(p["new_device"], "Phone · Chrome")
+        h = self.c.get(f"/api/admin/accounts/{self.s2}/history", headers=self.H).get_json()
+        self.assertEqual(h["person"]["id"], self.s2); self.assertGreaterEqual(h["failed_24h"], 3)
+        self.assertEqual(h["events"][0]["ok"], 1); self.assertEqual(h["events"][0]["device"], "Phone · Chrome")
+        self.assertIn("wrong password", [e["reason"] for e in h["events"]])
+        self.assertIn("Phone · Chrome", [d["device"] for d in h["devices"]])
+        self.assertTrue(any(a["action"].startswith("account_") for a in h["actions"]))
+        self.assertNotIn("password", " ".join(str(e) for e in h["events"]).replace("wrong password", ""))   # never a password
+        s = self.c.get("/api/admin/presence/summary", headers=self.H).get_json()
+        self.assertGreaterEqual(s["failed_24h"], 3); self.assertIn("online", s["counts"]); self.assertGreaterEqual(s["counts"]["warnings"], 1)
+        self.assertEqual(self.c.get(f"/api/admin/accounts/{self.s2}/history", headers=self.tok("lim@s47.test", PW)).status_code, 403)
+
+    def test_13_pause_end_notice_and_message_to_person(self):
+        self.assertEqual(self.act(self.t1, "pause", {"hours": 1, "message": "Back after the exam board meeting"}).status_code, 200)
+        r = self.c.post("/api/auth/login", json={"login": "t1@s47.test", "password": PW}).get_json()
+        self.assertIn("Message from the academy: Back after the exam board meeting", r["error"])
+        self.tick(hours=1, minutes=1)
+        self.c.get("/api/auth/me", headers=self.H)   # any request by a full admin clears ended pauses
+        self.assertEqual(self.sql_("SELECT paused_until, account_message FROM users WHERE id=?", (self.t1,))[0], (None, None))
+        n = self.sql_("SELECT user_id, title, link FROM notifications WHERE kind='account' AND title='Pause ended' AND link=?", (f"online:{self.t1}",))
+        self.assertIn(self.adm, [x[0] for x in n]); self.assertNotIn(self.lim, [x[0] for x in n])   # full admins only
+        before = len(self.sql_("SELECT 1 FROM notifications WHERE link=? AND user_id=?", (f"online:{self.t1}", self.adm)))
+        self.tick(minutes=1); self.c.get("/api/admin/presence", headers=self.H); self.c.get("/api/auth/me", headers=self.H)
+        self.assertEqual(len(self.sql_("SELECT 1 FROM notifications WHERE link=? AND user_id=?", (f"online:{self.t1}", self.adm))), before)   # told once per pause
+        self.assertTrue(self.sql_("SELECT 1 FROM audit_log WHERE action='account_pause_ended' AND entity_id=?", (self.t1,)))
+
 
 class Upgrade(unittest.TestCase):
     def test_old_database_gets_the_columns(self):

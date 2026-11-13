@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS users (
   suspend_reason TEXT,
   paused_until TEXT,           -- set and in the future = cannot sign in until then; lifts by itself
   pause_reason TEXT,
-  account_changed_by INTEGER   -- the full admin who last suspended, paused or restored
+  account_changed_by INTEGER,  -- the full admin who last suspended, paused or restored
+  account_message TEXT         -- optional message shown to a paused or suspended person when they try to sign in
 );
 CREATE TABLE IF NOT EXISTS students (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -551,3 +552,17 @@ CREATE TABLE IF NOT EXISTS password_help (
   handled_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_password_help_status ON password_help(status, user_id);
+
+-- v0.8.47: every sign-in attempt (presence.py). user_id is NULL when the typed ID matched nobody. Kept 180 days.
+CREATE TABLE IF NOT EXISTS login_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  login_text TEXT,
+  ok INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,                 -- wrong password, unknown ID, account disabled, account_paused, account_suspended
+  ip TEXT,
+  agent TEXT,
+  at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_login_events_user ON login_events(user_id, at);
+CREATE INDEX IF NOT EXISTS idx_login_events_at ON login_events(at);

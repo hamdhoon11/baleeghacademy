@@ -205,16 +205,17 @@ def create_app(config=None):
                 except jwt.PyJWTError:
                     return err("Session expired. Sign in again.", 401)
                 u = one("SELECT id,login_id,email,full_name,role,is_active,must_change_password,permissions,token_version,suspended_at,paused_until,"
-                        "last_seen_at,signed_out_at FROM users WHERE id=?", (p["sub"],))
+                        "last_seen_at,signed_out_at,account_message FROM users WHERE id=?", (p["sub"],))
                 if not u or not u["is_active"]:
                     return err("Account disabled", 403)
                 # v0.8.47: signed out, suspended or paused by a full admin. 401 makes the page sign out and show the message.
                 stop = presence.blocked(u, utc_stamp()) or (None if int(p.get("tv", 0)) == int(u["token_version"] or 0) else presence.KICKED)
                 if stop:
                     return jsonify(error=stop[1], code=stop[0]), 401
-                presence.touch(db(), u, utc_stamp(), request)   # "who is online": at most one small write per person every 30 seconds
-                for col in ("token_version", "suspended_at", "paused_until", "last_seen_at", "signed_out_at"): u.pop(col, None)
                 g.user = u
+                # "who is online": at most one small write per person every 30 seconds (a full admin's also clears ended pauses)
+                app.extensions["presence"]["touch"](db(), u, utc_stamp(), request, is_full_admin(u))
+                for col in ("token_version", "suspended_at", "paused_until", "last_seen_at", "signed_out_at", "account_message"): u.pop(col, None)
                 # Session 11: until the temporary password is replaced, nothing works except changing it (and asking who I am). Enforced here, not in the page.
                 if u["must_change_password"] and not app.config["SKIP_FORCED_CHANGE"] and request.path not in ("/api/auth/change-password", "/api/auth/me"):
                     return jsonify(error="You must change your temporary password first", code="password_change_required"), 403
@@ -292,15 +293,18 @@ def create_app(config=None):
         ok = check_password_hash(u["password_hash"] if u else DUMMY_HASH, str(d.get("password", "")))
         if not u or not ok or not u["is_active"]:
             fails[ip].append(now); fails[key].append(now)
+            presence.log_login(db(), u["id"] if u else None, who, False, "account disabled" if u and ok else ("wrong password" if u else "unknown ID"), utc_stamp(), request)
             audit("failed_login", "user", u["id"] if u else None, "account disabled" if u and ok else ("wrong password" if u else "unknown ID"),
                   role="anonymous", login_id=who[:60] or None); db().commit()   # what was typed as the ID is kept; the password never is
             return err("Wrong ID or password", 401)
         stop = presence.blocked(u, utc_stamp())   # v0.8.47: told only after the right password, so a stranger learns nothing
         if stop:
+            presence.log_login(db(), u["id"], who, False, stop[0], utc_stamp(), request)
             audit("login_blocked", "user", u["id"], stop[0], role=u["role"], login_id=u["login_id"]); db().commit()
             return jsonify(error=stop[1], code=stop[0]), 403
         g.user = u
         presence.signed_in(db(), u["id"], utc_stamp(), request)
+        presence.log_login(db(), u["id"], who, True, None, utc_stamp(), request)
         audit("login", "user", u["id"]); db().commit()
         return jsonify(token=make_token(u), user=public_user(u))
 
