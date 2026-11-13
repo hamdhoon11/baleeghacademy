@@ -599,8 +599,8 @@ views.dashboard = async () => {
     ["Submissions", d.submissions], ["Graded", d.graded], ["Waiting for grading", d.pending_grading]]);
   const fin = d.financial ? `<h2>${t("Finance")}</h2>` + cards([["Revenue", "MVR " + d.financial.revenue], ["Expenses", "MVR " + d.financial.expenses], [d.financial.net < 0 ? "Net loss" : "Net profit", "MVR " + d.financial.net], ["Outstanding fees", "MVR " + d.financial.outstanding], ["Teacher earnings", "MVR " + d.financial.teacher_earnings], ["Academy revenue", "MVR " + d.financial.academy_revenue]]) : "";
   const fee = d.fees ? cards([[t("fx_unpaid_invoices"), d.fees.unpaid_invoices], [t("fx_overdue_invoices"), d.fees.overdue_invoices], [t("fx_slips_pending"), d.fees.slips_pending]]) : "";
-  const [store, todo] = await Promise.all([storagePanel(true), api("/admin/todo").catch(() => null)]);
-  return `<h1>${t("dashboard")}</h1>${store.banner}${todoPanel(todo)}<div class="panel">${filt}<p class="hint">${t("No dates chosen means all time. Accounts: ")}${d.student_accounts} ${t("Students")}, ${d.teacher_accounts} ${t("Teachers")}.</p></div>${acad}${fin}${fee}<div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
+  const [store, todo, on] = await Promise.all([storagePanel(true), api("/admin/todo").catch(() => null), S.user.permissions ? null : api("/admin/presence/summary").catch(() => null)]);
+  return `<h1>${t("dashboard")}</h1>${store.banner}${onlinePanel(on)}${todoPanel(todo)}<div class="panel">${filt}<p class="hint">${t("No dates chosen means all time. Accounts: ")}${d.student_accounts} ${t("Students")}, ${d.teacher_accounts} ${t("Teachers")}.</p></div>${acad}${fin}${fee}<div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
 };
 
 // Session 27: exports and CSV import (the import panel is drawn at the bottom of People)
@@ -675,6 +675,17 @@ DO.rdStart = async () => {
   flash(t("rd_done").replace("{n}", fmtNum(r.total)), true);
 };
 
+// v0.8.47: "Who's online" on a full admin's Dashboard (others get nothing: the server answers 403 and the panel is left out)
+function onlinePanel(d) {
+  if (!d) return "";
+  const c = d.counts, r = d.by_role, warn = c.warnings || d.failed_24h >= 3;
+  return `<div class="panel" id="onp"><h2>${esc(t("online"))}</h2><div class="cl"><div><b><bdi dir="ltr">${fmtNum(c.online)}</bdi></b> ${esc(t("Online now"))}`
+    + ` <span class="hint">· ${esc(t("Students"))} ${r.student.online} · ${esc(t("Teachers"))} ${r.teacher.online} · ${esc(t("Admins"))} ${r.admin.online}</span>`
+    + `${c.paused || c.suspended ? `<br>${c.paused ? tag(c.paused + " " + t("Paused"), "warn") + " " : ""}${c.suspended ? tag(c.suspended + " " + t("Suspended"), "bad") : ""}` : ""}`
+    + `${warn ? `<br>${tag(t("failed_signins_24h").replace("{n}", d.failed_24h), "warn")}` : ""}</div>`
+    + `<button class="btn sm" data-do="todoGo" data-v="online" data-p="{}">${t("open")}</button></div></div>`;
+}
+
 // v0.8.35: "To do today" on the admin Dashboard: one tap to each thing that is waiting
 function todoPanel(d) {
   if (!d) return "";
@@ -684,3 +695,133 @@ function todoPanel(d) {
   return `<div class="panel" id="todop"><h2>${t("To do today")}</h2>${all.join("") || `<p class="msg ok">${esc(t("todo_all_clear"))}</p>`}</div>`;
 }
 DO.todoGo = d => { let p = {}; try { p = JSON.parse(d.p || "{}"); } catch (_) {} openTab(d.v, p); return false; };
+
+// ---------- v0.8.47: Who's online. Full admins only (the server sends this tab only to them and checks every call). ----------
+// Online = used the portal in the last ~2 minutes; Away = in the last 15 minutes. Refreshes itself every 30 seconds while open.
+const ON_ST = {online: ["Online", "ok"], away: ["Away", "warn"], offline: ["Offline", ""]};
+const ON_ACC = {paused: ["Paused", "warn"], suspended: ["Suspended", "bad"], disabled: ["Disabled", "bad"]};
+function onAgo(stamp, now) {
+  if (!stamp) return t("never");
+  const s = Math.max(0, (utcDate(now) - utcDate(stamp)) / 1000);
+  if (s < 60) return t("just now");
+  if (s < 3600) return Math.floor(s / 60) + " " + t("min ago");
+  if (s < 86400) return Math.floor(s / 3600) + " " + t("h ago");
+  return fmtTime(stamp);
+}
+const onWarn = (p, lim) => (p.failed_24h >= lim ? tag(t("failed_signins_24h").replace("{n}", p.failed_24h), "warn") + " " : "") + (p.new_device ? tag(t("New device") + ": " + p.new_device, "warn") : "");
+views.online = async () => {
+  const d = await api("/admin/presence"), f = S.onf = S.onf || {role: "", st: "", q: ""};
+  mount(() => {
+    ["role", "st"].forEach(k => { const el = $("#on_" + k); if (el) el.onchange = () => { f[k] = el.value; render(); }; });
+    const fq = $("#on_qf"); if (fq) fq.onsubmit = ev => { ev.preventDefault(); f.q = val("on_q"); render(); };
+  });
+  const q = (f.q || "").toLowerCase(), lim = d.failed_warn;
+  const list = d.people.filter(p => (!f.role || p.role === f.role)
+    && (!f.st || (["online", "away", "offline"].includes(f.st) ? p.status === f.st : f.st === "warnings" ? (p.failed_24h >= lim || p.new_device) : p.account === f.st))
+    && (!q || [p.full_name, p.login_id, p.ip].some(v => String(v || "").toLowerCase().includes(q))));
+  S.onInfo = Object.fromEntries(d.people.map(p => [p.id, p]));
+  const c = d.counts, br = d.by_role;
+  const card = (k, v, st) => `<button type="button" class="stat" data-do="onPick" data-v="${st}" aria-pressed="${f.st === st}" style="text-align:start;cursor:pointer;font:inherit${f.st === st ? ";outline:2px solid var(--brand,#0b7)" : ""}"><b><bdi dir="ltr">${fmtNum(v)}</bdi></b>${esc(t(k))}</button>`;
+  const cards = `<div class="stats">${card("Online now", c.online, "online")}${card("Away", c.away, "away")}${card("Offline", c.offline, "offline")}${card("Paused", c.paused, "paused")}${card("Suspended", c.suspended, "suspended")}${card("Warnings", c.warnings, "warnings")}</div>`
+    + `<p class="hint">${["student", "teacher", "admin"].map(r => `${esc(t(r === "student" ? "Students" : r === "teacher" ? "Teachers" : "Admins"))} ${esc(t("online_count"))}: <b>${br[r].online}</b> / ${br[r].total}`).join(" · ")}</p>`;
+  const sel_ = (id, cur, opts) => `<select id="${id}">${opts.map(o => `<option value="${o[0]}" ${o[0] === cur ? "selected" : ""}>${esc(t(o[1]))}</option>`).join("")}</select>`;
+  const bar_ = `<form id="on_qf" class="listbar" role="search"><label>${esc(t("role"))}${sel_("on_role", f.role, [["", "all"], ["student", "Students"], ["teacher", "Teachers"], ["admin", "Admins"]])}</label>`
+    + `<label>${esc(t("Status"))}${sel_("on_st", f.st, [["", "all"], ["online", "Online"], ["away", "Away"], ["offline", "Offline"], ["paused", "Paused"], ["suspended", "Suspended"], ["disabled", "Disabled"], ["warnings", "Warnings"]])}</label>`
+    + `<label>${esc(t("search"))}<input id="on_q" type="search" value="${esc(f.q || "")}" placeholder="${esc(t("Name, login ID or IP"))}"></label><button class="btn">${t("search")}</button></form>`;
+  const acts = p => {
+    const b = (k, label, cls = "") => `<button type="button" class="btn sm ${cls}" data-do="${k}" data-id="${p.id}">${esc(t(label))}</button>`;
+    const hist = b("onHist", "History", "alt");
+    if (p.is_self) return `<div class="rowflex"><span class="hint">${esc(t("You"))}</span>${hist}</div>`;
+    if (p.account === "disabled") return `<div class="rowflex">${hist}<span class="hint">${esc(t("Turn the account on in People"))}</span></div>`;
+    if (p.account !== "active") return `<div class="rowflex">${b("onRestore", "Restore", "alt")}${p.account === "paused" ? b("onSuspend", "Suspend", "danger") : ""}${hist}</div>`;
+    return `<div class="rowflex">${b("onKick", "Sign out")}${b("onPause", "Pause")}${b("onSuspend", "Suspend", "danger")}${hist}</div>`;
+  };
+  const accCell = p => {
+    if (p.account === "active") return tag(t("Active"), "ok");
+    const [lbl, cls] = ON_ACC[p.account];
+    const why = p.account === "paused" ? `${t("until")} ${fmtTime(p.paused_until)}${p.pause_reason ? " · " + p.pause_reason : ""}`
+      : p.account === "suspended" ? `${fmtTime(p.suspended_at)}${p.suspend_reason ? " · " + p.suspend_reason : ""}` : "";
+    return tag(t(lbl), cls) + (why ? `<br><span class="hint">${esc(why)}</span>` : "") + (p.message ? `<br><span class="hint">${esc(t("Message to the person"))}: ${esc(p.message)}</span>` : "");
+  };
+  const shown = list.slice(0, S.onlim || 50), canBulk = p => !p.is_self;
+  const rows = shown.map(p => {
+    const [sl, sc] = ON_ST[p.status], w = onWarn(p, lim);
+    return `<tr><td><div>${canBulk(p) ? bulkBox("onl", p.id, p.full_name) + " " : ""}<b>${esc(p.full_name)}</b>${p.full_admin ? " " + tag(t("Full"), "ok") : ""}<br><span class="hint"><bdi dir="ltr">${esc(p.login_id || "")}</bdi></span>${w ? "<br>" + w : ""}</div></td><td>${esc(t(p.role))}</td>`
+      + `<td><div>${tag(t(sl), sc)} <span class="hint">${esc(p.status === "online" ? t("now") : onAgo(p.last_seen_at, d.now))}</span></div></td>`
+      + `<td><div>${esc(p.device || "–")}${p.ip ? `<br><span class="hint"><bdi dir="ltr">${esc(p.ip)}</bdi></span>` : ""}</div></td><td><bdi dir="ltr">${esc(p.last_login_at ? fmtTime(p.last_login_at) : t("never"))}</bdi></td><td><div>${accCell(p)}</div></td><td>${acts(p)}</td></tr>`;
+  }).join("");
+  const ids = shown.filter(canBulk).map(p => p.id);
+  const bulk = bulkBar("onl", [["onBulkKick", "Sign out"], ["onBulkPause", "Pause"], ["onBulkSuspend", "Suspend", true], ["onBulkRestore", "Restore"]], ids) + bulkAll("onl", ids);
+  const table = list.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("role")}</th><th>${t("Status")}</th><th>${t("Device")}</th><th>${t("Last sign-in")}</th><th>${t("Account")}</th><th>${t("actions")}</th></tr></thead><tbody>${rows}</tbody></table>` : `<p>${t("no_match")}</p>`;
+  const more = moreBtn(0, Math.min(S.onlim || 50, list.length), list.length, "onMore");
+  return `<h1>${t("online")}</h1><p class="hint">${esc(t("online_hint"))}</p>${cards}<div class="panel">${bar_}${bulk}${table}${more}</div>`
+    + `<div class="panel"><h2>${esc(t("Sign out everyone"))}</h2><p class="hint">${esc(t("signout_all_hint"))}</p><p><button type="button" class="btn danger" data-do="onKickAll">${esc(t("Sign out everyone"))}…</button></p></div>`
+    + `<p class="hint">${esc(t("Updated"))} <bdi dir="ltr">${esc(fmtTime(d.now))}</bdi> · ${esc(t("Times are Maldives time."))} <button type="button" class="btn sm" data-do="onRefresh">${esc(t("Refresh"))}</button></p>`;
+};
+DO.onMore = () => { S.onlim = (S.onlim || 50) + 50; };
+DO.onRefresh = () => {};
+DO.onPick = d => { S.onf = S.onf || {}; S.onf.st = S.onf.st === d.v ? "" : d.v; };
+const onWho = id => { const p = (S.onInfo || {})[id] || {}; return `${p.full_name || ""}${p.login_id ? " · " + p.login_id : ""} · ${t(p.role || "")}`; };
+const onMany = () => t("bulk_n_people").replace("{n}", bulkSel("onl").length);
+// the two forms are shared by one person and by the ticked people
+const pauseForm = who => ui.form(t("Pause account"), [
+  {id: "len", label: t("For how long"), type: "select", value: "24", options: [["1", t("1 hour")], ["24", t("1 day")], ["72", t("3 days")], ["168", t("1 week")], ["720", t("30 days")], ["custom", t("Until a date and time")]]},
+  {id: "until", label: t("Until (Maldives time)"), type: "datetime-local", hint: t("Only when you chose 'Until a date and time'.")},
+  {id: "reason", label: t("Reason (staff only, optional)"), maxlength: 300},
+  {id: "message", label: t("Message to the person (optional)"), maxlength: 200, hint: t("Shown when they try to sign in.")}],
+  {okText: t("Pause"), hint: who + ". " + t("pause_hint"), validate: x => x.len === "custom" && !x.until ? t("dlg_required").replace("{f}", t("Until (Maldives time)")) : ""})
+  .then(v => v && Object.assign(v.len === "custom" ? {until: v.until} : {hours: +v.len}, {reason: v.reason, message: v.message}));
+const suspendForm = who => ui.form(t("Suspend account"), [
+  {id: "reason", label: t("Reason (staff only; the person is not shown it)"), type: "textarea", rows: 3, required: true, maxlength: 300},
+  {id: "message", label: t("Message to the person (optional)"), maxlength: 200, hint: t("Shown when they try to sign in.")}],
+  {okText: t("Suspend"), danger: true, hint: who + ". " + t("suspend_hint")});
+DO.onKick = async d => {
+  if (!await ui.confirm(t("Sign this person out on every device now? They can sign in again straight away."), {okText: t("Sign out"), details: [onWho(d.id)]})) return false;
+  await api(`/admin/accounts/${d.id}/signout`, "POST", {}); flash(t("Signed out"), true);
+};
+DO.onPause = async d => {
+  const v = await pauseForm(onWho(d.id)); if (!v) return false;
+  const r = await api(`/admin/accounts/${d.id}/pause`, "POST", v);
+  flash(t("Paused until") + " " + fmtTime(r.paused_until), true);
+};
+DO.onSuspend = async d => {
+  const v = await suspendForm(onWho(d.id)); if (!v) return false;
+  await api(`/admin/accounts/${d.id}/suspend`, "POST", v); flash(t("Suspended"), true);
+};
+DO.onRestore = async d => {
+  if (!await ui.confirm(t("Let this person sign in again?"), {okText: t("Restore"), details: [onWho(d.id)]})) return false;
+  await api(`/admin/accounts/${d.id}/restore`, "POST", {}); flash(t("Restored"), true);
+};
+// ticked people: one request; the server skips yourself and anyone the action does not fit, and says who
+async function onBulk(action, body) {
+  const r = await api("/admin/accounts/bulk", "POST", Object.assign({ids: bulkSel("onl"), action}, body || {}));
+  S.bulk.onl = [];
+  const why = r.skipped.slice(0, 3).map(x => (x.name ? x.name + ": " : "") + x.error).join(" · ");
+  flash(t("bulk_done").replace("{n}", r.done).replace("{m}", r.done + r.skipped.length) + (r.skipped.length ? ` ${t("bulk_failed").replace("{n}", r.skipped.length)}: ${why}` : ""), !r.skipped.length);
+}
+DO.onBulkKick = async () => { if (!await ui.confirm(t("Sign these people out on every device now?"), {okText: t("Sign out"), details: [onMany()]})) return false; await onBulk("signout"); };
+DO.onBulkPause = async () => { const v = await pauseForm(onMany()); if (!v) return false; await onBulk("pause", v); };
+DO.onBulkSuspend = async () => { const v = await suspendForm(onMany()); if (!v) return false; await onBulk("suspend", v); };
+DO.onBulkRestore = async () => { if (!await ui.confirm(t("Let these people sign in again?"), {okText: t("Restore"), details: [onMany()]})) return false; await onBulk("restore"); };
+DO.onKickAll = async () => {
+  const v = await ui.form(t("Sign out everyone"), [
+    {id: "role", label: t("Who"), type: "select", value: "", options: [["", t("Everyone except me")], ["student", t("All students")], ["teacher", t("All teachers")], ["admin", t("All other admins")]]},
+    {id: "reason", label: t("Reason (optional)"), maxlength: 300}], {okText: t("Sign out"), danger: true, hint: t("signout_all_hint")});
+  if (!v) return false;
+  const r = await api("/admin/accounts/signout-all", "POST", v); flash(t("signed_out_n").replace("{n}", r.count), true);
+};
+// sign-in history of one person: devices, every attempt (good and failed) and the account actions taken
+DO.onHist = async d => {
+  const h = await api(`/admin/accounts/${d.id}/history`), p = h.person;
+  const why = r => r ? t({"wrong password": "Wrong password", "unknown ID": "Unknown ID", "account disabled": "Account disabled", account_paused: "Account paused", account_suspended: "Account suspended"}[r] || r) : "";
+  const dev = h.devices.length ? `<table class="nostack"><thead><tr><th>${t("Device")}</th><th>IP</th><th>${t("Sign-ins")}</th><th>${t("Last")}</th></tr></thead><tbody>${h.devices.map(x => `<tr><td>${esc(x.device)}</td><td><bdi dir="ltr">${esc(x.ip)}</bdi></td><td>${x.count}</td><td><bdi dir="ltr">${esc(fmtTime(x.last_at))}</bdi></td></tr>`).join("")}</tbody></table>` : `<p class="hint">${esc(t("No sign-ins yet."))}</p>`;
+  const ev = h.events.length ? `<table class="nostack"><thead><tr><th>${t("When")}</th><th>${t("Result")}</th><th>${t("Device")}</th><th>IP</th></tr></thead><tbody>${h.events.map(e => `<tr><td><bdi dir="ltr">${esc(fmtTime(e.at))}</bdi></td><td>${e.ok ? tag(t("Signed in"), "ok") : tag(why(e.reason) || t("Failed"), "bad")}</td><td>${esc(e.device || "–")}</td><td><bdi dir="ltr">${esc(e.ip || "")}</bdi></td></tr>`).join("")}</tbody></table>` : "";
+  const acts = h.actions.length ? `<h3>${esc(t("Account actions"))}</h3><ul class="dlg-list">${h.actions.map(a => `<li><bdi dir="ltr">${esc(fmtTime(a.at))}</bdi> · ${esc(a.detail || a.action)}${a.by_login ? ` <span class="hint">(${esc(a.by_login)})</span>` : ""}</li>`).join("")}</ul>` : "";
+  await ui.show(t("Sign-in history") + ": " + p.full_name, `<p class="hint"><bdi dir="ltr">${esc(p.login_id || "")}</bdi> · ${esc(t(p.role))}${h.failed_24h ? " · " + esc(t("failed_signins_24h").replace("{n}", h.failed_24h)) : ""}</p><h3>${esc(t("Devices used"))}</h3>${dev}${ev ? `<h3>${esc(t("Recent attempts"))}</h3>${ev}` : ""}${acts}`);
+  return false;
+};
+setInterval(() => {   // keep the list fresh without disturbing typing, an open dialog or ticked boxes
+  if (S.view !== "online" || document.hidden || !S.user || document.querySelector("dialog[open]") || (S.bulk && (S.bulk.onl || []).length)) return;
+  const a = document.activeElement; if (a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return;
+  render();
+}, 30000);

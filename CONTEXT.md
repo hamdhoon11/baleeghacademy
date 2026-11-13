@@ -295,3 +295,9 @@ Session 29: `whatsapp.py` (`register(app, ns, now)`): `POST /api/whatsapp/prepar
 - New i18n keys: `skip_to_content`, `menu_more`, `main_menu`, `all_sections`, `show_password`, `nav_*`.
 - Tests: `tests/e2e_navigation.py` sweeps every tab for every role on phone and desktop (192 checks). `tests/e2e_shim.py` opens the phone menu for the older browser scripts. Older `e2e_*.py` scripts were already stale before this work (login IDs, course chooser); `e2e_submit`, `e2e_student_info`, `e2e_teacher_info` run, the rest need updating.
 - Known: `tests.test_warm_connection` errors inside the full suite only (environment leaks from another test); it passes alone.
+
+## v0.8.47 notes: who is online, account control
+- `presence.py` (`register(app, ns)`; ns now has `is_full_admin`, `utc_stamp`). Full admins only (checked inside; NO_AREA in test_session32). Tab `online` (admin, `settings_schema.FULL_ONLY`, group nav_people).
+- `users` columns (dbx.V0847_USER_COLUMNS): last_seen_at, last_login_at, signed_out_at, last_ip, last_agent, token_version, suspended_at, suspend_reason, paused_until, pause_reason, account_changed_by.
+- Also: table `login_events` (every sign-in attempt, 180 days), `users.account_message`; bulk, signout-all, history and presence/summary routes; Dashboard `onlinePanel()`; `sweep()` clears ended pauses and notifies full admins (dedupe `pause-end:<id>:<until>`).
+- Token claim `tv` must equal users.token_version (raise it to sign someone out everywhere). `presence.blocked()` is checked at login (after the password) and in `auth()`; `auth()` calls `presence.touch()` (one write per 30 s).

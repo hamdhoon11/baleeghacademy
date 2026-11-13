@@ -14,7 +14,20 @@ CREATE TABLE IF NOT EXISTS users (
   must_change_password INTEGER NOT NULL DEFAULT 0,
   login_id TEXT,               -- Session 11: ID used to sign in (student/teacher code, admins BAL/A/NNN); unique index made in dbx.init_schema
   permissions TEXT,            -- admins only: NULL = full admin, else comma list of allowed areas
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- v0.8.47: who is online, and account control by a full admin (presence.py). Times are UTC 'YYYY-MM-DD HH:MM:SS'.
+  last_seen_at TEXT,           -- last signed-in request (written at most every 30 seconds)
+  last_login_at TEXT,
+  signed_out_at TEXT,          -- pressed Sign out, or was signed out by an admin; offline until the next request
+  last_ip TEXT,
+  last_agent TEXT,             -- browser user-agent, cut to 200 characters
+  token_version INTEGER NOT NULL DEFAULT 0,   -- raised to sign the person out everywhere; tokens carry it as "tv"
+  suspended_at TEXT,           -- set = cannot sign in until a full admin restores the account
+  suspend_reason TEXT,
+  paused_until TEXT,           -- set and in the future = cannot sign in until then; lifts by itself
+  pause_reason TEXT,
+  account_changed_by INTEGER,  -- the full admin who last suspended, paused or restored
+  account_message TEXT         -- optional message shown to a paused or suspended person when they try to sign in
 );
 CREATE TABLE IF NOT EXISTS students (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -539,3 +552,17 @@ CREATE TABLE IF NOT EXISTS password_help (
   handled_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_password_help_status ON password_help(status, user_id);
+
+-- v0.8.47: every sign-in attempt (presence.py). user_id is NULL when the typed ID matched nobody. Kept 180 days.
+CREATE TABLE IF NOT EXISTS login_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  login_text TEXT,
+  ok INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,                 -- wrong password, unknown ID, account disabled, account_paused, account_suspended
+  ip TEXT,
+  agent TEXT,
+  at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_login_events_user ON login_events(user_id, at);
+CREATE INDEX IF NOT EXISTS idx_login_events_at ON login_events(at);
