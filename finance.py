@@ -219,7 +219,9 @@ def register(app, c, today):
     # Revenue is ONLY money that really came in: rows of `payments` that are not reversed, counted on the day paid (paid_on).
     # v0.8.35 (decision): payments on a voided invoice are not revenue either (voiding already requires reversing payments first).
     # Invoices are never revenue; they only feed "outstanding". Course, batch and tuition class come from the payment's invoice.
-    PAID_FROM = "FROM payments p JOIN invoices i ON i.id=p.invoice_id JOIN courses c ON c.id=i.course_id JOIN batches b ON b.id=i.batch_id"
+    # v0.8.45: LEFT JOINs (manual invoices may have no course or batch); rt = the invoice's revenue type
+    RT_JOIN = " LEFT JOIN revenue_types rt ON rt.id=COALESCE(i.revenue_type_id, (SELECT r2.id FROM revenue_types r2 WHERE r2.code=i.kind))"
+    PAID_FROM = "FROM payments p JOIN invoices i ON i.id=p.invoice_id LEFT JOIN courses c ON c.id=i.course_id LEFT JOIN batches b ON b.id=i.batch_id" + RT_JOIN
     OWED = "CASE WHEN i.amount_due_mvr-i.waived_mvr-i.paid_mvr>0 THEN i.amount_due_mvr-i.waived_mvr-i.paid_mvr ELSE 0 END"   # same rule as payments.balance()
 
     def span(a):
@@ -238,6 +240,10 @@ def register(app, c, today):
                 try: args.append(int(a[key]))
                 except ValueError: raise ValueError("Bad " + key.replace("_", " "))
                 w.append(f"{col}=?")
+        if a.get("revenue_type"):   # v0.8.45
+            try: args.append(int(a["revenue_type"]))
+            except ValueError: raise ValueError("Bad revenue type")
+            w.append("rt.id=?")
         if a.get("kind"):
             if a["kind"] not in ("course", "tuition"): raise ValueError("kind must be course or tuition")
             w.append("c.kind=?"); args.append(a["kind"])
@@ -258,7 +264,7 @@ def register(app, c, today):
     def outstanding(a):
         w, args = scope(a)
         w.append("i.status<>'void'")
-        return int(one(f"SELECT COALESCE(SUM({OWED}),0) s FROM invoices i JOIN courses c ON c.id=i.course_id JOIN batches b ON b.id=i.batch_id WHERE " + " AND ".join(w), tuple(args))["s"])
+        return int(one(f"SELECT COALESCE(SUM({OWED}),0) s FROM invoices i LEFT JOIN courses c ON c.id=i.course_id LEFT JOIN batches b ON b.id=i.batch_id" + RT_JOIN + " WHERE " + " AND ".join(w), tuple(args))["s"])
 
     def expenses_total(d1, d2):
         w, args = [], []
@@ -277,10 +283,13 @@ def register(app, c, today):
         by_course = grp("c.id AS course_id, c.name AS course_name, c.kind", "c.id, c.name, c.kind")
         by_batch = grp("b.id AS batch_id, b.code AS batch_code, c.id AS course_id, c.name AS course_name, c.kind", "b.id, b.code, c.id, c.name, c.kind")
         by_month = rows("SELECT SUBSTR(p.paid_on,1,7) AS month, SUM(p.amount_mvr) AS collected, COUNT(*) AS payments " + PAID_FROM + w + " GROUP BY SUBSTR(p.paid_on,1,7) ORDER BY month", args)
+        by_type = grp("rt.id AS revenue_type, rt.name AS revenue_type_name", "rt.id, rt.name")   # v0.8.45
         kinds = {"course": 0, "tuition": 0}
-        for r in by_course: kinds[r["kind"]] += int(r["collected"])
+        for r in by_course:
+            k = r["kind"] if r["kind"] in kinds else "other"   # v0.8.45: manual invoices without a course
+            kinds[k] = kinds.get(k, 0) + int(r["collected"])
         rev = int(one("SELECT COALESCE(SUM(p.amount_mvr),0) s " + PAID_FROM + wr, ar)["s"])
-        return jsonify(total_collected=total, payment_count=n, outstanding=out, reversed_not_counted=rev, by_kind=kinds, by_course=by_course, by_batch=by_batch, by_month=by_month,
+        return jsonify(total_collected=total, payment_count=n, outstanding=out, reversed_not_counted=rev, by_kind=kinds, by_type=by_type, by_course=by_course, by_batch=by_batch, by_month=by_month,
                        note="Revenue = payments received (reversed payments and payments on voided invoices excluded), by the day paid. Outstanding = unpaid balance of all non-void invoices in the same course/batch/kind filter, whatever the dates.")
 
     @app.get("/api/finance/dashboard")

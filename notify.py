@@ -148,14 +148,14 @@ def register(app, c, now):
         # 1. fees due soon (unpaid only: a student who already sent a slip is waiting for the admin, not for a reminder)
         days = num("remind_fee_days_before")
         if days:
-            for r in rows(f"SELECT i.id,i.student_id,i.period,i.due_date,{bal} AS bal,c.name AS course FROM invoices i JOIN courses c ON c.id=i.course_id "
-                          f"WHERE i.status='unpaid' AND i.due_date>=? AND i.due_date<=? AND {bal}>0", (t.isoformat(), (t + dt.timedelta(days=days)).isoformat())):
+            for r in rows(f"SELECT i.id,i.student_id,i.period,i.due_date,{bal} AS bal,COALESCE(c.name, i.description) AS course FROM invoices i LEFT JOIN courses c ON c.id=i.course_id "
+                          f"WHERE i.student_id IS NOT NULL AND i.status='unpaid' AND i.due_date>=? AND i.due_date<=? AND {bal}>0", (t.isoformat(), (t + dt.timedelta(days=days)).isoformat())):
                 out["fee_due_soon"] += push([r["student_id"]], "fee_due_soon", "Fee due soon",
                                             f"{r['course']} ({r['period']}): {r['bal']} MVR is due on {r['due_date']}.", f"fees:{r['id']}", f"due:{r['id']}")
         # 2. overdue fees: first the day after the due date, then every N days (one dedupe bucket per N days, so a missed day still sends once)
         every = num("remind_overdue_every_days")
-        over = rows(f"SELECT i.id,i.student_id,i.period,i.due_date,{bal} AS bal,c.name AS course FROM invoices i JOIN courses c ON c.id=i.course_id "
-                    f"WHERE i.status='unpaid' AND i.due_date<? AND {bal}>0", (t.isoformat(),))
+        over = rows(f"SELECT i.id,i.student_id,i.period,i.due_date,{bal} AS bal,COALESCE(c.name, i.description) AS course FROM invoices i LEFT JOIN courses c ON c.id=i.course_id "
+                    f"WHERE i.student_id IS NOT NULL AND i.status='unpaid' AND i.due_date<? AND {bal}>0", (t.isoformat(),))
         if every:
             for r in over:
                 late = (t - dt.date.fromisoformat(r["due_date"])).days

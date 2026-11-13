@@ -156,7 +156,7 @@ def register(app, c, today):
         s = one("SELECT u.id, u.full_name, st.student_code FROM users u LEFT JOIN students st ON st.user_id=u.id WHERE u.id=? AND u.role='student'", (sid,))
         if not s: return err("Student not found", 404)
         invs = rows("SELECT i.id, i.period, i.amount_mvr, i.discount_mvr, i.amount_due_mvr, i.waived_mvr, i.due_date, i.status, c.name AS course_name, c.kind, b.code AS batch_code "
-                    "FROM invoices i JOIN courses c ON c.id=i.course_id JOIN batches b ON b.id=i.batch_id WHERE i.student_id=? ORDER BY i.period DESC, i.id DESC", (sid,))
+                    "FROM invoices i LEFT JOIN courses c ON c.id=i.course_id LEFT JOIN batches b ON b.id=i.batch_id WHERE i.student_id=? ORDER BY i.period DESC, i.id DESC", (sid,))
         tot = {"due": 0, "paid": 0, "balance": 0}
         for i in invs:
             ps = rows("SELECT id, amount_mvr, paid_on, method, receipt_no, reversed_at FROM payments WHERE invoice_id=? ORDER BY paid_on, id", (i["id"],))
