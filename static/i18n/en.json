@@ -930,5 +930,18 @@
   "server_too_slow": "The server did not finish in time.",
   "xl_part_maybe": "Some rows may already be saved. Open the list to see, then import again: rows that are already there are refused, the rest are added.",
   "xl_progress": "Working: {a} of {b} rows done…",
-  "xl_stopped": "Stopped after {a} of {b} rows. The rows before that are done and are listed below; the rest were not reached. Import the same file again to add the rest (rows already there are refused)."
+  "xl_stopped": "Stopped after {a} of {b} rows. The rows before that are done and are listed below; the rest were not reached. Import the same file again to add the rest (rows already there are refused).",
+  "fx_mark_paid": "Mark paid",
+  "fx_paid_on": "Date paid",
+  "fx_paid_on_hint": "The day the money was paid or transferred (can be an earlier month).",
+  "fx_attach_slip": "Payment slip (optional)",
+  "fx_attach_slip_hint": "The slip or screenshot they sent on WhatsApp: PDF, JPG or PNG.",
+  "fx_tell_student": "Tell the student (portal notice)",
+  "fx_marked_paid": "{n} paid, MVR {m} recorded.",
+  "fx_bulk_paid_hint": "Each of the {n} invoices is marked paid in full (MVR {m} in all), with the same date, reference and slip:",
+  "fx_from_month": "From (optional)",
+  "fx_from_month_hint": "To bill earlier months too, choose a 'From' month: every month from there to the chosen month is generated.",
+  "start_date_optional": "Start date (optional)",
+  "start_date_hint": "Only for students who began earlier. Every month from the start month is billed.",
+  "earlier_invoices_made": "{n} invoices made for the earlier months."
 }

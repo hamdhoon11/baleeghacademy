@@ -767,17 +767,27 @@ def create_app(config=None):
         if not b["is_active"]: return err("This course or tuition class is inactive, so no new students can be enrolled.", 409)
         ex = one("SELECT id,status FROM enrollments WHERE student_id=? AND batch_id=?", (d["student_id"], d["batch_id"]))
         if ex and ex["status"] in ("active", "waitlist"): return err("Student is already in this batch", 409)
+        # v0.8.43: optional start date in the past (students who began before they were added to the portal); earlier months are billed too
+        at = utc_stamp()
+        if d.get("start_date"):
+            try: sd = dt.date.fromisoformat(str(d["start_date"]).strip())
+            except ValueError: return err("Start date must look like 2026-04-01")
+            t = fees_hook("today") or dt.date.today()
+            if sd > t: return err("The start date cannot be in the future")
+            if sd < t - dt.timedelta(days=731): return err("The start date can be at most two years back")
+            if sd < t: at = (dt.datetime.combine(sd, dt.time(0, 0)) - dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
         n = one("SELECT COUNT(*) n FROM enrollments WHERE batch_id=? AND status='active'", (b["id"],))["n"]
         status = "active" if n < b["capacity"] else "waitlist"
         if ex:
-            db().execute("UPDATE enrollments SET status=?, enrolled_at=? WHERE id=?", (status, utc_stamp(), ex["id"])); eid = ex["id"]
+            db().execute("UPDATE enrollments SET status=?, enrolled_at=? WHERE id=?", (status, at, ex["id"])); eid = ex["id"]
         else:
-            eid = db().execute("INSERT INTO enrollments(student_id,batch_id,status,enrolled_at) VALUES(?,?,?,?)", (d["student_id"], b["id"], status, utc_stamp())).lastrowid
+            eid = db().execute("INSERT INTO enrollments(student_id,batch_id,status,enrolled_at) VALUES(?,?,?,?)", (d["student_id"], b["id"], status, at)).lastrowid
         fill_codes()
-        audit("enroll", "enrollment", eid, status, batch_id=b["id"], old=ex["status"] if ex else None, new=status)
+        audit("enroll", "enrollment", eid, status + (f", started {d['start_date']}" if d.get("start_date") else ""), batch_id=b["id"], old=ex["status"] if ex else None, new=status)
         res = fees_hook("first_invoice_result", eid) or {}
+        back = (fees_hook("back_bill", eid) or 0) if status == "active" else 0
         db().commit()
-        return jsonify(id=eid, status=status, invoice_id=res.get("invoice_id"), invoice_skipped=res.get("reason"), invoice_message=res.get("message")), 201
+        return jsonify(id=eid, status=status, invoice_id=res.get("invoice_id"), invoice_skipped=res.get("reason"), invoice_message=res.get("message"), earlier_invoices=back), 201
 
     @app.patch("/api/enrollments/<int:eid>")
     @auth("admin", perm="enrollments")

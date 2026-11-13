@@ -271,15 +271,49 @@ def register(app, c):
         db().commit()
         return r
 
+    def back_bill(eid, user_id=None):
+        """v0.8.43: a student added now who started earlier (start date in the past) is billed every month from the start month up to
+        last month. The current month is billed by first_invoice as before. Returns how many invoices were made."""
+        e = one(ENR_SQL + " WHERE e.id=?", (eid,))
+        if not e or e["estatus"] != "active" or not e["cactive"] or e["fee"] <= 0 or not e["is_active"]: return 0
+        if user_id is None: user_id = (getattr(g, "user", None) or {}).get("id")
+        p, cur, n = enrolled_month(e["enrolled_at"]), month_of(today()), 0
+        if p == "0000-00": return 0
+        if setting("first_invoice_mode", "full") == "skip": p = next_month_start(p).isoformat()[:7]
+        while p < cur:
+            if make_invoice(e, p, False, user_id): n += 1
+            p = next_month_start(p).isoformat()[:7]
+        return n
+
     # ---------- admin: generate, list, detail ----------
     @app.post("/api/invoices/generate")
     @auth("admin", perm="fees")
     def inv_generate():
         period = parse_period(body().get("month"))
         if not period: return err("Choose a month like 2026-03 (not further ahead than next month)")
-        r = generate(period, g.user["id"])
-        audit_c("generate_invoices", "invoice", None, f"{period}: created {r['created']}, skipped {r['skipped_total']}"); db().commit()
-        return jsonify(r)
+        start = body().get("from_month")
+        if not start:
+            r = generate(period, g.user["id"])
+            audit_c("generate_invoices", "invoice", None, f"{period}: created {r['created']}, skipped {r['skipped_total']}"); db().commit()
+            return jsonify(r)
+        # v0.8.43: a range of months at once (catching up on months before the portal was used)
+        start = parse_period(start)
+        if not start or start > period: return err("'From' must be a month like 2026-04, not after the last month")
+        months = []
+        while start <= period:
+            months.append(start); start = next_month_start(start).isoformat()[:7]
+        if len(months) > 24: return err("Generate at most 24 months at a time")
+        out = {"period": period, "from_month": months[0], "months": [], "created": 0, "skipped": {}, "details": [], "skipped_total": 0}
+        for m in months:
+            r = generate(m, g.user["id"])
+            out["months"].append({"period": m, "created": r["created"]})
+            out["created"] += r["created"]; out["skipped_total"] += r["skipped_total"]
+            for k, v in r["skipped"].items(): out["skipped"][k] = out["skipped"].get(k, 0) + v
+            for x in r["details"]:
+                if x["reason"] not in ("already_invoiced", "not_enrolled_yet") and len(out["details"]) < 500: out["details"].append({**x, "period": m})
+        out["details_truncated"] = False
+        audit_c("generate_invoices", "invoice", None, f"{months[0]} to {period}: created {out['created']}, skipped {out['skipped_total']}"); db().commit()
+        return jsonify(out)
 
     @app.post("/api/invoices/catch-up")
     @auth("admin", perm="fees")
@@ -712,6 +746,76 @@ def register(app, c):
         audit_c("payment_record", "payment", p["id"], f"invoice {p['invoice_id']}, {p['amount_mvr']} MVR {p['method']}, {p['receipt_no']}"); db().commit()
         return jsonify(payment=p, invoice=get_invoice(p["invoice_id"])), 201
 
+    # ---------- v0.8.43: the office marks invoices paid, with the slip the person sent (WhatsApp, Viber, in person) ----------
+    def mark_paid_ids(d):
+        raw = d.get("invoice_ids") if d.get("invoice_ids") not in (None, "") else d.get("invoice_id")
+        parts = raw if isinstance(raw, list) else str(raw or "").split(",")
+        out = []
+        for x in parts:
+            x = str(x).strip()
+            if not x: continue
+            if not x.isdigit(): return None
+            if int(x) not in out: out.append(int(x))
+        return out
+
+    @app.post("/api/payments/mark-paid")
+    @auth("admin", perm="fees")
+    def pay_mark_paid():
+        """One or more open invoices paid. Multipart (with an optional `file`, the slip) or JSON. One invoice: `amount_mvr` (default: the
+        balance). Several invoices: each is paid in full (one transfer that covered several months). The slip is stored once and shown on
+        every payment it covers. The slip rows are saved as already verified, so they never enter the Slips to check queue."""
+        d = request.form.to_dict() if request.form else body()
+        ids = mark_paid_ids(d)
+        if not ids: return err("Choose the invoices that were paid")
+        if len(ids) > 24: return err("Mark at most 24 invoices at a time")
+        method = d.get("method") or "bank_transfer"
+        if method not in ("bank_transfer", "cash", "other"): return err("Choose how it was paid: bank transfer, cash or other")
+        amount = str(d.get("amount_mvr") or "").strip() or None
+        if amount and len(ids) > 1: return err("With several invoices each is marked paid in full; leave the amount empty")
+        invs = []
+        for iid in ids:
+            inv = get_invoice(iid)
+            if not inv: return err(f"Invoice {iid} not found", 404)
+            if inv["status"] not in OPEN or inv["balance"] <= 0: return err(f"{inv['number']} ({inv['student_name']}) is {inv['status']}, nothing to pay", 409)
+            invs.append(inv)
+        paid_on = (d.get("paid_on") or "").strip() or today().isoformat()
+        try: pd = dt.date.fromisoformat(paid_on)
+        except ValueError: return err("Enter a real payment date")
+        if pd > today(): return err("The payment date cannot be in the future")
+        f = request.files.get("file")
+        name = digest = shown = None
+        if f and f.filename:
+            try: name, digest, shown = common.save_private(f, store, "slips")
+            except ValueError as x: return err(str(x))
+        out, warn = [], []
+        try:
+            for inv in invs:
+                amt = amount or inv["balance"]
+                slip_id = None
+                if name:
+                    claimed = pay.as_int(amt)
+                    slip_id = db().execute("INSERT INTO payment_slips(invoice_id,student_id,file,file_name,file_hash,amount_mvr,transfer_date,reference,status,reviewed_by,reviewed_at,created_at) "
+                                           "VALUES(?,?,?,?,?,?,?,?,'verified',?,?,?)",
+                                           (inv["id"], inv["student_id"], name, shown, digest, claimed, pd.isoformat(), (d.get("reference") or "").strip()[:80] or None,
+                                            g.user["id"], stamp(), stamp())).lastrowid
+                p = P.record(inv["id"], amt, method, pd.isoformat(), d.get("reference"), d.get("note"), slip_id, g.user["id"])
+                audit_c("payment_record", "payment", p["id"], f"invoice {inv['id']}, {p['amount_mvr']} MVR {method}, {p['receipt_no']}, marked paid" + (f", slip {slip_id} attached" if slip_id else ""))
+                if one("SELECT 1 x FROM payment_slips WHERE invoice_id=? AND status='pending'", (inv["id"],)):
+                    warn.append(f"{inv['number']}: the student also sent a slip that is waiting in Slips to check. Reject it there if it is the same payment.")
+                if str(d.get("notify", "")).lower() in ("1", "true", "on", "yes"):
+                    c.notify([inv["student_id"]], "slip_verified", "Payment received", f"We received {p['amount_mvr']} MVR. Receipt {p['receipt_no']}.", f"fees:{inv['id']}")
+                out.append(p)
+            db().commit()
+        except pay.PayError as x:
+            db().rollback()
+            if name: store.delete("slips", name)
+            return money_err(x)
+        except Exception:
+            db().rollback()
+            if name: store.delete("slips", name)
+            raise
+        return jsonify(payments=out, invoices=[get_invoice(i["id"]) for i in invs], total_mvr=sum(p["amount_mvr"] for p in out), warnings=warn), 201
+
     @app.get("/api/payments")
     @auth("admin", perm="fees")
     def pay_list():
@@ -721,7 +825,8 @@ def register(app, c):
             if not PERIOD.match(m): return err("Month must look like 2026-03")
             w += ["p.paid_on>=?", "p.paid_on<?"]; a += [m + "-01", next_month_start(m).isoformat()]
         if request.args.get("invoice_id", "").isdigit(): w.append("p.invoice_id=?"); a.append(int(request.args["invoice_id"]))
-        sql = ("SELECT p.*, i.period, u.full_name AS student_name FROM payments p JOIN invoices i ON i.id=p.invoice_id JOIN users u ON u.id=p.student_id"
+        sql = ("SELECT p.*, i.period, u.full_name AS student_name, s.file_name AS slip_file_name FROM payments p JOIN invoices i ON i.id=p.invoice_id JOIN users u ON u.id=p.student_id"
+               " LEFT JOIN payment_slips s ON s.id=p.slip_id"
                + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY p.id DESC LIMIT 500")
         out = rows(sql, a)
         for p in out: p["invoice_number"] = inv_no({"period": p["period"], "id": p["invoice_id"]})
@@ -911,5 +1016,5 @@ def register(app, c):
                 (t.isoformat(), first.isoformat(), next_month_start(month_of(t)).isoformat()))
         return {k: r[k] for k in ("unpaid_invoices", "overdue_invoices", "slips_pending", "month_collection_mvr")}
 
-    app.extensions["fees"] = {"first_invoice": first_invoice, "first_invoice_result": first_invoice_result, "catch_up": catch_up, "on_transfer": on_transfer, "generate": generate, "dashboard": dashboard_extra,
+    app.extensions["fees"] = {"first_invoice": first_invoice, "first_invoice_result": first_invoice_result, "catch_up": catch_up, "back_bill": back_bill, "on_transfer": on_transfer, "generate": generate, "dashboard": dashboard_extra,
                               "validate_setting": validate_setting, "today": today, "month_of": month_of, "parse_period": parse_period}
