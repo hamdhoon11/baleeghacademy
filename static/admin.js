@@ -684,3 +684,92 @@ function todoPanel(d) {
   return `<div class="panel" id="todop"><h2>${t("To do today")}</h2>${all.join("") || `<p class="msg ok">${esc(t("todo_all_clear"))}</p>`}</div>`;
 }
 DO.todoGo = d => { let p = {}; try { p = JSON.parse(d.p || "{}"); } catch (_) {} openTab(d.v, p); return false; };
+
+// ---------- v0.8.47: Who's online. Full admins only (the server sends this tab only to them and checks every call). ----------
+// Online = used the portal in the last ~2 minutes; Away = in the last 15 minutes. Refreshes itself every 30 seconds while open.
+const ON_ST = {online: ["Online", "ok"], away: ["Away", "warn"], offline: ["Offline", ""]};
+const ON_ACC = {paused: ["Paused", "warn"], suspended: ["Suspended", "bad"], disabled: ["Disabled", "bad"]};
+function onAgo(stamp, now) {
+  if (!stamp) return t("never");
+  const s = Math.max(0, (utcDate(now) - utcDate(stamp)) / 1000);
+  if (s < 60) return t("just now");
+  if (s < 3600) return Math.floor(s / 60) + " " + t("min ago");
+  if (s < 86400) return Math.floor(s / 3600) + " " + t("h ago");
+  return fmtTime(stamp);
+}
+views.online = async () => {
+  const d = await api("/admin/presence"), f = S.onf = S.onf || {role: "", st: "", q: ""};
+  mount(() => {
+    ["role", "st"].forEach(k => { const el = $("#on_" + k); if (el) el.onchange = () => { f[k] = el.value; render(); }; });
+    const fq = $("#on_qf"); if (fq) fq.onsubmit = ev => { ev.preventDefault(); f.q = val("on_q"); render(); };
+  });
+  const q = (f.q || "").toLowerCase();
+  const list = d.people.filter(p => (!f.role || p.role === f.role)
+    && (!f.st || (["online", "away", "offline"].includes(f.st) ? p.status === f.st : p.account === f.st))
+    && (!q || [p.full_name, p.login_id, p.ip].some(v => String(v || "").toLowerCase().includes(q))));
+  S.onInfo = Object.fromEntries(d.people.map(p => [p.id, p]));
+  const c = d.counts, br = d.by_role;
+  const card = (k, v, st) => `<button type="button" class="stat" data-do="onPick" data-v="${st}" aria-pressed="${f.st === st}" style="text-align:start;cursor:pointer;font:inherit${f.st === st ? ";outline:2px solid var(--brand,#0b7)" : ""}"><b><bdi dir="ltr">${fmtNum(v)}</bdi></b>${esc(t(k))}</button>`;
+  const cards = `<div class="stats">${card("Online now", c.online, "online")}${card("Away", c.away, "away")}${card("Offline", c.offline, "offline")}${card("Paused", c.paused, "paused")}${card("Suspended", c.suspended, "suspended")}</div>`
+    + `<p class="hint">${["student", "teacher", "admin"].map(r => `${esc(t(r === "student" ? "Students" : r === "teacher" ? "Teachers" : "Admins"))} ${esc(t("online_count"))}: <b>${br[r].online}</b> / ${br[r].total}`).join(" · ")}</p>`;
+  const sel_ = (id, cur, opts) => `<select id="${id}">${opts.map(o => `<option value="${o[0]}" ${o[0] === cur ? "selected" : ""}>${esc(t(o[1]))}</option>`).join("")}</select>`;
+  const bar_ = `<form id="on_qf" class="listbar" role="search"><label>${esc(t("role"))}${sel_("on_role", f.role, [["", "all"], ["student", "Students"], ["teacher", "Teachers"], ["admin", "Admins"]])}</label>`
+    + `<label>${esc(t("Status"))}${sel_("on_st", f.st, [["", "all"], ["online", "Online"], ["away", "Away"], ["offline", "Offline"], ["paused", "Paused"], ["suspended", "Suspended"], ["disabled", "Disabled"]])}</label>`
+    + `<label>${esc(t("search"))}<input id="on_q" type="search" value="${esc(f.q || "")}" placeholder="${esc(t("Name, login ID or IP"))}"></label><button class="btn">${t("search")}</button></form>`;
+  const acts = p => {
+    if (p.is_self) return `<span class="hint">${esc(t("You"))}</span>`;
+    if (p.account === "disabled") return `<span class="hint">${esc(t("Turn the account on in People"))}</span>`;
+    const b = (k, label, cls = "") => `<button type="button" class="btn sm ${cls}" data-do="${k}" data-id="${p.id}">${esc(t(label))}</button>`;
+    if (p.account !== "active") return `<div class="rowflex">${b("onRestore", "Restore", "alt")}${p.account === "paused" ? b("onSuspend", "Suspend", "danger") : ""}</div>`;
+    return `<div class="rowflex">${b("onKick", "Sign out")}${b("onPause", "Pause")}${b("onSuspend", "Suspend", "danger")}</div>`;
+  };
+  const accCell = p => {
+    if (p.account === "active") return tag(t("Active"), "ok");
+    const [lbl, cls] = ON_ACC[p.account];
+    const why = p.account === "paused" ? `${t("until")} ${fmtTime(p.paused_until)}${p.pause_reason ? " · " + p.pause_reason : ""}`
+      : p.account === "suspended" ? `${fmtTime(p.suspended_at)}${p.suspend_reason ? " · " + p.suspend_reason : ""}` : "";
+    return tag(t(lbl), cls) + (why ? `<br><span class="hint">${esc(why)}</span>` : "");
+  };
+  const rows = list.slice(0, S.onlim || 50).map(p => {
+    const [sl, sc] = ON_ST[p.status];
+    return `<tr><td><div><b>${esc(p.full_name)}</b>${p.full_admin ? " " + tag(t("Full"), "ok") : ""}<br><span class="hint"><bdi dir="ltr">${esc(p.login_id || "")}</bdi></span></div></td><td>${esc(t(p.role))}</td>`
+      + `<td><div>${tag(t(sl), sc)} <span class="hint">${esc(p.status === "online" ? t("now") : onAgo(p.last_seen_at, d.now))}</span></div></td>`
+      + `<td><div>${esc(p.device || "–")}${p.ip ? `<br><span class="hint"><bdi dir="ltr">${esc(p.ip)}</bdi></span>` : ""}</div></td><td><bdi dir="ltr">${esc(p.last_login_at ? fmtTime(p.last_login_at) : t("never"))}</bdi></td><td><div>${accCell(p)}</div></td><td>${acts(p)}</td></tr>`;
+  }).join("");
+  const table = list.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("role")}</th><th>${t("Status")}</th><th>${t("Device")}</th><th>${t("Last sign-in")}</th><th>${t("Account")}</th><th>${t("actions")}</th></tr></thead><tbody>${rows}</tbody></table>` : `<p>${t("no_match")}</p>`;
+  const more = moreBtn(0, Math.min(S.onlim || 50, list.length), list.length, "onMore");
+  return `<h1>${t("online")}</h1><p class="hint">${esc(t("online_hint"))}</p>${cards}<div class="panel">${bar_}${table}${more}</div>`
+    + `<p class="hint">${esc(t("Updated"))} <bdi dir="ltr">${esc(fmtTime(d.now))}</bdi> · ${esc(t("Times are Maldives time."))} <button type="button" class="btn sm" data-do="onRefresh">${esc(t("Refresh"))}</button></p>`;
+};
+DO.onMore = () => { S.onlim = (S.onlim || 50) + 50; };
+DO.onRefresh = () => {};
+DO.onPick = d => { S.onf = S.onf || {}; S.onf.st = S.onf.st === d.v ? "" : d.v; };
+const onWho = id => { const p = (S.onInfo || {})[id] || {}; return `${p.full_name || ""}${p.login_id ? " · " + p.login_id : ""} · ${t(p.role || "")}`; };
+DO.onKick = async d => {
+  if (!await ui.confirm(t("Sign this person out on every device now? They can sign in again straight away."), {okText: t("Sign out"), details: [onWho(d.id)]})) return false;
+  await api(`/admin/accounts/${d.id}/signout`, "POST", {}); flash(t("Signed out"), true);
+};
+DO.onPause = async d => {
+  const v = await ui.form(t("Pause account"), [
+    {id: "len", label: t("For how long"), type: "select", value: "24", options: [["1", t("1 hour")], ["24", t("1 day")], ["72", t("3 days")], ["168", t("1 week")], ["720", t("30 days")], ["custom", t("Until a date and time")]]},
+    {id: "until", label: t("Until (Maldives time)"), type: "datetime-local", hint: t("Only when you chose 'Until a date and time'.")},
+    {id: "reason", label: t("Reason (optional)"), maxlength: 300}],
+    {okText: t("Pause"), hint: onWho(d.id) + ". " + t("pause_hint"), validate: x => x.len === "custom" && !x.until ? t("dlg_required").replace("{f}", t("Until (Maldives time)")) : ""});
+  if (!v) return false;
+  const r = await api(`/admin/accounts/${d.id}/pause`, "POST", v.len === "custom" ? {until: v.until, reason: v.reason} : {hours: +v.len, reason: v.reason});
+  flash(t("Paused until") + " " + fmtTime(r.paused_until), true);
+};
+DO.onSuspend = async d => {
+  const reason = await ui.ask(t("Suspend account"), {label: t("Reason (staff only; the person is not shown it)"), required: true, multiline: true, okText: t("Suspend"), danger: true, hint: onWho(d.id) + ". " + t("suspend_hint")});
+  if (reason == null) return false;
+  await api(`/admin/accounts/${d.id}/suspend`, "POST", {reason}); flash(t("Suspended"), true);
+};
+DO.onRestore = async d => {
+  if (!await ui.confirm(t("Let this person sign in again?"), {okText: t("Restore"), details: [onWho(d.id)]})) return false;
+  await api(`/admin/accounts/${d.id}/restore`, "POST", {}); flash(t("Restored"), true);
+};
+setInterval(() => {   // keep the list fresh without disturbing typing or an open dialog
+  if (S.view !== "online" || document.hidden || !S.user || document.querySelector("dialog[open]")) return;
+  const a = document.activeElement; if (a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return;
+  render();
+}, 30000);

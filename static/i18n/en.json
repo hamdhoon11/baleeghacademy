@@ -990,5 +990,12 @@
   "fx_no_course": "Other (no course)",
   "fx_by_type": "By revenue type",
   "fx_other_invoices": "Other invoices this month",
-  "fx_other_invoices_hint": "Invoices made by hand (Fees → New invoice) for this month: students and people not in the portal, any revenue type. The figures above are monthly course fees only."
+  "fx_other_invoices_hint": "Invoices made by hand (Fees → New invoice) for this month: students and people not in the portal, any revenue type. The figures above are monthly course fees only.",
+  "online": "Who's online",
+  "online_count": "online",
+  "online_hint": "Online means the person used the portal in the last 2 minutes; Away means in the last 15 minutes. Only full admins see this page. Sign out ends their sessions on every device; Pause blocks sign-in until a time you choose and then lifts by itself; Suspend blocks sign-in until you restore the account. Every action is written to the activity log.",
+  "pause_hint": "They are signed out now and cannot sign in until the pause ends. They are told when it ends.",
+  "suspend_hint": "They are signed out now and cannot sign in until a full admin restores the account. They are told to contact the academy.",
+  "now": "now",
+  "until": "until"
 }

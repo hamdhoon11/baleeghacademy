@@ -502,12 +502,13 @@ const IC = {
   back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   chev: '<path d="m6 9 6 6 6-6"/>',
+  online: '<circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><circle cx="19" cy="8" r="2.5"/>',
   dot: '<circle cx="12" cy="12" r="3"/>',
 };
 const icon = k => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${IC[k] || IC.dot}</svg>`;
 // The admin menu has 14 entries, so it is grouped. Tabs and their order still come from the server (ROLE_TABS).
 const NAV_GROUP = {dashboard: "nav_overview", admissions: "nav_overview", courses: "nav_teaching", batches: "nav_teaching", timetable: "nav_teaching", classroom: "nav_teaching", tutorials: "nav_teaching",
-  people: "nav_people", student_information: "nav_people", teacher_information: "nav_people", enrollments: "nav_people", fees: "nav_money", finance: "nav_money", settings: "nav_system", audit: "nav_system"};
+  people: "nav_people", student_information: "nav_people", teacher_information: "nav_people", enrollments: "nav_people", online: "nav_people", fees: "nav_money", finance: "nav_money", settings: "nav_system", audit: "nav_system"};
 const BAR_SLOTS = 4;   // tabs shown in the phone's bottom bar; the rest sit behind "More"
 // Session 9: which tabs a role wants in the phone bar. Only the bar changes; the computer sidebar and the More sheet keep the server order.
 const BAR_PREFS = {student: ["home", "assignments", "fees", "progress"]};

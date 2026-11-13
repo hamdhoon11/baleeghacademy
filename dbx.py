@@ -150,6 +150,12 @@ def not_null_columns(conn, table):
     return {r[1] for r in conn.raw.execute(f"PRAGMA table_info({table})") if r[3]}
 
 
+# v0.8.47: online status and account control (presence.py). All nullable or defaulted: existing accounts stay exactly as they are.
+V0847_USER_COLUMNS = (("last_seen_at", "TEXT"), ("last_login_at", "TEXT"), ("signed_out_at", "TEXT"), ("last_ip", "TEXT"), ("last_agent", "TEXT"),
+                      ("token_version", "INTEGER NOT NULL DEFAULT 0"), ("suspended_at", "TEXT"), ("suspend_reason", "TEXT"),
+                      ("paused_until", "TEXT"), ("pause_reason", "TEXT"), ("account_changed_by", "INTEGER"))
+
+
 def upgrade_v0845(conn):
     """Additive, and only loosens rules: three new invoice columns, NOT NULL dropped from the invoice's student/enrolment/course/batch and the
     payment's student. No row is changed. PostgreSQL: ALTER COLUMN ... DROP NOT NULL. SQLite cannot drop NOT NULL with ALTER TABLE, so the
@@ -297,6 +303,8 @@ def init_schema(conn, base):
     for tbl, col, decl in V0837_COLUMNS:
         if col not in conn.columns(tbl): conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {schema_to_pg(decl) if conn.pg else decl}")
     upgrade_v0845(conn)
+    for col, decl in V0847_USER_COLUMNS:
+        if col not in conn.columns("users"): conn.execute(f"ALTER TABLE users ADD COLUMN {col} {decl}")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_batch ON audit_log(batch_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id)")
     import auditlog; auditlog.install_triggers(conn)   # Session 21: the log can be added to but never changed or deleted

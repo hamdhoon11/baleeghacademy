@@ -37,7 +37,7 @@ class Permissions(unittest.TestCase):
     # ---- the server decides the tabs ----
     def test_01_default_tabs_per_role(self):
         self.assertEqual(self.login("admin@pm.test", "AdminPass123")["user"]["tabs"],
-                         ["dashboard", "admissions", "courses", "batches", "timetable", "classroom", "tutorials", "people", "student_information", "teacher_information", "enrollments", "fees", "finance", "settings", "audit"])
+                         ["dashboard", "admissions", "courses", "batches", "timetable", "classroom", "tutorials", "people", "student_information", "teacher_information", "enrollments", "online", "fees", "finance", "settings", "audit"])
         self.mk("t0@pm.test", "teacher"); self.mk("s0@pm.test", "student")
         self.assertEqual(self.login("t0@pm.test")["user"]["tabs"], ["home", "timetable", "classroom", "tutorials", "my_files", "my_earnings", "my_information"])
         self.assertEqual(self.login("s0@pm.test")["user"]["tabs"], ["home", "timetable", "assignments", "progress", "materials", "recordings", "fees", "tutorials", "my_files", "my_information"])

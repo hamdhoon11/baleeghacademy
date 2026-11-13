@@ -7,6 +7,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import settings_schema as SS
 import idcodes
 import common, dbx, storage, transfers
+import presence
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 ON_VERCEL = bool(os.environ.get("VERCEL"))
@@ -165,7 +166,8 @@ def create_app(config=None):
     # ---------- auth ----------
     def make_token(u):
         exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=saved_int("session_hours", app.config["TOKEN_HOURS"]))
-        return jwt.encode({"sub": str(u["id"]), "role": u["role"], "exp": exp}, app.config["SECRET_KEY"], "HS256")
+        # v0.8.47: "tv" = the account's token_version when signed in. A full admin raising it (Sign out, Suspend, Pause) ends every open session.
+        return jwt.encode({"sub": str(u["id"]), "role": u["role"], "exp": exp, "tv": int(u.get("token_version") or 0)}, app.config["SECRET_KEY"], "HS256")
 
     def perm_list(u):
         """None for a full admin, else the list of allowed areas."""
@@ -202,9 +204,16 @@ def create_app(config=None):
                     p = jwt.decode(h[7:], app.config["SECRET_KEY"], algorithms=["HS256"])
                 except jwt.PyJWTError:
                     return err("Session expired. Sign in again.", 401)
-                u = one("SELECT id,login_id,email,full_name,role,is_active,must_change_password,permissions FROM users WHERE id=?", (p["sub"],))
+                u = one("SELECT id,login_id,email,full_name,role,is_active,must_change_password,permissions,token_version,suspended_at,paused_until,"
+                        "last_seen_at,signed_out_at FROM users WHERE id=?", (p["sub"],))
                 if not u or not u["is_active"]:
                     return err("Account disabled", 403)
+                # v0.8.47: signed out, suspended or paused by a full admin. 401 makes the page sign out and show the message.
+                stop = presence.blocked(u, utc_stamp()) or (None if int(p.get("tv", 0)) == int(u["token_version"] or 0) else presence.KICKED)
+                if stop:
+                    return jsonify(error=stop[1], code=stop[0]), 401
+                presence.touch(db(), u, utc_stamp(), request)   # "who is online": at most one small write per person every 30 seconds
+                for col in ("token_version", "suspended_at", "paused_until", "last_seen_at", "signed_out_at"): u.pop(col, None)
                 g.user = u
                 # Session 11: until the temporary password is replaced, nothing works except changing it (and asking who I am). Enforced here, not in the page.
                 if u["must_change_password"] and not app.config["SKIP_FORCED_CHANGE"] and request.path not in ("/api/auth/change-password", "/api/auth/me"):
@@ -286,7 +295,12 @@ def create_app(config=None):
             audit("failed_login", "user", u["id"] if u else None, "account disabled" if u and ok else ("wrong password" if u else "unknown ID"),
                   role="anonymous", login_id=who[:60] or None); db().commit()   # what was typed as the ID is kept; the password never is
             return err("Wrong ID or password", 401)
+        stop = presence.blocked(u, utc_stamp())   # v0.8.47: told only after the right password, so a stranger learns nothing
+        if stop:
+            audit("login_blocked", "user", u["id"], stop[0], role=u["role"], login_id=u["login_id"]); db().commit()
+            return jsonify(error=stop[1], code=stop[0]), 403
         g.user = u
+        presence.signed_in(db(), u["id"], utc_stamp(), request)
         audit("login", "user", u["id"]); db().commit()
         return jsonify(token=make_token(u), user=public_user(u))
 
@@ -294,6 +308,7 @@ def create_app(config=None):
     @auth()
     def logout():
         """Tokens are stateless, so this only writes the log row; the browser forgets the token itself."""
+        db().execute("UPDATE users SET signed_out_at=? WHERE id=?", (utc_stamp(), g.user["id"]))   # v0.8.47: shows as offline at once
         audit("logout", "user", g.user["id"]); db().commit()
         return jsonify(ok=True)
 
@@ -1194,6 +1209,8 @@ def create_app(config=None):
     from types import SimpleNamespace
     import learning
     ns = SimpleNamespace(db=db, rows=rows, one=one, raw_setting=raw_setting, audit=audit, err=err, auth=auth, need=need, UPLOADS=UPLOADS, store=store, has_perm=has_perm)
+    ns.is_full_admin, ns.utc_stamp = is_full_admin, utc_stamp
+    presence.register(app, ns)   # v0.8.47: who is online; sign out, pause, suspend (full admins only)
     import notify
     notify.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 28: notifications (must come first: the modules below call ns.notify)
     learning.register(app, ns)

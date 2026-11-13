@@ -31,7 +31,10 @@ OPEN = {
  ("GET", "/api/tutorials/<int:tid>/submission"): ("student",), ("GET", "/api/tutorials/<int:tid>/submissions"): AT, ("POST", "/api/tutorial-submissions/<int:sid>/grade"): AT,
 }
 # admin-only routes with no permission area: each checks inside the route, and test_03 / test_04 prove it.
-NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "/api/admin/todo"), ("GET", "/api/users"), ("POST", "/api/whatsapp/prepare"), ("POST", "/api/whatsapp/sent")}
+NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "/api/admin/todo"), ("GET", "/api/users"), ("POST", "/api/whatsapp/prepare"), ("POST", "/api/whatsapp/sent"),
+           # v0.8.47: full admins only, checked inside presence.py (there is no area a limited admin could be given)
+           ("GET", "/api/admin/presence"), ("POST", "/api/admin/accounts/<int:uid>/signout"), ("POST", "/api/admin/accounts/<int:uid>/pause"),
+           ("POST", "/api/admin/accounts/<int:uid>/suspend"), ("POST", "/api/admin/accounts/<int:uid>/restore")}
 AREA = [("/api/applications", "admissions"), ("/api/announcements", "classroom"), ("/api/audit", "audit"), ("/api/discounts", "fees"), ("/api/families", "fees"), ("/api/fees", "fees"),
         ("/api/invoices", "fees"), ("/api/payments", "fees"), ("/api/slips", "fees"), ("/api/revenue-types", "fees"), ("/api/students", "fees"), ("/api/earnings", "finance"), ("/api/expense", "finance"), ("/api/finance", "finance"), ("/api/recurring-expenses", "finance"),
         ("/api/enrollments/<int:eid>/void-open-invoices", "fees"), ("/api/enrollment", "enrollments"), ("/api/import/enrolments", "enrollments"), ("/api/import/courses", "courses"), ("/api/import/batches", "batches"), ("/api/import/expenses", "finance"), ("/api/import", "people"),
@@ -119,7 +122,7 @@ class S32(unittest.TestCase):
         PARAM.update({"password-help": 1, "applications": i["application"], "assignments": i["assignment"], "batches": W["b1"], "courses": W["course"], "discounts": i["discount"], "enrollments": i["enrollment"],
             "expense-categories": i["exp_cat"], "expenses": i["expense"], "families": i["family"], "invoices": i["invoice"], "materials": i["material"], "notifications": 1, "payments": i["payment"],
             "recordings": i["recording"], "slips": i["slip"], "student-information": W["s1"][0], "submissions": i["submission"], "substitutions": 1, "teacher-information": W["t1"][0],
-            "tutorial-submissions": i["tut_sub"], "tutorials": i["tutorial"], "users": W["s1"][0], "student-history": W["s1"][0], "members": W["s1"][0], "students": W["s1"][0], "recurring-expenses": 1, "revenue-types": 1})
+            "tutorial-submissions": i["tut_sub"], "tutorials": i["tutorial"], "users": W["s1"][0], "student-history": W["s1"][0], "members": W["s1"][0], "students": W["s1"][0], "recurring-expenses": 1, "revenue-types": 1, "accounts": W["s1"][0]})
         cls.P = {"none": {}, "admin": W["A"], "lim": W["H_lim"], "t1": W["H_t1"], "t2": W["H_t2"], "t3": W["H_t3"], "s1": W["H_s1"], "s2": W["H_s2"], "sw": W["H_sw"]}
         cls.ROLE = {"admin": "admin", "lim": "admin", "t1": "teacher", "t2": "teacher", "t3": "teacher", "s1": "student", "s2": "student", "sw": "student"}
 
