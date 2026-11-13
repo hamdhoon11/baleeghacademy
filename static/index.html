@@ -774,7 +774,8 @@ async function render() {
     $("#cpo").onclick = signout;
     $("#fcp").onsubmit = async e => { e.preventDefault(); const b = $("#fcp button:not([type=button])"); busy(b, true); try {
       if (val("cp1") !== val("cp2")) throw new Error(t("The two new passwords are not the same"));
-      await api("/auth/change-password", "POST", {current_password: val("cp0"), new_password: val("cp1")});
+      const r = await api("/auth/change-password", "POST", {current_password: val("cp0"), new_password: val("cp1")});
+      if (r && r.token) { S.token = r.token; sessionStorage.setItem("tok", r.token); }   // v0.8.39: the old token stopped working with the old password
       S.user = null; flash(t("saved"), true);
     } catch (x) { busy(b, false); showErr($("#fcp"), x.message); return; } render(); };
     S.rendering = false; setTitle(); return;

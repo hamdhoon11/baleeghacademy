@@ -247,6 +247,7 @@ def init_schema(conn, base):
     # Session 31: one-time registration fee on a course; invoice kind. Defaults keep every existing row exactly as it was (fee 0, monthly).
     if "registration_fee_mvr" not in conn.columns("courses"): conn.execute("ALTER TABLE courses ADD COLUMN registration_fee_mvr INTEGER NOT NULL DEFAULT 0 CHECK (registration_fee_mvr >= 0)")
     if "kind" not in conn.columns("invoices"): conn.execute("ALTER TABLE invoices ADD COLUMN kind TEXT NOT NULL DEFAULT 'monthly'")
+    if "token_version" not in conn.columns("users"): conn.execute("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")   # v0.8.39: sign-ins made before it count as version 0, so nobody is signed out by the update
     if "login_id" not in conn.columns("users"): conn.execute("ALTER TABLE users ADD COLUMN login_id TEXT")   # Session 11: what people type to sign in; idcodes.fill_missing() fills it
     # Session 20: activity log v2. Old rows keep working (all new columns are nullable); auditlog.backfill() fills what can be worked out.
     for col in ("user_role", "login_id", "course_id", "batch_id", "old_value", "new_value", "ip"):

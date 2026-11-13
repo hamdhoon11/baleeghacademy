@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
   must_change_password INTEGER NOT NULL DEFAULT 0,
   login_id TEXT,               -- Session 11: ID used to sign in (student/teacher code, admins BAL/A/NNN); unique index made in dbx.init_schema
   permissions TEXT,            -- admins only: NULL = full admin, else comma list of allowed areas
+  token_version INTEGER NOT NULL DEFAULT 0,   -- v0.8.39: raised at sign-out and at every password change; older sign-ins stop working
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS students (
@@ -527,3 +528,11 @@ CREATE TABLE IF NOT EXISTS password_help (
   handled_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_password_help_status ON password_help(status, user_id);
+
+-- v0.8.39: attempts counted for the limits on sign-in, "Forgot password" and the public application form. In the database so that
+-- every copy of the app on Vercel sees the same count. key: what is limited (for example login:ip:1.2.3.4); at: time.time().
+CREATE TABLE IF NOT EXISTS rate_hits (
+  key TEXT NOT NULL,
+  at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_hits ON rate_hits(key, at);

@@ -6,7 +6,7 @@
 | POST | /auth/login | public | `{login,password}` (`login` = login ID like `BAL/AL1/001`, case and spaces ignored; an email also works while `ALLOW_EMAIL_LOGIN` is on) returns `{token,user}`. Limited per address and per account (8 failures in 5 minutes gives 429). While `user.must_change_password` is 1 every route except `/auth/me` and `/auth/change-password` answers 403 `{code:"password_change_required"}` |
 | GET | /auth/me | any | Current user: `{id,email,full_name,role,must_change_password,permissions,tabs}`. `permissions` is `null` (everything the role has) or a list of areas; `tabs` is what the page may draw |
 | POST | /users/<id>/reset-password | admin (people) | New random temporary password, returned once as `{login_id,temporary_password}` (no-store); old password stops working; person must change it at next sign-in. Not for your own account |
-| POST | /auth/change-password | any | `{current_password,new_password}` |
+| POST | /auth/change-password | any | `{current_password,new_password}` returns `{ok,token}`. v0.8.39: every older sign-in of the account stops working; use the returned `token` |
 | GET, POST | /users | admin | List (`?role=`), create admin/teacher/student. Create needs `full_name,email,role`; leave `password` out and the server makes a random one and returns `{id,login_id,temporary_password}` once. Create accepts optional `permissions` (full admin only) and, for a student, optional `course_id`: the permanent student ID (BAL/<course code>/NNN) is issued at once from that course |
 | PATCH | /users/:id | admin | Name, phone, active flag, password reset, `permissions` (`"all"` or a list of areas for that role; full admin only) |
 | GET | /courses | any | List |
@@ -26,7 +26,7 @@
 | GET | /audit/summary | admin (perm audit) | Total, first/last time, counts per action and busiest users for the filter (drill-down) |
 | GET | /audit/actions | admin (perm audit) | Action names present in the log |
 | GET | /audit | admin | Last 100 actions, now with user_role, login_id, course_id, batch_id, old_value, new_value, ip Filters `user_id, login_id, role, course_id, batch_id, action (comma list), entity, entity_id, q, date_from, date_to` (Maldives dates); `page`, `per_page` (max 500); totals in headers `X-Total-Count`, `X-Page`, `X-Per-Page`. No route can change or delete a row |
-| POST | /auth/logout | any signed-in user | Writes a `logout` log row; the token is stateless so the browser discards it |
+| POST | /auth/logout | any signed-in user | Writes a `logout` log row. v0.8.39: also ends every sign-in of the account (all devices) at once |
 | GET | /public/info | public | Academy name, phone, WhatsApp number |
 | GET | /public/batches | public | Open batches with seats left |
 | POST | /public/apply | public | Multipart application (`id_card`, and `guardian_id` if under 18); 5 per hour per IP |

@@ -104,6 +104,7 @@ class Round1(unittest.TestCase):
         self.assertEqual(self.c.get("/api/password-help", headers=self.T1).status_code, 403)
         self.sql_("UPDATE users SET must_change_password=0 WHERE id=?", (self.s1,))
         self.sql_("UPDATE users SET password_hash=(SELECT password_hash FROM users WHERE id=?) WHERE id=?", (self.s2, self.s1))   # back to PW for later tests
+        type(self).S1 = self.tok("s1@s35.test", PW)   # v0.8.39: a reset ends the student's old sign-in, so later tests sign in again
 
     def test_04_forgot_is_limited_per_address(self):
         self.app.config["FORGOT_LIMIT"] = 2
