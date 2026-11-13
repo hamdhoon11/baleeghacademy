@@ -205,17 +205,33 @@ views.enrollments = async () => {
     const f = $("#enqf"); if (f) f.onsubmit = ev2 => { ev2.preventDefault(); S.enq = val("enq"); S.enlim = 30; render(); };
   });
   if (m) S.emInfo = {name: m.student_name, where: m.course_name + " " + m.batch_code, status: m.status};
-  const mover = m ? `<div class="panel" data-detail><h2>${esc(m.student_name)}: ${esc(m.course_name)} ${esc(m.batch_code)}</h2><div class="rowflex row">${sel("em_b", "Move to batch", bo.filter(x => x[0] !== m.batch_id), "")}<button class="btn" data-do="emMove" data-id="${m.id}">${t("Move")}</button><button class="btn alt" data-do="emSet" data-id="${m.id}" data-s="completed">${t("Mark completed")}</button><button class="btn alt" data-do="emSet" data-id="${m.id}" data-s="active">${t("Mark active")}</button><button class="btn alt" data-do="emSet" data-id="${m.id}" data-s="waitlist">${t("Waitlist")}</button><button class="btn danger" data-do="emDel" data-id="${m.id}">${t("delete")}</button><button class="btn" data-do="emClose">${t("cancel")}</button></div><p class="hint">${esc(t("Delete is only for enrollments added by mistake. If invoices exist, use Dropped to keep the history."))}</p></div>` : "";
+  const mover = m ? `<div class="panel" data-detail><h2>${esc(m.student_name)}: ${esc(m.course_name)} ${esc(m.batch_code)}</h2><div class="rowflex row">${sel("em_b", "Move to batch", bo.filter(x => x[0] !== m.batch_id), "")}<button class="btn" data-do="emMove" data-id="${m.id}">${t("Move")}</button><button class="btn alt" data-do="emSet" data-id="${m.id}" data-s="completed">${t("Mark completed")}</button><button class="btn alt" data-do="emSet" data-id="${m.id}" data-s="active">${t("Mark active")}</button><button class="btn alt" data-do="emSet" data-id="${m.id}" data-s="waitlist">${t("Waitlist")}</button><button class="btn danger" data-do="emDel" data-id="${m.id}">${t("delete")}</button><button class="btn" data-do="emClose">${t("cancel")}</button></div><div class="rowflex row"><label>${t("start_date")}<input id="em_sd" type="date" max="${mvToday()}" value="${esc(fmtDate(m.enrolled_at))}"></label><button class="btn alt" data-do="emStart" data-id="${m.id}">${t("Change start date")}</button></div><p class="hint">${t("start_date_hint")}</p><p class="hint">${esc(t("Delete is only for enrollments added by mistake. If invoices exist, use Dropped to keep the history."))}</p></div>` : "";
   const studs = [["", "-"], ...st.filter(isActive).map(s => [s.id, personLabel(s)])];   // active students only, as on the Batches screen
   const add = addPanel("enrollment", "Add enrollment", form("fe", pickField("es", "student", studs, "") + pickField("eb", "batch", [["", "-"], ...bo], "") + `<label>${t("start_date_optional")}<input id="esd" type="date" max="${mvToday()}"><span class="hint">${t("start_date_hint")}</span></label>`, "enroll"));
   const q = (S.enq || "").toLowerCase(), lim = S.enlim || 30;
   const found = q ? e.filter(r => [r.student_name, r.course_name, r.batch_code, r.status, r.enrol_code].some(v => String(v || "").toLowerCase().includes(q))) : e;
   const listbar = `<form id="enqf" class="listbar" role="search"><label>${esc(t("search"))}<input id="enq" type="search" value="${esc(S.enq || "")}" placeholder="${esc(t("enrol_search_hint"))}"></label><button class="btn">${t("search")}</button></form>`;
-  return `${m ? crumbFor(m.student_name, {em: null}) : ""}<h1>${t("enrollments")}</h1>${mover}${add}<div class="panel">${listbar}${found.length ? `<table><thead><tr><th>${t("student_name")}</th><th>${t("course_name")}</th><th>${t("batch_code")}</th><th>${t("status")}</th><th></th></tr></thead><tbody>${found.slice(0, lim).map(r => `<tr><td>${esc(r.student_name)}</td><td>${esc(r.course_name)}</td><td>${esc(r.batch_code)}</td><td>${esc(t(r.status))}</td><td>${["active", "waitlist"].includes(r.status) ? `<button class="btn sm" data-do="emSet" data-id="${r.id}" data-s="dropped" data-name="${esc(r.student_name)}">${t("drop")}</button> ` : ""}<button class="btn sm" data-do="emEdit" data-id="${r.id}">${t("edit")}</button></td></tr>`).join("")}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "enMore")}</div>${hist}`;
+  return `${m ? crumbFor(m.student_name, {em: null}) : ""}<h1>${t("enrollments")}</h1>${mover}${add}<div class="panel">${listbar}${found.length ? `${bulkBar("enr", [["emBulkStart", "Set start date"]], found.slice(0, lim).map(r => r.id))}${bulkAll("enr", found.slice(0, lim).map(r => r.id))}<table><thead><tr><th></th><th>${t("student_name")}</th><th>${t("course_name")}</th><th>${t("batch_code")}</th><th>${t("status")}</th><th>${t("start_date")}</th><th></th></tr></thead><tbody>${found.slice(0, lim).map(r => `<tr><td>${bulkBox("enr", r.id, r.student_name + " " + r.batch_code)}</td><td>${esc(r.student_name)}</td><td>${esc(r.course_name)}</td><td>${esc(r.batch_code)}</td><td>${esc(t(r.status))}</td><td><bdi dir="ltr">${esc(fmtDate(r.enrolled_at))}</bdi></td><td>${["active", "waitlist"].includes(r.status) ? `<button class="btn sm" data-do="emSet" data-id="${r.id}" data-s="dropped" data-name="${esc(r.student_name)}">${t("drop")}</button> ` : ""}<button class="btn sm" data-do="emEdit" data-id="${r.id}">${t("edit")}</button></td></tr>`).join("")}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "enMore")}</div>${hist}`;
 };
 DO.enMore = () => { S.enlim = (S.enlim || 30) + 30; };
 DO.emEdit = d => { go({em: +d.id}); return false; };
 DO.emClose = () => { closeDetail({em: null}); };
+// v0.8.44: change when an enrolment started; earlier start = the months in between are billed
+const emStartMsg = rs => {
+  const made = rs.reduce((a, r) => a + (r.earlier_invoices || 0), 0), before = rs.reduce((a, r) => a + (r.invoices_before_start || 0), 0);
+  return t("saved") + (made ? " " + t("earlier_invoices_made").replace("{n}", made) : "") + (before ? " " + t("invoices_before_start").replace("{n}", before) : "");
+};
+DO.emStart = async d => {
+  const v = val("em_sd"); if (!v) throw new Error(t("Choose the start date"));
+  const r = await api("/enrollments/" + d.id + "/start-date", "POST", {start_date: v}); flash(emStartMsg([r]), !r.invoices_before_start);
+};
+DO.emBulkStart = async () => {
+  const n = bulkSel("enr").length;
+  const v = await ui.form(t("Set start date") + " · " + n, [{id: "d", label: t("start_date"), type: "date", required: true, max: mvToday(), hint: t("start_date_hint")}], {okText: t("Set start date")});
+  if (!v) return false;
+  const rs = []; await bulkRun("enr", async id => rs.push(await api("/enrollments/" + id + "/start-date", "POST", {start_date: v.d})));
+  if (rs.length) flash(emStartMsg(rs), true);
+};
 DO.emSet = async d => {
   let reason;
   if (d.s === "dropped") { reason = await ui.ask(t("drop") + ": " + (d.name || (S.emInfo || {}).name || ""), {label: t("Reason (optional)"), okText: t("drop"), danger: true}); if (reason === null) return false; }

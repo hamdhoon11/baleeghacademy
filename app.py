@@ -755,6 +755,34 @@ def create_app(config=None):
             return jsonify(rows(sql + " WHERE e.student_id=? ORDER BY e.id DESC", (g.user["id"],)))
         return err("You do not have access to this", 403)
 
+    def start_stamp(v):
+        """v0.8.43/44: a start date 'YYYY-MM-DD' (Maldives) -> the stored UTC enrolled_at, or None for today. Raises ValueError with a message."""
+        try: sd = dt.date.fromisoformat(str(v).strip())
+        except ValueError: raise ValueError("Start date must look like 2026-04-01")
+        t = fees_hook("today") or dt.date.today()
+        if sd > t: raise ValueError("The start date cannot be in the future")
+        if sd < t - dt.timedelta(days=731): raise ValueError("The start date can be at most two years back")
+        return None if sd == t else (dt.datetime.combine(sd, dt.time(0, 0)) - dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
+
+    @app.post("/api/enrollments/<int:eid>/start-date")
+    @auth("admin", perm="enrollments")
+    def enroll_start_date(eid):
+        """v0.8.44: change when an enrolment started (students added this month who really began earlier). Moving it earlier bills the
+        months in between; moving it later removes nothing, it only reports the invoices now dated before the start (void them in Fees)."""
+        d = request.get_json(silent=True) or {}
+        e = one("SELECT * FROM enrollments WHERE id=?", (eid,))
+        if not e: return err("Enrollment not found", 404)
+        if not d.get("start_date"): return err("Choose the start date")
+        try: at = start_stamp(d["start_date"]) or utc_stamp()
+        except ValueError as x: return err(str(x))
+        db().execute("UPDATE enrollments SET enrolled_at=? WHERE id=?", (at, eid))
+        audit("enrollment_start", "enrollment", eid, f"start date {d['start_date']}", batch_id=e["batch_id"], old=e["enrolled_at"], new=at)
+        made = (fees_hook("back_bill", eid) or 0) if e["status"] == "active" else 0
+        first = d["start_date"][:7]
+        before = one("SELECT COUNT(*) n FROM invoices WHERE enrollment_id=? AND kind='monthly' AND period<? AND status NOT IN ('void','waived')", (eid, first))["n"]
+        db().commit()
+        return jsonify(ok=True, enrolled_at=at, earlier_invoices=made, invoices_before_start=before)
+
     @app.post("/api/enrollments")
     @auth("admin", perm="enrollments")
     def enroll_create():
@@ -770,12 +798,8 @@ def create_app(config=None):
         # v0.8.43: optional start date in the past (students who began before they were added to the portal); earlier months are billed too
         at = utc_stamp()
         if d.get("start_date"):
-            try: sd = dt.date.fromisoformat(str(d["start_date"]).strip())
-            except ValueError: return err("Start date must look like 2026-04-01")
-            t = fees_hook("today") or dt.date.today()
-            if sd > t: return err("The start date cannot be in the future")
-            if sd < t - dt.timedelta(days=731): return err("The start date can be at most two years back")
-            if sd < t: at = (dt.datetime.combine(sd, dt.time(0, 0)) - dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
+            try: at = start_stamp(d["start_date"]) or at
+            except ValueError as x: return err(str(x))
         n = one("SELECT COUNT(*) n FROM enrollments WHERE batch_id=? AND status='active'", (b["id"],))["n"]
         status = "active" if n < b["capacity"] else "waitlist"
         if ex:

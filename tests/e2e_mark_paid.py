@@ -27,6 +27,8 @@ start = f"{mv.year if mv.month > 3 else mv.year - 1}-{(mv.month - 3 - 1) % 12 + 
 try:
     adm = api("/auth/login", {"email": "admin@m.test", "password": "AdminPass123"})["token"]
     api("/courses/1", {"monthly_fee_mvr": 400}, adm, "PATCH")
+    sid2 = api("/users", {"email": "now@m.test", "password": "Password123", "full_name": "Added Today", "role": "student"}, adm)["id"]
+    api("/enrollments", {"student_id": sid2, "batch_id": 1}, adm)
     sid = api("/users", {"email": "late@m.test", "password": "Password123", "full_name": "Late Joiner", "role": "student"}, adm)["id"]
     with sync_playwright() as p:
         br = p.chromium.launch()
@@ -69,6 +71,15 @@ try:
         a.click("[data-tabs=fees] [data-key=invoices]"); a.wait_for_selector("#fxg_f")
         a.fill("#fxg_f", start[:7]); a.click("[data-do=fxGen]"); a.wait_for_selector("text=Created:")
         check(not a.locator("dialog[open]").count(), "generate with a From month runs")
+        # ---- v0.8.44: change the start date of an enrolment made today (bulk) ----
+        a.click("nav [data-v=enrollments]"); a.fill("#enq", "Added Today"); a.click("#enqf button"); a.wait_for_selector("tr:has-text('Added Today') input.bulk")
+        a.locator("tr:has-text('Added Today') input.bulk").check(); a.click("[data-do=emBulkStart]"); a.wait_for_selector("dialog.dlg input[type=date]")
+        a.locator("dialog.dlg input[type=date]").fill(start); a.click("dialog.dlg button[value=ok]"); a.wait_for_selector("text=invoices made for the earlier months")
+        n2 = sql("SELECT COUNT(*) FROM invoices WHERE student_id=? AND kind='monthly'", (sid2,))[0][0]
+        check(n2 == 4, f"bulk start date: 4 monthly invoices for the student added today ({n2})")
+        check(start in a.inner_text("tr:has-text('Added Today')"), "the list shows the new start date")
+        a.click("tr:has-text('Added Today') [data-do=emEdit]"); a.wait_for_selector("#em_sd")
+        check(a.input_value("#em_sd") == start, "the edit panel shows the start date")
         sw = a.evaluate("document.documentElement.scrollWidth"); check(sw <= 392, f"no sideways scrolling on a phone ({sw})")
         a.screenshot(path=os.path.join(tempfile.gettempdir(), "baleegh-e2e-mark-paid.png"), full_page=True)
         br.close()
