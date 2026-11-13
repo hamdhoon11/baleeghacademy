@@ -32,6 +32,7 @@ STUDENT_COLS = ["student_code", "login_id", "full_name", "email", "phone", "date
 TEACHER_COLS = ["teacher_code", "login_id", "full_name", "email", "phone", "bio", "is_active"]
 ENROL_COLS = ["student_code", "student_name", "course_code", "batch_code", "status", "enrol_code", "enrolled_at"]
 STATUSES = ("active", "waitlist", "dropped", "completed")
+TEMP_HASH = "pbkdf2:sha256:1000"   # only for the random temporary passwords of imported accounts, see apply_person()
 
 
 def register(app, c):
@@ -153,12 +154,16 @@ def register(app, c):
         if not b: raise ValueError(f"No batch {r['batch_code']} in course {r['course_code']}. Create the course and batch first")
         status = (r.get("status") or "active").lower()
         if status not in STATUSES: raise ValueError("status must be one of " + ", ".join(STATUSES))
-        if (u["id"], b["id"]) in seen["pair"]: raise ValueError("This student and batch appear twice in this file")
+        who_key = (who or r["student_email"].lower(), r["course_code"].upper(), r["batch_code"].upper())
+        if (u["id"], b["id"]) in seen["pair"] or who_key in seen["pair_txt"]: raise ValueError("This student and batch appear twice in this file")
         ex = one("SELECT status FROM enrollments WHERE student_id=? AND batch_id=?", (u["id"], b["id"]))
         if ex: raise ValueError(f"Already enrolled in this batch (status {ex['status']})")
         if status in ("active", "waitlist") and not b["is_active"]: raise ValueError("This course or tuition class is inactive")
         if status == "active":
-            n = one("SELECT COUNT(*) n FROM enrollments WHERE batch_id=? AND status='active'", (b["id"],))["n"] + seen["filled"].get(b["id"], 0)
+            n = one("SELECT COUNT(*) n FROM enrollments WHERE batch_id=? AND status='active'", (b["id"],))["n"]
+            # v0.8.42: seats taken by earlier rows of this file are added only in a check, where nothing is saved. In a real import those rows
+            # are already in the database and were counted twice: a batch could only be filled to half its seats by an import.
+            if seen["dry"]: n += seen["filled"].get(b["id"], 0) + seen["filled_txt"].get((r["course_code"].upper(), r["batch_code"].upper()), 0)
             if n >= b["capacity"]: raise ValueError("The batch is full (capacity %d)" % b["capacity"])
         at = (r.get("enrolled_at") or "").strip()
         if at:
@@ -174,8 +179,11 @@ def register(app, c):
 
     def apply_person(kind, d):
         pw = secrets.token_urlsafe(9)
+        # v0.8.42: TEMP_HASH. The usual hash is slow on purpose (about 0.1 s each), which protects passwords people choose; 100 imported
+        # students spent 9 s on it alone and the request ran out of time. This password is 12 random characters (72 bits: guessing it is
+        # out of reach whatever the hash) and must be changed at the first sign-in, when the usual slow hash is used.
         uid = db().execute("INSERT INTO users(email,password_hash,full_name,role,phone,must_change_password,is_active,login_id) VALUES(?,?,?,?,?,1,?,?)",
-                           (d["email"], generate_password_hash(pw), d["full_name"], kind, d["phone"], d["is_active"], d["login"] or d["code"])).lastrowid
+                           (d["email"], generate_password_hash(pw, method=TEMP_HASH), d["full_name"], kind, d["phone"], d["is_active"], d["login"] or d["code"])).lastrowid
         if kind == "student":
             db().execute("INSERT INTO students(user_id,date_of_birth,grade,island,guardian_name,guardian_relationship,guardian_phone,student_code) VALUES(?,?,?,?,?,?,?,?)",
                          (uid, d["dob"], d["grade"], d["island"], d["guardian_name"], d["guardian_relationship"], d["guardian_phone"], d["code"]))
@@ -192,14 +200,34 @@ def register(app, c):
         audit("enroll", "enrollment", eid, "imported " + d["status"], batch_id=d["batch_id"], new=d["status"])
         return eid, one("SELECT enrol_code FROM enrollments WHERE id=?", (eid,))["enrol_code"]
 
+    def seen_before(kind, earlier, seen):
+        """v0.8.42, a check sent in parts: what the rows before this part hold, so "appears twice in this file" is still found across parts.
+        (In a real import the earlier parts are already saved, and the database says "already used".)"""
+        for _n, r in earlier:
+            if kind == "enrolment":
+                who = (r.get("student_code") or r.get("login_id") or "").upper() or (r.get("student_email") or "").lower()
+                cc, bc = (r.get("course_code") or "").upper(), (r.get("batch_code") or "").upper()
+                if not (who and cc and bc): continue
+                seen["pair_txt"].add((who, cc, bc))
+                if (r.get("status") or "active").lower() == "active": seen["filled_txt"][(cc, bc)] = seen["filled_txt"].get((cc, bc), 0) + 1
+                continue
+            code_col = "student_code" if kind == "student" else "teacher_code"
+            email, code, login = (r.get("email") or "").lower(), (r.get(code_col) or "").upper(), (r.get("login_id") or "").upper()
+            if email: seen["email"].add(email)
+            if code: seen["code"].add(code)
+            if login or code: seen["login"].add(login or code)
+
     def run(kind):
-        try: head, body = read_file()
+        try:
+            head, body = read_file()
+            earlier, body, part = excelio.window(body)
         except ValueError as x: return err(str(x))
         need = {"student": ["full_name", "email"], "teacher": ["full_name", "email"], "enrolment": ["course_code", "batch_code"]}[kind]
         miss = [h for h in need if h not in head]
         if miss: return err("The file has no column: " + ", ".join(miss))
         dry = (request.args.get("dry_run", "1").lower() not in ("0", "false", "no"))
-        seen = {"email": set(), "code": set(), "login": set(), "pair": set(), "filled": {}}
+        seen = {"email": set(), "code": set(), "login": set(), "pair": set(), "filled": {}, "pair_txt": set(), "filled_txt": {}, "dry": dry}
+        if dry: seen_before(kind, earlier, seen)
         out, ok, bad = [], 0, 0
         for n, r in body:
             item = {"row": n, "name": r.get("full_name") or r.get("student_code") or r.get("student_email") or ""}
@@ -220,9 +248,7 @@ def register(app, c):
             out.append(item)
         if not dry:
             audit("import_" + kind + "s", "import", None, f"{ok} created, {bad} rejected of {len(body)}", new=ok); db().commit()
-        resp = jsonify(kind=kind, dry_run=dry, total=len(body), ok=ok, rejected=bad, rows=out)
-        resp.headers["Cache-Control"] = "no-store"
-        return resp
+        return excelio.import_response(kind, dry, len(body), ok, bad, out, part)
 
     # ---------------- v0.8.38: templates ----------------
     def template_for(kind):

@@ -1,4 +1,4 @@
-Flask>=3.0
+Flask>=3.0,<3.2   # v0.8.42: 3.2 changes how nested requests share their context; not tested here yet
 PyJWT>=2.8
 gunicorn>=21.2
 reportlab>=4.0

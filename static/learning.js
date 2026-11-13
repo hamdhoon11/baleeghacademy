@@ -12,9 +12,35 @@ async function apiForm(path, fd, method = "POST") {   // uploads get 2 minutes i
   const j = await r.json().catch(() => ({}));
   if (r.status === 401) { signout(); throw new Error(j.error); }
   if (r.status === 413 && !j.error) throw new Error(t("file_too_large_server"));
+  if (!r.ok && !j.error && r.status >= 502) throw new Error(t("server_too_slow"));   // v0.8.42: the host cut the request off (its answer is not ours)
   if (!r.ok) throw new Error(j.error || "Something went wrong");
   return j;
 }
+// v0.8.42: an import file is sent in parts of IMP_PART rows (an enrolment row costs about 30 database queries), so that no request runs longer than the host allows (a long file used to end
+// in "Something went wrong" half way). The results are put together; `onPart(done, total)` reports progress. If a part of a real import
+// fails, what was saved so far is returned with `stopped`, so the screen can say exactly where it stopped.
+const IMP_PART = 10;
+async function importInParts(path, file, dry, onPart) {
+  const sep = path.includes("?") ? "&" : "?";
+  let off = 0, all = null;
+  for (;;) {
+    const fd = new FormData(); fd.append("file", file);
+    let r;
+    try { r = await apiForm(`${path}${sep}dry_run=${dry ? 1 : 0}&offset=${off}&limit=${IMP_PART}`, fd); }
+    catch (x) {
+      if (dry) throw x;
+      if (!all) throw new Error(x.message + " " + t("xl_part_maybe"));
+      all.stopped = {done: off, message: x.message}; return all;
+    }
+    if (!all) all = {...r, rows: [], ok: 0, rejected: 0, total: r.file_total};
+    all.rows.push(...r.rows); all.ok += r.ok; all.rejected += r.rejected;
+    if (r.next_offset == null) return all;
+    off = r.next_offset;
+    if (onPart) onPart(off, r.file_total);
+  }
+}
+const impProgress = id => (done, total) => { const el = document.getElementById(id); if (el) el.textContent = t("xl_progress").replace("{a}", done).replace("{b}", total); };
+const impStopped = r => r && r.stopped ? `<div class="msg err" role="alert">${esc(t("xl_stopped").replace("{a}", r.stopped.done).replace("{b}", r.total))} ${esc(r.stopped.message)}</div>` : "";
 const download = (path, name) => fetchFile(path, {name});                        // always save
 const viewFile = (path, name) => fetchFile(path, {name, preview: true});         // preview PDF/images, save other types
 
@@ -492,7 +518,7 @@ function impBox(kind, title, opts = {}) {
   IMPS[kind] = {query: opts.query || ""};
   const r = (S.imps || {})[kind], q = IMPS[kind].query;
   const st = {would_create: t("xl_would_save"), created: t("xl_saved"), rejected: t("rejected"), skipped: t("xl_skipped"), unchanged: t("xl_unchanged")};
-  const res = r ? `<p role="status"><b>${r.dry_run ? t("Check result: nothing was saved") : t("Imported")}</b> · ${r.ok} ${r.dry_run ? t("would be created") : t("created")} · ${r.rejected} ${t("rejected")} / ${r.total}</p>`
+  const res = r ? impStopped(r) + `<p role="status"><b>${r.dry_run ? t("Check result: nothing was saved") : t("Imported")}</b> · ${r.ok} ${r.dry_run ? t("would be created") : t("created")} · ${r.rejected} ${t("rejected")} / ${r.total}</p>`
     + r.rows.filter(x => x.status === "rejected").map(x => `<div class="msg err">${t("Row")} ${x.row}${x.name ? " · " + esc(x.name) : ""}: ${esc(x.message)}</div>`).join("")
     + (r.rows.some(x => ["skipped", "unchanged"].includes(x.status)) ? `<p class="hint">${r.rows.filter(x => ["skipped", "unchanged"].includes(x.status)).map(x => `${t("Row")} ${x.row}: ${esc(st[x.status])}`).join(" · ")}</p>` : "")
     + (r.dry_run && r.ok && !r.rejected ? `<p class="hint">${t("xl_all_good")}</p>` : "") : "";
@@ -500,15 +526,14 @@ function impBox(kind, title, opts = {}) {
     <p class="hint">${t("xl_import_hint")}</p>
     <div class="rowflex row"><button type="button" class="btn sm alt" data-do="impTpl" data-k="${kind}">${t("xl_template")}</button>
     <label>${t("xl_file")}<input id="impf_${kind}" type="file" accept="${XL_ACCEPT}">${(S.impFiles || {})[kind] ? `<span class="hint">${t("xl_chosen")}: <bdi>${esc(S.impFiles[kind].name)}</bdi></span>` : ""}</label>
-    <button type="button" class="btn alt" data-do="impChk" data-k="${kind}">${t("Check file")}</button><button type="button" class="btn" data-do="impRun" data-k="${kind}">${t("Import")}</button></div>${res}</details>`;
+    <button type="button" class="btn alt" data-do="impChk" data-k="${kind}">${t("Check file")}</button><button type="button" class="btn" data-do="impRun" data-k="${kind}">${t("Import")}</button></div><p class="hint" role="status" id="impprog_${kind}"></p>${res}</details>`;
 }
 const impSend = async (k, dry) => {
   // the page is redrawn after a check, which empties the file field: the chosen file is kept so Import does not ask for it again
   const f = $("#impf_" + k).files[0] || (S.impFiles || {})[k]; if (!f) throw new Error(t("xl_choose_file"));
   S.impFiles = {...(S.impFiles || {}), [k]: f};
-  const fd = new FormData(); fd.append("file", f);
   const q = IMPS[k].query;
-  S.imps = {...(S.imps || {}), [k]: await apiForm(`/import/${k}?${q ? q + "&" : ""}dry_run=${dry ? 1 : 0}`, fd)};
+  S.imps = {...(S.imps || {}), [k]: await importInParts(`/import/${k}${q ? "?" + q : ""}`, f, dry, impProgress("impprog_" + k))};
 };
 DO.impTpl = async d => { const q = IMPS[d.k].query; await fetchFile(`/import/${d.k}/template.xlsx${q ? "?" + q : ""}`, {name: `import-${d.k}-template.xlsx`}); return false; };
 DO.impChk = async d => { await impSend(d.k, true); };

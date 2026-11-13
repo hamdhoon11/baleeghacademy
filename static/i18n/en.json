@@ -926,5 +926,9 @@
   "WhatsApp log": "WhatsApp log",
   "Files stored in the database": "Files stored in the database",
   "Password requests": "Password requests",
-  "Attempt counters": "Attempt counters"
+  "Attempt counters": "Attempt counters",
+  "server_too_slow": "The server did not finish in time.",
+  "xl_part_maybe": "Some rows may already be saved. Open the list to see, then import again: rows that are already there are refused, the rest are added.",
+  "xl_progress": "Working: {a} of {b} rows done…",
+  "xl_stopped": "Stopped after {a} of {b} rows. The rows before that are done and are listed below; the rest were not reached. Import the same file again to add the rest (rows already there are refused)."
 }

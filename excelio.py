@@ -15,7 +15,7 @@ dry_run_scope(conn)    lets a check ("dry run") go through those routes and then
                        in one file is caught).
 """
 import contextlib, csv, datetime as dt, io, re
-from flask import Response, current_app, jsonify, request
+from flask import Response, current_app, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -193,17 +193,28 @@ def send_xlsx(body, name):
 
 
 def call(method, path, json=None, query=None):
-    """Run an API route as the person making this request. Returns (status_code, json_body or {})."""
+    """Run an API route as the person making this request. Returns (status_code, json_body or {}).
+
+    v0.8.42: the inner route always runs in a context of its own that is handed the outer request's `g` (above all its database
+    connection and open transaction), and gives nothing back to be closed. Before, this relied on Flask reusing the outer context for the
+    inner request. Flask 3.2 no longer does that: the inner route would get a second connection, so "Check file" would really save
+    the rows (its commit would not be the held-back one) and the import that follows would refuse every row as already there."""
     app = current_app._get_current_object()
-    with app.test_request_context(path, method=method, json=json, query_string=query, headers={"Authorization": request.headers.get("Authorization", "")}):
-        from flask import request as inner
-        try:
-            if inner.routing_exception: raise inner.routing_exception
-            rv = app.view_functions[inner.url_rule.endpoint](**(inner.view_args or {}))
-            resp = app.make_response(rv)
-        except HTTPException as x:
-            return x.code or 400, {"error": x.description}
-        return resp.status_code, (resp.get_json(silent=True) or {})
+    outer = {k: g.get(k) for k in g}
+    auth = request.headers.get("Authorization", "")
+    with app.app_context():
+        with app.test_request_context(path, method=method, json=json, query_string=query, headers={"Authorization": auth}):
+            from flask import g as inner_g, request as inner
+            for k, v in outer.items(): setattr(inner_g, k, v)
+            try:
+                if inner.routing_exception: raise inner.routing_exception
+                rv = app.view_functions[inner.url_rule.endpoint](**(inner.view_args or {}))
+                resp = app.make_response(rv)
+            except HTTPException as x:
+                return x.code or 400, {"error": x.description}
+            finally:
+                for k in list(inner_g): inner_g.pop(k, None)   # the connection belongs to the outer request: nothing here may close it or roll it back
+            return resp.status_code, (resp.get_json(silent=True) or {})
 
 
 @contextlib.contextmanager
@@ -233,8 +244,22 @@ def row_savepoint(conn, dry):
     conn.execute("RELEASE SAVEPOINT imp_row")
 
 
-def import_response(kind, dry, total, ok, bad, out):
-    resp = jsonify(kind=kind, dry_run=dry, total=total, ok=ok, rejected=bad, rows=out)
+CHUNK_MAX = 200
+
+
+def window(body):
+    """v0.8.42: the page sends a long file in parts (?offset=&limit=, counted in data rows), so that no single request runs longer than the
+    host allows. Returns (rows before this part, this part, {"file_total", "offset", "next_offset"}). Without the parameters: the whole file."""
+    a = request.args
+    if a.get("offset") is None and a.get("limit") is None: return [], body, {"file_total": len(body), "offset": 0, "next_offset": None}
+    try: off, lim = max(0, int(a.get("offset") or 0)), min(CHUNK_MAX, max(1, int(a.get("limit") or CHUNK_MAX)))
+    except ValueError: raise ValueError("offset and limit must be whole numbers")
+    part = body[off:off + lim]
+    return body[:off], part, {"file_total": len(body), "offset": off, "next_offset": off + len(part) if off + len(part) < len(body) else None}
+
+
+def import_response(kind, dry, total, ok, bad, out, part=None):
+    resp = jsonify(kind=kind, dry_run=dry, total=total, ok=ok, rejected=bad, rows=out, **(part or {}))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

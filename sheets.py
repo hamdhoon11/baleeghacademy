@@ -145,18 +145,30 @@ def register(app, c, today):
 
     def run(kind, need, row_fn, area_note=""):
         """row_fn(row) -> (method, path, json) or raises ValueError; or returns ("skip", reason)."""
-        try: head, body = X.read_table()
+        try:
+            head, body = X.read_table()
+            earlier, body, part = X.window(body)
         except ValueError as x: return err(str(x))
         miss = [h for h in need if h not in head]
         if miss: return err("The file has no column: " + ", ".join(miss) + ". Use the template.")
         dry = X.want_dry()
         out, ok, bad = [], 0, 0
+        # v0.8.42, a check sent in parts: the rows of earlier parts are not in the database (a check saves nothing), so a code that is
+        # repeated further up in the file is looked for in the file itself. In a real import the earlier parts are saved and the route refuses it.
+        key = KEYS.get(kind)
+        first = {}
+        if dry and key:
+            for n0, r0 in earlier:
+                k0 = key(r0)
+                if k0: first.setdefault(k0, n0)
         conn = db()
         scope = X.dry_run_scope(conn) if dry else _null()
         with scope:
             for n, r in body:
                 item = {"row": n, "name": r.get("name") or r.get("code") or r.get("student") or r.get("student_code") or r.get("description") or r.get("category") or ""}
                 try:
+                    k = key(r) if dry and key else None
+                    if k and k in first: raise ValueError(f"The same {KEY_WORDS[kind]} is already in row {first[k]} of this file")
                     with X.row_savepoint(conn, dry):
                         call = row_fn(r)
                         if call[0] == "skip":
@@ -175,7 +187,12 @@ def register(app, c, today):
                 out.append(item)
         if not dry:
             audit(f"import_{kind}", "import", None, f"{ok} saved, {bad} rejected of {len(body)}", new=ok); db().commit()
-        return X.import_response(kind, dry, len(body), ok, bad, out)
+        return X.import_response(kind, dry, len(body), ok, bad, out, part)
+
+    up = lambda v: (v or "").strip().upper()
+    KEYS = {"courses": lambda r: up(r.get("code")) or None,
+            "batches": lambda r: (up(r.get("course_code")), up(r.get("code"))) if up(r.get("course_code")) and up(r.get("code")) else None}
+    KEY_WORDS = {"courses": "course code", "batches": "batch code in this course"}
 
     class _null:
         def __enter__(self): return self
