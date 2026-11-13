@@ -594,8 +594,7 @@ DO.tiExp = d => fetchFile(`/teacher-information/export.${d.ext}?` + exQuery(S.ti
 const impRun = async dry => {
   const f = $("#imp_f").files[0] || (S.impPFile && S.impPFile.k === val("imp_k") ? S.impPFile.f : null); if (!f) throw new Error(t("xl_choose_file"));
   S.impPFile = {f, k: val("imp_k")};   // kept across the redraw after Check file
-  const fd = new FormData(); fd.append("file", f);
-  S.impkind = val("imp_k"); S.imp = await apiForm(`/import/${S.impkind}?dry_run=${dry ? 1 : 0}`, fd);
+  S.impkind = val("imp_k"); S.imp = await importInParts(`/import/${S.impkind}`, f, dry, impProgress("impprog_people"));   // v0.8.42: in parts
 };
 DO.impCheck = async () => { await impRun(true); };
 DO.impPTpl = async () => { const k = val("imp_k"); await fetchFile(`/import/${k}/template.xlsx`, {name: `import-${k}-template.xlsx`}); return false; };
@@ -608,8 +607,8 @@ const impPanel = () => {
   const r = S.imp, made = r && !r.dry_run && r.rows.some(x => x.temporary_password);
   return `<div class="panel"><h2>${t("xl_import_people")}</h2><p class="hint">${t("xl_import_hint")} ${t("Courses and batches must already exist.")}</p>
     <div class="rowflex row"><label>${t("What to import")}<select id="imp_k">${[["students", "Students"], ["teachers", "Teachers"], ["enrolments", "Enrolments"]].map(([v, l]) => `<option value="${v}" ${S.impkind === v ? "selected" : ""}>${t(l)}</option>`).join("")}</select></label>
-    <button type="button" class="btn sm alt" data-do="impPTpl">${t("xl_template")}</button><label>${t("xl_file")}<input id="imp_f" type="file" accept="${XL_ACCEPT}">${S.impPFile ? `<span class="hint">${t("xl_chosen")}: <bdi>${esc(S.impPFile.f.name)}</bdi></span>` : ""}</label><button class="btn alt" data-do="impCheck">${t("Check file")}</button><button class="btn" data-do="impGo">${t("Import")}</button></div>
-    ${r ? `<p><b>${r.dry_run ? t("Check result: nothing was saved") : t("Imported")}</b> · ${r.ok} ${r.dry_run ? t("would be created") : t("created")} · ${r.rejected} ${t("rejected")} / ${r.total}</p>
+    <button type="button" class="btn sm alt" data-do="impPTpl">${t("xl_template")}</button><label>${t("xl_file")}<input id="imp_f" type="file" accept="${XL_ACCEPT}">${S.impPFile ? `<span class="hint">${t("xl_chosen")}: <bdi>${esc(S.impPFile.f.name)}</bdi></span>` : ""}</label><button class="btn alt" data-do="impCheck">${t("Check file")}</button><button class="btn" data-do="impGo">${t("Import")}</button></div><p class="hint" role="status" id="impprog_people"></p>
+    ${r ? impStopped(r) + `<p><b>${r.dry_run ? t("Check result: nothing was saved") : t("Imported")}</b> · ${r.ok} ${r.dry_run ? t("would be created") : t("created")} · ${r.rejected} ${t("rejected")} / ${r.total}</p>
       ${made ? `<p class="msg err">${t("Temporary passwords are shown only now. Save them before leaving this page.")} <button class="btn sm" data-do="impCreds">${t("Download new accounts CSV")}</button></p>` : ""}
       ${r.rows.filter(x => x.status === "rejected").map(x => `<div class="msg err">${t("Row")} ${x.row} · ${esc(x.name)}: ${esc(x.message)}</div>`).join("")}` : ""}</div>`;
 };

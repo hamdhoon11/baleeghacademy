@@ -81,8 +81,12 @@ def course_code_for(conn, name, level, course_id=None):
     return derive_course_code(name, level, taken, f"C{course_id}" if course_id else "C")
 
 
+# v0.8.42: {students} is "students without a code" for the migration, and "students without a code WHO HAVE AN ENROLMENT" for the create
+# routes (unenrolled_students=False). Before, every student waiting for a first course made fill_missing() do its full work on every call,
+# with one more query per such student: importing N students cost about N*N/2 queries, and the import timed out on the hosted database.
+_ENROLLED = " AND EXISTS (SELECT 1 FROM enrollments e WHERE e.student_id=s.user_id)"
 _PENDING = ("SELECT (SELECT COUNT(*) FROM courses WHERE code IS NULL), (SELECT COUNT(*) FROM teachers WHERE teacher_code IS NULL), "
-            "(SELECT COUNT(*) FROM students WHERE student_code IS NULL), (SELECT COUNT(*) FROM enrollments WHERE enrol_code IS NULL), "
+            "(SELECT COUNT(*) FROM students s WHERE s.student_code IS NULL{students}), (SELECT COUNT(*) FROM enrollments WHERE enrol_code IS NULL), "
             "(SELECT COUNT(*) FROM users u WHERE u.role='student' AND NOT EXISTS (SELECT 1 FROM students s WHERE s.user_id=u.id)), "
             "(SELECT COUNT(*) FROM users u WHERE u.role='teacher' AND NOT EXISTS (SELECT 1 FROM teachers t WHERE t.user_id=u.id)), "
             "(SELECT COUNT(*) FROM users u WHERE u.login_id IS NULL AND (u.role='admin' OR EXISTS (SELECT 1 FROM students s WHERE s.user_id=u.id AND s.student_code IS NOT NULL) "
@@ -102,7 +106,7 @@ def fill_missing(conn, unenrolled_students=True):
     unenrolled_students=False (what the create routes use) leaves a student who has no enrolment yet without a code, so that the first course
     they join decides it; the migration of an older database uses True and gives them BAL/STU/NNN."""
     rep = {"courses": [], "teachers": [], "students": [], "enrollments": [], "login_ids": [], "profiles_created": 0, "courses_deactivated": 0}
-    pending = conn.execute(_PENDING).fetchone()
+    pending = conn.execute(_PENDING.replace("{students}", "" if unenrolled_students else _ENROLLED)).fetchone()
     if not any(pending[i] for i in range(7)): return rep
     # people whose role row is missing (older accounts) get an empty one, so they can carry a code
     for tbl, role in (("students", "student"), ("teachers", "teacher")):
@@ -122,11 +126,11 @@ def fill_missing(conn, unenrolled_students=True):
         if conn.execute("UPDATE teachers SET teacher_code=? WHERE user_id=? AND teacher_code IS NULL", (code, t["user_id"])).rowcount:
             rep["teachers"].append((t["user_id"], code))
     # 3. students: the course of their first enrolment, else BAL/STU/...
-    for s in conn.execute("SELECT user_id FROM students WHERE student_code IS NULL ORDER BY user_id").fetchall():
-        f = conn.execute("SELECT c.code FROM enrollments e JOIN batches b ON b.id=e.batch_id JOIN courses c ON c.id=b.course_id "
-                         "WHERE e.student_id=? ORDER BY e.id LIMIT 1", (s["user_id"],)).fetchone()
-        if not f and not unenrolled_students: continue
-        code = student_code_for(conn, f["code"] if f else None)
+    # v0.8.42: one query for all of them (the course of the first enrolment comes with each row), and only the enrolled ones unless asked
+    for s in conn.execute("SELECT s.user_id, (SELECT c.code FROM enrollments e JOIN batches b ON b.id=e.batch_id JOIN courses c ON c.id=b.course_id "
+                          "WHERE e.student_id=s.user_id ORDER BY e.id LIMIT 1) AS first_course FROM students s WHERE s.student_code IS NULL"
+                          + ("" if unenrolled_students else _ENROLLED) + " ORDER BY s.user_id").fetchall():
+        code = student_code_for(conn, s["first_course"])
         if conn.execute("UPDATE students SET student_code=? WHERE user_id=? AND student_code IS NULL", (code, s["user_id"])).rowcount:
             rep["students"].append((s["user_id"], code))
     # 4. enrolments
