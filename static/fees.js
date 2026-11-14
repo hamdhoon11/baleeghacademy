@@ -301,14 +301,15 @@ function fxCols(list) {   // [month, collected, still to pay]
 }
 const FX_OPEN = i => ["unpaid", "slip_submitted"].includes(i.status);
 // v0.8.55: an invoice is in a batch by its own batch; one with no batch (hand-made) goes by the student's batches; "Not in a batch" = no batch on the invoice
-const fxBk = (key, i) => { const v = bfVal(key); if (!v || v === "sort") return true; if (v === "none") return !i.batch_id; return i.batch_id ? String(i.batch_id) === v : bfOf(i.student_id).map(String).includes(v); };
+const fxBk = (key, i) => fxBk1(key, i) && bfRec(key, i.student_id);
+const fxBk1 = (key, i) => { const v = bfVal(key); if (!v || v === "sort") return true; if (v === "none") return !i.batch_id; return i.batch_id ? String(i.batch_id) === v : bfOf(i.student_id).map(String).includes(v); };
 const invRow = i => `<div class="cl ${i.status === "void" ? "off" : ""}"><div>${FX_OPEN(i) ? bulkBox("inv", i.id, i.number + " " + i.student_name) + " " : ""}<b>${esc(i.student_name)}</b> ${fxBadge(i)}${i.walk_in ? " " + tag(t("fx_not_in_portal")) : ""}<br><span class="hint">${ltr(i.number)} · ${i.course_name ? esc(i.course_name) + " " + esc(i.batch_code || "") : esc(i.description)} · ${esc(i.revenue_type_name || "")} · ${t("fx_due_on")} ${ltr(i.due_date)}</span><br>${mvr(i.amount_due_mvr)} · ${t("fx_balance")}: ${mvr(i.balance)}${i.status_reason ? `<br><span class="hint">${esc(i.status_reason)}</span>` : ""}</div>
   <div class="seg"><button class="btn sm" data-do="fxInvPdf" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_invoice_pdf")}</button>${i.status !== "void" ? `<button class="btn sm alt" data-do="fxEdit" data-id="${i.id}">${t("edit")}</button>` : ""}${["unpaid", "slip_submitted"].includes(i.status) && i.balance > 0 ? `<button class="btn sm" data-do="fxPaid" data-id="${i.id}" data-no="${esc(i.number)}" data-name="${esc(i.student_name)}" data-bal="${i.balance}">${t("fx_mark_paid")}</button>` : ""}${["unpaid", "slip_submitted"].includes(i.status) ? `<button class="btn sm" data-do="fxDisc" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_discount")}</button><button class="btn sm" data-do="fxWaive" data-id="${i.id}">${t("fx_waive")}</button><button class="btn sm" data-do="fxVoid" data-id="${i.id}">${t("fx_void")}</button>` : ""}${["void", "waived"].includes(i.status) ? `<button class="btn sm" data-do="fxReopen" data-id="${i.id}">${t("fx_reopen")}</button>` : ""}</div></div>`;
 
 const FX = {
   async slips() {
     const [l0] = await Promise.all([api("/slips?status=pending"), bmLoad()]);   // v0.8.55: + Batch filter
-    const l = bfSort("slips", l0.filter(x => bfKeep("slips", x.student_id)), x => x.student_id, x => x.student_name); S.fxSlipList = l;
+    const l = bfSort("slips", l0.filter(x => bfKeep("slips", x.student_id) && bfRec("slips", x.student_id)), x => x.student_id, x => x.student_name); S.fxSlipList = l;
     const hl = S.fxhl; if (hl) mount(() => { const c = document.querySelector(`[data-inv="${hl}"]`); S.fxhl = null; if (c) { c.scrollIntoView({block: "center"}); c.focus({preventScroll: true}); } });
     return `<div class="panel"><h2>${t("fx_tab_slips")}</h2><div class="listbar">${bfBar("slips")}</div>${l.length ? l.map(s => `<div class="sub${hl === s.invoice_id ? " next" : ""}" data-inv="${s.invoice_id}" tabindex="-1"><b>${esc(s.student_name)}</b> · ${ltr(s.invoice_number)} · ${esc(s.course_name)} ${esc(s.batch_code)}<br>
       ${t("fx_amount_sent")}: ${mvr(s.amount_mvr)} · ${t("fx_balance")}: ${mvr(s.balance)} · ${t("fx_transfer_date")}: ${ltr(s.transfer_date)}${s.reference ? ` · ${t("fx_reference")}: ${ltr(s.reference)}` : ""}
@@ -445,7 +446,7 @@ const FX = {
   async reminders() {
     const [r] = await Promise.all([api("/fees/reminders"), bmLoad()]);
     for (const k of ["overdue", "due_soon"]) {   // v0.8.55: Batch filter (people not in the portal count as "Not in a batch")
-      r[k] = bfSort("rem", r[k].filter(x => bfKeep("rem", x.student_id)), x => x.student_id, x => x.name);
+      r[k] = bfSort("rem", r[k].filter(x => bfKeep("rem", x.student_id) && bfRec("rem", x.student_id)), x => x.student_id, x => x.name);
       r.totals[k] = {people: r[k].length, amount: r[k].reduce((a, x) => a + x.total, 0)};
     }
     S.fxRem = r.overdue.concat(r.due_soon);

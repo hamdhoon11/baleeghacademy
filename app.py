@@ -709,7 +709,40 @@ def create_app(config=None):
         teach = {}
         for b in bs:
             if b["teacher_id"]: teach.setdefault(str(b["teacher_id"]), []).append(b["id"])
-        return jsonify(batches=[{"id": b["id"], "name": f"{b['course_name']} {b['code']}", "active": bool(b["course_active"])} for b in bs], students=by, teachers=teach)
+        # v0.8.55: for "recently enrolled / added": the newest enrolment date per student, and when each account was made (YYYY-MM-DD)
+        enrolled = {}
+        for r in rows("SELECT student_id, MAX(enrolled_at) AS d FROM enrollments WHERE status IN ('active','completed') GROUP BY student_id"):
+            enrolled[str(r["student_id"])] = str(r["d"] or "")[:10]
+        added = {str(r["id"]): str(r["created_at"] or "")[:10] for r in rows("SELECT id, created_at FROM users WHERE role IN ('student','teacher')")}
+        return jsonify(batches=[{"id": b["id"], "name": f"{b['course_name']} {b['code']}", "active": bool(b["course_active"])} for b in bs], students=by, teachers=teach,
+                       enrolled=enrolled, added=added, today=(app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date().isoformat())
+
+    @app.get("/api/admin/batch-overview")
+    @auth("admin")
+    def batch_overview():
+        """v0.8.55: Dashboard -> Batches: per batch the students, who joined in the last 30 days, and this month's fees (due / collected).
+        Plus the latest enrolments and the latest people added. Fee figures only for admins with the Fees area."""
+        n = app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)
+        month, since = n.strftime("%Y-%m"), (n.date() - dt.timedelta(days=30)).isoformat()
+        fees_ok = g.user["permissions"] is None or "fees" in (g.user["permissions"] or "").split(",")
+        bs = rows("SELECT b.id, b.code, c.name AS course_name, u.full_name AS teacher_name, b.capacity FROM batches b JOIN courses c ON c.id=b.course_id "
+                  "LEFT JOIN users u ON u.id=b.teacher_id WHERE c.is_active=1 ORDER BY c.name, b.code")
+        cnt = {r["batch_id"]: r for r in rows("SELECT batch_id, COUNT(*) AS n, SUM(CASE WHEN enrolled_at>=? THEN 1 ELSE 0 END) AS new_n FROM enrollments WHERE status='active' GROUP BY batch_id", (since,))}
+        fee = {r["batch_id"]: r for r in rows("SELECT batch_id, SUM(amount_due_mvr-waived_mvr) AS due, SUM(paid_mvr) AS paid, "
+                                              "SUM(CASE WHEN amount_due_mvr-waived_mvr-paid_mvr>0 THEN 1 ELSE 0 END) AS owing FROM invoices "
+                                              "WHERE period=? AND status<>'void' AND batch_id IS NOT NULL GROUP BY batch_id", (month,))} if fees_ok else {}
+        out = []
+        for b in bs:
+            c_, f_ = cnt.get(b["id"]) or {}, fee.get(b["id"]) or {}
+            x = {"id": b["id"], "name": f"{b['course_name']} {b['code']}", "teacher": b["teacher_name"] or "", "capacity": b["capacity"],
+                 "students": int(c_.get("n") or 0), "new": int(c_.get("new_n") or 0)}
+            if fees_ok: x.update(due=int(f_.get("due") or 0), collected=int(f_.get("paid") or 0), owing=int(f_.get("owing") or 0))
+            out.append(x)
+        recent_enr = rows("SELECT e.enrolled_at, u.full_name, c.name AS course_name, b.code FROM enrollments e JOIN users u ON u.id=e.student_id JOIN batches b ON b.id=e.batch_id "
+                          "JOIN courses c ON c.id=b.course_id ORDER BY e.enrolled_at DESC, e.id DESC LIMIT 8")
+        recent_add = rows("SELECT created_at, full_name, role FROM users WHERE role IN ('student','teacher') ORDER BY created_at DESC, id DESC LIMIT 8")
+        return jsonify(month=month, fees=fees_ok, batches=out, recent_enrolled=[{"date": str(r["enrolled_at"])[:10], "name": r["full_name"], "batch": f"{r['course_name']} {r['code']}"} for r in recent_enr],
+                       recent_added=[{"date": str(r["created_at"])[:10], "name": r["full_name"], "role": r["role"]} for r in recent_add])
 
     @app.get("/api/batches")
     @auth()

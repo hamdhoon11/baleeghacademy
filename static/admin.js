@@ -161,7 +161,7 @@ views.people = async () => {
   const q = (S.pq || "").toLowerCase(), lim = S.plim || 30;
   const bv = bfVal("people");
   const found = bfSort("people", (q ? u.filter(x => [x.full_name, x.login_id, x.email].some(v => String(v || "").toLowerCase().includes(q))) : u)
-    .filter(x => !bv || bv === "sort" || (x.role !== "admin" && bfKeep("people", x.id, undefined, x.role))), x => x.id, x => x.full_name, null, x => x.role);
+    .filter(x => (!bv || bv === "sort" || (x.role !== "admin" && bfKeep("people", x.id, undefined, x.role))) && (x.role === "admin" ? !bfrVal("people") : bfRec("people", x.id))), x => x.id, x => x.full_name, null, x => x.role);
   const canBulk = x => x.id !== self;
   const rows = found.slice(0, lim).map(x => `<tr><td>${canBulk(x) ? bulkBox("ppl", x.id, x.full_name) + " " : ""}<span class="pnm">${esc(x.full_name)}${x.role !== "admin" ? bfTag(x.id, x.role) : ""}</span></td><td>${esc(x.login_id || "")}</td><td>${esc(x.email)}</td><td>${esc(t(x.role))}${x.permissions !== null ? " " + tag(t("Limited"), "warn") : x.is_super ? " " + tag(t("Superadmin"), "ok") : x.role === "admin" ? " " + tag(t("Full"), "ok") : ""}</td><td>${x.is_active ? "✓" : "✗"}<span class="sr-only">${esc(t(x.is_active ? "active" : "inactive"))}</span></td><td><button class="btn sm" data-do="euEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("");
   const listbar = `<form id="pqf" class="listbar" role="search"><label>${esc(t("role"))}<select id="pf"><option value="">${esc(t("all"))}</option>${roles.map(r => `<option value="${r[0]}" ${r[0] === roleF ? "selected" : ""}>${esc(r[1])}</option>`).join("")}</select></label>${bfBar("people")}<label>${esc(t("search"))}<input id="pq" type="search" value="${esc(S.pq || "")}" placeholder="${esc(t("people_search_hint"))}"></label><button class="btn">${t("search")}</button></form>`;
@@ -217,7 +217,8 @@ views.enrollments = async () => {
   const add = addPanel("enrollment", "Add enrollment", form("fe", pickField("es", "student", studs, "") + pickField("eb", "batch", [["", "-"], ...bo], "") + `<label>${t("start_date_optional")}<input id="esd" type="date" max="${mvToday()}"><span class="hint">${t("start_date_hint")}</span></label>`, "enroll"));
   const q = (S.enq || "").toLowerCase(), lim = S.enlim || 30;
   const found = bfSort("enr", (q ? e.filter(r => [r.student_name, r.course_name, r.batch_code, r.status, r.enrol_code].some(v => String(v || "").toLowerCase().includes(q))) : e)
-    .filter(r => bfVal("enr") !== "none" && bfKeep("enr", r.student_id, r.batch_id)), r => r.student_id, r => r.student_name, r => r.batch_id);   // v0.8.55
+    .filter(r => bfVal("enr") !== "none" && bfKeep("enr", r.student_id, r.batch_id) && bfRec("enr", r.student_id, String(r.enrolled_at || "").slice(0, 10))),
+    r => r.student_id, r => r.student_name, r => r.batch_id, null, r => String(r.enrolled_at || "").slice(0, 10));   // v0.8.55
   const listbar = `<form id="enqf" class="listbar" role="search">${bfBar("enr")}<label>${esc(t("search"))}<input id="enq" type="search" value="${esc(S.enq || "")}" placeholder="${esc(t("enrol_search_hint"))}"></label><button class="btn">${t("search")}</button></form>`;
   return `${m ? crumbFor(m.student_name, {em: null}) : ""}<h1>${t("enrollments")}</h1>${mover}${add}<div class="panel">${listbar}${found.length ? `${bulkBar("enr", [["emBulkStart", "Set start date"]], found.slice(0, lim).map(r => r.id))}${bulkAll("enr", found.slice(0, lim).map(r => r.id))}<table><thead><tr><th></th><th>${t("student_name")}</th><th>${t("course_name")}</th><th>${t("batch_code")}</th><th>${t("status")}</th><th>${t("start_date")}</th><th></th></tr></thead><tbody>${found.slice(0, lim).map(r => `<tr><td>${bulkBox("enr", r.id, r.student_name + " " + r.batch_code)}</td><td>${esc(r.student_name)}</td><td>${esc(r.course_name)}</td><td>${esc(r.batch_code)}</td><td>${esc(t(r.status))}</td><td><bdi dir="ltr">${esc(fmtDate(r.enrolled_at))}</bdi></td><td>${["active", "waitlist"].includes(r.status) ? `<button class="btn sm" data-do="emSet" data-id="${r.id}" data-s="dropped" data-name="${esc(r.student_name)}">${t("drop")}</button> ` : ""}<button class="btn sm" data-do="emEdit" data-id="${r.id}">${t("edit")}</button></td></tr>`).join("")}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "enMore")}</div>${hist}`;
 };
@@ -281,7 +282,7 @@ views.admissions = async () => {
       <p><button type="button" class="btn sm alt" data-do="apBack">${t("back")}</button></p></div>` : "";
   const C = full ? (() => { const bopts = [["", "-"], ...bs.filter(x => x.course_id === full.course_id).map(x => [x.id, x.code])];
     return `<div class="panel"><h2>${esc(t("Correct details"))}</h2><form class="row" id="fa">${iv("fa_n", "name", full.full_name)}${iv("fa_d", "date_of_birth", full.date_of_birth, "date")}${iv("fa_p", "Phone", full.phone, "tel")}${iv("fa_e", "email", full.email, "email")}${iv("fa_i", "Island", full.island)}${iv("fa_g", "Grade / class", full.grade)}${sel("fa_c", "course", courses.filter(x => x.is_active || x.id === full.course_id).map(x => [x.id, x.name + " " + (x.level || "")]), full.course_id)}${sel("fa_b", "batch", bopts, full.batch_id)}${full.is_minor ? iv("fa_gn", "guardian_name", full.guardian_name) + iv("fa_gr", "Guardian relationship", full.guardian_relationship) + iv("fa_gp", "Guardian phone", full.guardian_phone) : ""}<button class="btn alt">${t("save")}</button></form><p class="hint">${esc(t("If you change the course, pick the batch again after saving."))}</p></div>`; })() : "";
-  return `${a ? crumbFor(a.full_name, {sel: null}) : ""}<h1>${t("admissions")}</h1>${R}${D}${C}<div class="panel"><p>${xlBtns("/applications/export", "status=" + f, "applications-" + f)}</p><label>${t("status")}<select id="af">${["pending", "waitlist", "approved", "rejected"].map(x => `<option value="${x}" ${x === f ? "selected" : ""}>${esc(t(x === "waitlist" ? "waitlist" : x))}</option>`).join("")}</select></label> ${bfBar("apps")}${["pending", "waitlist"].includes(f) ? bulkBar("apps", [...(f === "pending" ? [["apBulkWait", "put_waitlist"]] : []), ["apBulkReject", "reject", true]], list.map(r => r.id)) + bulkAll("apps", list.map(r => r.id)) : ""}${table(["ref", "full_name", "course_name", "batch_code", "phone", "created_at"], list, r => `${["pending", "waitlist"].includes(f) ? bulkBox("apps", r.id, r.full_name) + " " : ""}<button class="btn sm" data-do="apReview" data-id="${r.id}" data-rev="${r.id}">${t("review")}</button>`, t("admissions"))}</div>`;
+  return `${a ? crumbFor(a.full_name, {sel: null}) : ""}<h1>${t("admissions")}</h1>${R}${D}${C}<div class="panel"><p>${xlBtns("/applications/export", "status=" + f, "applications-" + f)}</p><label>${t("status")}<select id="af">${["pending", "waitlist", "approved", "rejected"].map(x => `<option value="${x}" ${x === f ? "selected" : ""}>${esc(t(x === "waitlist" ? "waitlist" : x))}</option>`).join("")}</select></label> ${bfBar("apps", false)}${["pending", "waitlist"].includes(f) ? bulkBar("apps", [...(f === "pending" ? [["apBulkWait", "put_waitlist"]] : []), ["apBulkReject", "reject", true]], list.map(r => r.id)) + bulkAll("apps", list.map(r => r.id)) : ""}${table(["ref", "full_name", "course_name", "batch_code", "phone", "created_at"], list, r => `${["pending", "waitlist"].includes(f) ? bulkBox("apps", r.id, r.full_name) + " " : ""}<button class="btn sm" data-do="apReview" data-id="${r.id}" data-rev="${r.id}">${t("review")}</button>`, t("admissions"))}</div>`;
 };
 DO.apBulkWait = async () => { const had = bulkSel("apps").includes(S.sel); await bulkRun("apps", id => api("/applications/" + id + "/waitlist", "POST")); if (had) closeDetail({sel: null}); };
 DO.apBulkReject = async () => {
@@ -642,9 +643,35 @@ views.dashboard = async () => {
     ["Submissions", d.submissions], ["Graded", d.graded], ["Waiting for grading", d.pending_grading]]);
   const fin = d.financial ? `<h2>${t("Finance")}</h2>` + cards([["Revenue", "MVR " + d.financial.revenue], ["Expenses", "MVR " + d.financial.expenses], [d.financial.net < 0 ? "Net loss" : "Net profit", "MVR " + d.financial.net], ["Outstanding fees", "MVR " + d.financial.outstanding], ["Teacher earnings", "MVR " + d.financial.teacher_earnings], ["Academy revenue", "MVR " + d.financial.academy_revenue]]) : "";
   const fee = d.fees ? cards([[t("fx_unpaid_invoices"), d.fees.unpaid_invoices], [t("fx_overdue_invoices"), d.fees.overdue_invoices], [t("fx_slips_pending"), d.fees.slips_pending]]) : "";
-  const [store, todo, on] = await Promise.all([storagePanel(true), api("/admin/todo").catch(() => null), S.user.permissions ? null : api("/admin/presence/summary").catch(() => null)]);
-  return `<h1>${t("dashboard")}</h1>${store.banner}${onlinePanel(on)}${todoPanel(todo)}<div class="panel">${filt}<p class="hint">${t("No dates chosen means all time. Accounts: ")}${d.student_accounts} ${t("Students")}, ${d.teacher_accounts} ${t("Teachers")}.</p></div>${acad}${fin}${fee}<div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
+  const [store, todo, on, bov] = await Promise.all([storagePanel(true), api("/admin/todo").catch(() => null), S.user.permissions ? null : api("/admin/presence/summary").catch(() => null),
+    api("/admin/batch-overview").catch(() => null)]);
+  return `<h1>${t("dashboard")}</h1>${store.banner}${onlinePanel(on)}${todoPanel(todo)}${batchPanel(bov)}<div class="panel">${filt}<p class="hint">${t("No dates chosen means all time. Accounts: ")}${d.student_accounts} ${t("Students")}, ${d.teacher_accounts} ${t("Teachers")}.</p></div>${acad}${fin}${fee}<div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
 };
+
+// v0.8.55: Dashboard -> Batches: students, new in 30 days and this month's fees per batch; the latest enrolments and people added
+function batchPanel(d) {
+  if (!d || !d.batches.length) return "";
+  const mon = (() => { const [y, m] = d.month.split("-"); return new Date(Date.UTC(+y, +m - 1, 1)).toLocaleString("en", {month: "short", year: "numeric", timeZone: "UTC"}); })();
+  const bar = (a, b) => b ? `<span class="hbt" style="display:flex;width:100%;max-width:9rem;height:10px;margin:.25rem 0 .25rem auto" title="${a} / ${b}"><i style="width:${(100 * a / b).toFixed(1)}%;background:#2a78d6"></i><i style="width:${(100 * Math.max(0, b - a) / b).toFixed(1)}%;background:#eb6834"></i></span>` : "";
+  const used = d.batches.filter(b => b.students || (d.fees && b.due)), empty = d.batches.length - used.length;
+  const rows = used.map(b => `<div class="cl"><div><b>${esc(b.name)}</b>${b.teacher ? `<span class="hint bft">${esc(b.teacher)}</span>` : ""}`
+    + `<span class="hint">${b.students}${b.capacity ? " / " + b.capacity : ""} ${esc(t("students"))}</span>${b.new ? " " + tag("+" + b.new + " " + t("New"), "ok") : ""}</div>`
+    + `<div style="text-align:end;min-width:9rem">${d.fees ? `<span class="hint">${esc(mon)}</span> <bdi dir="ltr" style="white-space:nowrap">${b.collected.toLocaleString("en")} / ${b.due.toLocaleString("en")}</bdi>${bar(b.collected, b.due)}${b.owing ? tag(b.owing + " " + t("still owe"), "bad") + " " : ""}` : ""}`
+    + `<button type="button" class="btn sm alt" data-do="adBatch" data-id="${b.id}">${esc(t(d.fees ? "Fees" : "Students"))}</button></div></div>`).join("");
+  const li = (list, f) => list.length ? `<ul class="plain">${list.map(f).join("")}</ul>` : `<p class="hint">${esc(t("None yet."))}</p>`;
+  return `<div class="panel" id="adbat"><h2>${esc(t("Batches"))}</h2>
+    <p class="hint">${esc(t("Students now, new in the last 30 days" + (d.fees ? ", and this month's fees collected / due (MVR; blue = collected, orange = still to pay)." : ".")))}</p>
+    ${rows || `<p class="hint">${esc(t("None yet."))}</p>`}${empty ? `<p class="hint">${esc(t("{n} batch(es) with no students are not shown.").replace("{n}", empty))}</p>` : ""}
+    <div class="row mt1"><div><h3>${esc(t("Recently enrolled"))}</h3>${li(d.recent_enrolled, x => `<li>${esc(x.name)} <span class="hint">· ${esc(x.batch)} · ${ltr(x.date)}</span></li>`)}</div>
+    <div><h3>${esc(t("Recently added"))}</h3>${li(d.recent_added, x => `<li>${esc(x.name)} <span class="hint">· ${esc(t(x.role))} · ${ltr(x.date)}</span></li>`)}</div></div>
+    <p class="rowflex"><button type="button" class="btn sm alt" data-do="adRecent" data-k="e30">${esc(t("Enrolled in the last 30 days"))}</button><button type="button" class="btn sm alt" data-do="adRecent" data-k="a30">${esc(t("Added in the last 30 days"))}</button></p></div>`;
+}
+DO.adBatch = d => {   // open the batch: its fee grid (Fees) or its students (People)
+  S.bf = {...(S.bf || {}), people: String(d.id)};
+  if (S.user.tabs.includes("fees")) { S.fxRec = {...(S.fxRec || {}), batch: String(d.id), period: "", q: ""}; S.fxt = "record"; return go({view: "fees"}); }
+  return go({view: "people"});
+};
+DO.adRecent = d => { S.bfr = {...(S.bfr || {}), [d.k[0] === "e" ? "enr" : "people"]: d.k}; return go({view: d.k[0] === "e" ? "enrollments" : "people"}); };
 
 // Session 27: exports and CSV import (the import panel is drawn at the bottom of People)
 const exQuery = f => { const q = new URLSearchParams(); if (f.q) q.set("q", f.q); if (f.batch) q.set("batch_id", f.batch); if (f.status) q.set("status", f.status); return q.toString(); };
@@ -771,7 +798,8 @@ views.online = async () => {
   const list = d.people.filter(p => (!f.role || p.role === f.role)
     && (!f.st || (["online", "away", "offline"].includes(f.st) ? p.status === f.st : f.st === "warnings" ? (p.failed_24h >= lim || p.new_device) : p.account === f.st))
     && (!q || [p.full_name, p.login_id, p.ip].some(v => String(v || "").toLowerCase().includes(q)))
-    && (!bfVal("online") || bfVal("online") === "sort" || (p.role !== "admin" && bfKeep("online", p.id, undefined, p.role))));   // v0.8.55
+    && (!bfVal("online") || bfVal("online") === "sort" || (p.role !== "admin" && bfKeep("online", p.id, undefined, p.role)))
+    && (p.role === "admin" ? !bfrVal("online") : bfRec("online", p.id)));   // v0.8.55
   S.onInfo = Object.fromEntries(d.people.map(p => [p.id, p]));
   const c = d.counts, br = d.by_role;
   const card = (k, v, st) => `<button type="button" class="stat" data-do="onPick" data-v="${st}" aria-pressed="${f.st === st}" style="text-align:start;cursor:pointer;font:inherit${f.st === st ? ";outline:2px solid var(--brand,#0b7)" : ""}"><b><bdi dir="ltr">${fmtNum(v)}</bdi></b>${esc(t(k))}</button>`;

@@ -108,7 +108,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--lagoon)}
 .btn.big{font-size:1.1rem;padding:.7rem 1.6rem}
 .banner{background:#fbefc8;color:#5c4300;border-radius:var(--r-sm);padding:.6rem .8rem;margin-bottom:.8rem;white-space:pre-wrap}
 .msg{padding:.7rem .9rem;border-radius:var(--r-sm);margin-bottom:.9rem;border-inline-start:4px solid currentColor}
-.msg.err{background:#f8e1dc;color:var(--coral)}.msg.ok{background:#dff1e3;color:#1f6b35}.msg.warn{background:#fbefc8;color:#7a5a00}.bfl select{min-width:11rem}.bft{font-size:.8rem;display:block}.pnm{display:inline-block;text-align:inherit}
+.msg.err{background:#f8e1dc;color:var(--coral)}.msg.ok{background:#dff1e3;color:#1f6b35}.msg.warn{background:#fbefc8;color:#7a5a00}.bfl select{min-width:11rem}.bft{font-size:.8rem;display:block}ul.plain{list-style:none;padding:0;margin:.3rem 0}ul.plain li{padding:.25rem 0;border-bottom:1px solid var(--line)}.pnm{display:inline-block;text-align:inherit}
 .fg{border-collapse:separate;border-spacing:3px;width:auto;min-width:100%}.fg th{text-align:left;font-weight:600;white-space:nowrap;position:sticky;left:0;background:var(--white);z-index:1;padding:.2rem .4rem}.fg thead th{position:static}
 .fg td.c,.fg th.c{text-align:center;padding:0}.fg td.bad{color:#9b2c1c;font-weight:600}.fg tfoot th,.fg tfoot td{font-size:.85rem;color:var(--ink2)}
 .gc{display:inline-flex;align-items:center;justify-content:center;gap:.2rem;min-width:4.2rem;min-height:2.1rem;padding:0 .4rem;border-radius:6px;font-size:.85rem;font-variant-numeric:tabular-nums;border:1px solid transparent;font:inherit;font-size:.85rem;cursor:default}
@@ -653,7 +653,20 @@ async function bmLoad() {
   return S.bm;
 }
 const bfVal = key => ((S.bf || {})[key] || "");
-function bfBar(key) {
+// "Show": recently enrolled / added (S.bfr[key]): e7, e30 = enrolled in the last 7 / 30 days; a7, a30 = account added; new = newest first
+const bfrVal = key => ((S.bfr || {})[key] || "");
+const BFR = [["", "Everyone"], ["e7", "Enrolled in the last 7 days"], ["e30", "Enrolled in the last 30 days"], ["a7", "Added in the last 7 days"], ["a30", "Added in the last 30 days"], ["new", "Newest first"]];
+const bfDays = (d, n) => { if (!d) return false; const t0 = new Date((S.bm || {}).today || mvToday()), t1 = new Date(String(d).slice(0, 10)); return (t0 - t1) / 864e5 <= n - 1 + 1e-9 && t1 <= t0; };
+const bfDate = (key, id, rowDate) => { const v = bfrVal(key), bm = S.bm || {}; if (v[0] === "e") return rowDate || (bm.enrolled || {})[String(id)] || ""; return (bm.added || {})[String(id)] || ""; };
+function bfRec(key, id, rowDate) {
+  const v = bfrVal(key); if (!v || v === "new") return true;
+  if (!id && !rowDate) return false;
+  return bfDays(bfDate(key, id, rowDate), v.endsWith("30") ? 30 : 7);
+}
+function bfBar(key, recent = true) {
+  return bfBar1(key) + (recent ? `<label class="bfl">${esc(t("Show"))}<select data-bfr="${esc(key)}">${BFR.map(([k, l]) => `<option value="${k}" ${bfrVal(key) === k ? "selected" : ""}>${esc(t(l))}</option>`).join("")}</select></label>` : "");
+}
+function bfBar1(key) {
   const v = bfVal(key), bm = S.bm || {batches: []};
   return `<label class="bfl">${esc(t("Batch"))}<select data-bf="${esc(key)}"><option value="">${esc(t("All batches"))}</option><option value="sort" ${v === "sort" ? "selected" : ""}>${esc(t("All, sorted by batch"))}</option>`
     + bm.batches.filter(b => b.active || String(b.id) === v).map(b => `<option value="${b.id}" ${String(b.id) === v ? "selected" : ""}>${esc(b.name)}</option>`).join("")
@@ -666,12 +679,20 @@ function bfKeep(key, id, batchId, role) {
   return v === "none" ? !ids.length : ids.map(String).includes(v);
 }
 const bfLabel = (id, batchId, role) => { const ids = batchId ? [batchId] : bfOf(id, role); return ids.map(b => (S.bm.name || {})[b] || "").filter(Boolean).sort()[0] || "\uffff"; };
-function bfSort(key, list, idOf, nameOf, batchOf, roleOf) {
+function bfSort(key, list, idOf, nameOf, batchOf, roleOf, dateOf) {
+  if (bfrVal(key)) {   // recently enrolled / added: the newest first
+    const d = x => bfrVal(key) === "new" ? ((S.bm || {}).added || {})[String(idOf(x))] || "" : bfDate(key, idOf(x), dateOf && dateOf(x));
+    return [...list].sort((a, b) => String(d(b)).localeCompare(String(d(a))) || String(nameOf(a) || "").localeCompare(String(nameOf(b) || "")));
+  }
   if (bfVal(key) !== "sort") return list;
   return [...list].sort((a, b) => bfLabel(idOf(a), batchOf && batchOf(a), roleOf && roleOf(a)).localeCompare(bfLabel(idOf(b), batchOf && batchOf(b), roleOf && roleOf(b))) || String(nameOf(a) || "").localeCompare(String(nameOf(b) || "")));
 }
 const bfTag = (id, role) => { const n = bfOf(id, role).map(b => (S.bm.name || {})[b]).filter(Boolean); return n.length ? ` <span class="hint bft">${esc(n.join(", "))}</span>` : ""; };
-document.addEventListener("change", e => { const k = e.target && e.target.dataset && e.target.dataset.bf; if (k) { S.bf = {...(S.bf || {}), [k]: e.target.value}; render(); } });
+document.addEventListener("change", e => {
+  const ds = (e.target && e.target.dataset) || {};
+  if (ds.bf) { S.bf = {...(S.bf || {}), [ds.bf]: e.target.value}; render(); }
+  if (ds.bfr) { S.bfr = {...(S.bfr || {}), [ds.bfr]: e.target.value}; render(); }
+});
 
 function labelTables(root) {
   root.querySelectorAll("table").forEach(tb => {

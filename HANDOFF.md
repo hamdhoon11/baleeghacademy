@@ -604,4 +604,4 @@
 - GET /api/fees/status-grid (fees.py fee_grid); fees.js fxGrid() inside FX.record(); CSS .fg/.gc/.g-* in index.html (table.nostack).
 
 ## Done: v0.8.55 (see CHANGES-v0.8.55.md)
-- index.html: bmLoad/bfBar/bfKeep/bfSort/bfTag/bfOf (S.bf[key]); GET /api/batch-members. Keys: people, enr, apps, slips, inv, over, rem, online. fees.js fxBk() for invoices.
+- index.html: bmLoad/bfBar/bfKeep/bfSort/bfTag/bfOf (S.bf[key]) + bfRec/bfrVal (S.bfr[key], recent); GET /api/batch-members; Dashboard batchPanel() + GET /api/admin/batch-overview. Keys: people, enr, apps, slips, inv, over, rem, online. fees.js fxBk() for invoices.
