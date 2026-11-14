@@ -88,7 +88,8 @@ def register(app, c, today):
 
     # ---------- expenses ----------
     BASE = ("SELECT e.id,e.expense_date,e.amount_mvr,e.category_id,k.name AS category,e.description,e.receipt_name,(e.receipt_file IS NOT NULL) AS has_receipt,e.recurring_id,"
-            "e.entered_by,u.full_name AS entered_by_name,e.created_at,e.updated_at FROM expenses e JOIN expense_categories k ON k.id=e.category_id LEFT JOIN users u ON u.id=e.entered_by")
+            "e.entered_by,u.full_name AS entered_by_name,e.created_at,e.updated_at,e.teacher_id,tu.full_name AS teacher_name FROM expenses e JOIN expense_categories k ON k.id=e.category_id "
+            "LEFT JOIN users u ON u.id=e.entered_by LEFT JOIN users tu ON tu.id=e.teacher_id")
 
     def shape(r):
         r["has_receipt"] = bool(r["has_receipt"])
@@ -114,7 +115,30 @@ def register(app, c, today):
             ds = " ".join(str(d.get("description") or "").split())
             if len(ds) > 500: raise ValueError("The description is too long (500 letters max)")
             v["description"] = ds or None
+        if cur is None or "teacher_id" in d:   # v0.8.51: a salary paid to a teacher (optional)
+            raw = str(d.get("teacher_id") or "").strip()
+            if raw:
+                try: tid = int(raw)
+                except ValueError: raise ValueError("Choose a teacher")
+                if not one("SELECT 1 x FROM users WHERE id=? AND role='teacher'", (tid,)): raise ValueError("Teacher not found")
+                v["teacher_id"] = tid
+            else: v["teacher_id"] = None
         return v
+
+    # v0.8.51: a salary expense and the payment to the teacher are one thing entered once. Each side keeps the other in step.
+    def salary_sync(eid, v, method=None):
+        e = one("SELECT id, expense_date, amount_mvr, teacher_id, description FROM expenses WHERE id=?", (eid,))
+        tp = one("SELECT id FROM teacher_payments WHERE expense_id=? AND voided_at IS NULL", (eid,))
+        now_ = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        if e and e["teacher_id"]:
+            if tp:
+                db().execute("UPDATE teacher_payments SET teacher_id=?, amount_mvr=?, paid_on=?, note=? WHERE id=?", (e["teacher_id"], e["amount_mvr"], e["expense_date"], e["description"], tp["id"]))
+            else:
+                db().execute("INSERT INTO teacher_payments(teacher_id,amount_mvr,paid_on,method,reference,note,recorded_by,created_at,expense_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                             (e["teacher_id"], e["amount_mvr"], e["expense_date"], method or "other", None, e["description"], g.user["id"], now_, eid))
+        elif tp:
+            db().execute("UPDATE teacher_payments SET voided_at=?, voided_by=?, void_reason=? WHERE id=?", (now_, g.user["id"], "salary expense changed or removed", tp["id"]))
+    app.extensions["salary_expense"] = {"sync": salary_sync}
 
     @app.get("/api/expenses")
     @auth("admin", perm=AREA)
@@ -149,8 +173,9 @@ def register(app, c, today):
             try: name, _, shown = common.save_private(request.files["file"], store, "receipts")
             except ValueError as x: return err(str(x))
         try:
-            cur = db().execute("INSERT INTO expenses(expense_date,amount_mvr,category_id,description,receipt_file,receipt_name,entered_by) VALUES(?,?,?,?,?,?,?)",
-                               (v["expense_date"], v["amount_mvr"], v["category_id"], v["description"], name, shown, g.user["id"]))
+            cur = db().execute("INSERT INTO expenses(expense_date,amount_mvr,category_id,description,receipt_file,receipt_name,entered_by,teacher_id) VALUES(?,?,?,?,?,?,?,?)",
+                               (v["expense_date"], v["amount_mvr"], v["category_id"], v["description"], name, shown, g.user["id"], v.get("teacher_id")))
+            if v.get("teacher_id"): salary_sync(cur.lastrowid, v, (d.get("method") or "").strip().lower() or None)
             audit("expense_create", "expense", cur.lastrowid, f"{v['expense_date']} MVR {v['amount_mvr']}" + (", receipt attached" if name else ""), new=v["amount_mvr"]); db().commit()
         except Exception:
             db().rollback()
@@ -175,11 +200,12 @@ def register(app, c, today):
         elif str(d.get("remove_receipt", "")) in ("1", "true", "True") and cur["receipt_file"]:
             drop, name, shown = cur["receipt_file"], None, None
         v["receipt_file"], v["receipt_name"] = name, shown
-        changed = [k for k in ("expense_date", "amount_mvr", "category_id", "description") if k in v and v[k] != cur[k]]
+        changed = [k for k in ("expense_date", "amount_mvr", "category_id", "description", "teacher_id") if k in v and v[k] != cur[k]]
         if name != cur["receipt_file"]: changed.append("receipt")
         try:
             sets = ", ".join(f"{k}=?" for k in v) + ", updated_by=?, updated_at=datetime('now')"
             db().execute(f"UPDATE expenses SET {sets} WHERE id=?", tuple(v.values()) + (g.user["id"], eid))
+            if cur["teacher_id"] or v.get("teacher_id"): salary_sync(eid, v)
             if changed:
                 audit("expense_update", "expense", eid, "changed: " + ", ".join(changed) + "; was " + f"{cur['expense_date']} MVR {cur['amount_mvr']}",
                       old=cur["amount_mvr"], new=v.get("amount_mvr", cur["amount_mvr"]))
@@ -199,6 +225,7 @@ def register(app, c, today):
         cur = one(BASE + " WHERE e.id=?", (eid,))
         if not cur: return err("Expense not found", 404)
         row = one("SELECT receipt_file FROM expenses WHERE id=?", (eid,))
+        db().execute("UPDATE expenses SET teacher_id=NULL WHERE id=?", (eid,)); salary_sync(eid, {})   # v0.8.51: the matching teacher payment is voided
         db().execute("DELETE FROM expenses WHERE id=?", (eid,))
         audit("expense_delete", "expense", eid, f"{cur['expense_date']} {cur['category']} MVR {cur['amount_mvr']} {cur['description'] or ''}".strip(), old=cur["amount_mvr"]); db().commit()
         if row["receipt_file"]:

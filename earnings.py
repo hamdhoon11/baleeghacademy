@@ -1,12 +1,13 @@
 """Session 30: teacher earnings calculation (admin, area "finance").
 
-Money comes from the payments table only. For one month and one batch:
-  collected = payments paid in the month (not reversed)  -  payments paid earlier but reversed in the month
-Payments on void invoices and on one-time registration fee invoices are left out (registration goes wholly to the academy); waived or unpaid invoices have no payments so they add nothing; a partial payment counts only
-what was paid. A payment paid and reversed in the same month nets to zero. A reversal in a later month is a negative correction in THAT
-month (so an approved month never has to change). teacher share = collected x revenue_share_percent / 100 (whole MVR, rounded down
-towards zero); the academy keeps the rest. The teacher is the batch's permanent teacher (batches.teacher_id); substitutes earn nothing
-extra (decision in HANDOFF.md). A month with any approved row is locked: a re-run reports it and changes nothing.
+v0.8.51: by FEE month. For one month and one batch:
+  collected = payments (not reversed) on that month's fee invoices (invoices.period = month), whenever they were paid or entered.
+Payments on void invoices and on one-time registration fee invoices are left out (registration goes wholly to the academy); hand-made invoices
+count only with the "monthly" revenue type; a partial payment counts only what was paid. teacher share = collected x revenue_share_percent / 100
+(whole MVR, rounded down towards zero); the academy keeps the rest. The teacher is the batch's permanent teacher (batches.teacher_id).
+An approved month is locked and never changes. Fees for it collected (or reversed) after approval are found by Calculate on that month and
+saved as LATE rows (seq 1, 2, ..., booked_month = when found): accrued earnings, approved with the same Approve button, then payable.
+(Before v0.8.51 it counted payments by the date they were paid.)
 
   POST /api/earnings/calculate   month=YYYY-MM, dry_run=1 to preview only (default is to save) -> rows and per-teacher totals
   GET  /api/earnings             ?month=YYYY-MM&teacher_id=&batch_id=  -> saved rows, per-teacher roll-up, totals
@@ -27,6 +28,7 @@ import settings_schema as SS
 import dbx
 
 MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+SALARY_CATEGORY = "Teacher salaries"   # v0.8.51
 
 
 def split(collected, pct):
@@ -35,40 +37,60 @@ def split(collected, pct):
     return t, collected - t
 
 
+FEE_RULE = ("i.status<>'void' AND i.kind<>'registration' AND i.batch_id IS NOT NULL "
+            "AND (i.kind<>'manual' OR i.revenue_type_id=(SELECT rt.id FROM revenue_types rt WHERE rt.code='monthly'))")
+
+
 def compute(q, month, pct):
-    """q(sql, args) -> list of dict-like rows. Returns [{batch_id, teacher_id, collected, teacher_share, academy_share}] for batches with activity."""
-    # +amount in the month it was paid, -amount in the month it was reversed (a payment paid and reversed in one month nets to zero)
-    plus = {r[0]: int(r[1]) for r in q("SELECT i.batch_id, SUM(p.amount_mvr) FROM payments p JOIN invoices i ON i.id=p.invoice_id "
-                                       "WHERE i.status<>'void' AND i.kind<>'registration' AND i.batch_id IS NOT NULL AND (i.kind<>'manual' OR i.revenue_type_id=(SELECT rt.id FROM revenue_types rt WHERE rt.code='monthly')) AND SUBSTR(p.paid_on,1,7)=? GROUP BY i.batch_id", (month,))}
-    minus = {r[0]: int(r[1]) for r in q("SELECT i.batch_id, SUM(p.amount_mvr) FROM payments p JOIN invoices i ON i.id=p.invoice_id "
-                                        "WHERE p.reversed_at IS NOT NULL AND i.status<>'void' AND i.kind<>'registration' AND i.batch_id IS NOT NULL AND (i.kind<>'manual' OR i.revenue_type_id=(SELECT rt.id FROM revenue_types rt WHERE rt.code='monthly')) AND SUBSTR(p.reversed_at,1,7)=? GROUP BY i.batch_id", (month,))}
+    """v0.8.51: by FEE month. For each batch: payments not reversed on that month's fee invoices (invoices.period = month), whenever they
+    were paid or entered. Returns [{batch_id, teacher_id, collected, pct}] for batches with any such payment."""
+    got = {r[0]: int(r[1]) for r in q("SELECT i.batch_id, SUM(p.amount_mvr) FROM payments p JOIN invoices i ON i.id=p.invoice_id "
+                                      f"WHERE p.reversed_at IS NULL AND {FEE_RULE} AND i.period=? GROUP BY i.batch_id", (month,))}
     teachers = {r[0]: r[1] for r in q("SELECT id, teacher_id FROM batches")}
-    out = []
-    for b in sorted(set(plus) | set(minus)):
-        col = plus.get(b, 0) - minus.get(b, 0)
-        out.append({"batch_id": b, "teacher_id": teachers.get(b), "collected": col, "pct": pct})
-    return out
+    return [{"batch_id": b, "teacher_id": teachers.get(b), "collected": got[b], "pct": pct} for b in sorted(got)]
 
 
-def run_month(conn_q, conn_x, month, pct, user_id, now, apply=True):
-    """Writes/updates draft rows for one month. conn_q reads, conn_x executes. Returns (rows, locked)."""
-    if conn_q("SELECT 1 FROM teacher_earnings WHERE period=? AND status='approved' LIMIT 1", (month,)):
-        return [], True
+def is_approved(conn_q, month):
+    return bool(conn_q("SELECT 1 FROM teacher_earnings WHERE period=? AND seq=0 AND status='approved' LIMIT 1", (month,)))
+
+
+def run_month(conn_q, conn_x, month, pct, user_id, now, apply=True, booked=None):
+    """Works out one fee month. Returns (rows, mode): mode "month" = the month's own draft rows (seq 0);
+    mode "late" = the month is already approved, so only what was collected for it since then (draft rows seq >= 1, accrued earnings).
+    Approved rows are never changed."""
     rows_ = compute(conn_q, month, pct)
     for r in rows_:
         r["teacher_share"], r["academy_share"] = split(r["collected"], pct) if r["teacher_id"] else (0, r["collected"])
+    if not is_approved(conn_q, month):
         if apply:
-            conn_x("INSERT INTO teacher_earnings (teacher_id,batch_id,period,collected_mvr,share_percent,teacher_share_mvr,academy_share_mvr,status,calculated_at,calculated_by) "
-                   "VALUES (?,?,?,?,?,?,?, 'draft',?,?) ON CONFLICT(batch_id,period) DO UPDATE SET teacher_id=excluded.teacher_id, collected_mvr=excluded.collected_mvr, "
-                   "share_percent=excluded.share_percent, teacher_share_mvr=excluded.teacher_share_mvr, academy_share_mvr=excluded.academy_share_mvr, "
-                   "calculated_at=excluded.calculated_at, calculated_by=excluded.calculated_by WHERE teacher_earnings.status<>'approved'",
-                   (r["teacher_id"], r["batch_id"], month, r["collected"], pct, r["teacher_share"], r["academy_share"], now, user_id))
-    if apply:   # a batch that had a row but now has no activity (for example every payment reversed in an earlier run) is set to 0, never left stale
-        seen = {r["batch_id"] for r in rows_}
-        for old in conn_q("SELECT batch_id FROM teacher_earnings WHERE period=? AND status<>'approved'", (month,)):
-            if old[0] not in seen:
-                conn_x("UPDATE teacher_earnings SET collected_mvr=0, teacher_share_mvr=0, academy_share_mvr=0, share_percent=?, calculated_at=? WHERE batch_id=? AND period=?", (pct, now, old[0], month))
-    return rows_, False
+            for r in rows_:
+                conn_x("INSERT INTO teacher_earnings (teacher_id,batch_id,period,collected_mvr,share_percent,teacher_share_mvr,academy_share_mvr,status,calculated_at,calculated_by,seq) "
+                       "VALUES (?,?,?,?,?,?,?, 'draft',?,?,0) ON CONFLICT(batch_id,period,seq) DO UPDATE SET teacher_id=excluded.teacher_id, collected_mvr=excluded.collected_mvr, "
+                       "share_percent=excluded.share_percent, teacher_share_mvr=excluded.teacher_share_mvr, academy_share_mvr=excluded.academy_share_mvr, "
+                       "calculated_at=excluded.calculated_at, calculated_by=excluded.calculated_by WHERE teacher_earnings.status<>'approved'",
+                       (r["teacher_id"], r["batch_id"], month, r["collected"], pct, r["teacher_share"], r["academy_share"], now, user_id))
+            seen = {r["batch_id"] for r in rows_}   # a batch that had a row but has nothing now is set to 0, never left stale
+            for old in conn_q("SELECT batch_id FROM teacher_earnings WHERE period=? AND seq=0 AND status<>'approved'", (month,)):
+                if old[0] not in seen:
+                    conn_x("UPDATE teacher_earnings SET collected_mvr=0, teacher_share_mvr=0, academy_share_mvr=0, share_percent=?, calculated_at=? WHERE batch_id=? AND period=? AND seq=0", (pct, now, old[0], month))
+        return rows_, "month"
+    # the month is approved: what was collected for it after that = now minus everything approved for it (late rows included)
+    done = {r[0]: int(r[1]) for r in conn_q("SELECT batch_id, SUM(collected_mvr) FROM teacher_earnings WHERE period=? AND status='approved' GROUP BY batch_id", (month,))}
+    now_ = {r["batch_id"]: r for r in rows_}
+    late = []
+    for b in sorted(set(now_) | set(done)):
+        diff = (now_[b]["collected"] if b in now_ else 0) - done.get(b, 0)
+        if diff:
+            t = now_[b]["teacher_id"] if b in now_ else (conn_q("SELECT teacher_id FROM batches WHERE id=?", (b,)) or [[None]])[0][0]
+            ts, ac = split(diff, pct) if t else (0, diff)
+            late.append({"batch_id": b, "teacher_id": t, "collected": diff, "pct": pct, "teacher_share": ts, "academy_share": ac, "late": True})
+    if apply:
+        conn_x("DELETE FROM teacher_earnings WHERE period=? AND seq>0 AND status='draft'", (month,))
+        for r in late:
+            nxt = (conn_q("SELECT COALESCE(MAX(seq),0)+1 FROM teacher_earnings WHERE batch_id=? AND period=?", (r["batch_id"], month)) or [[1]])[0][0]
+            conn_x("INSERT INTO teacher_earnings (teacher_id,batch_id,period,collected_mvr,share_percent,teacher_share_mvr,academy_share_mvr,status,calculated_at,calculated_by,seq,booked_month) "
+                   "VALUES (?,?,?,?,?,?,?, 'draft',?,?,?,?)", (r["teacher_id"], r["batch_id"], month, r["collected"], pct, r["teacher_share"], r["academy_share"], now, user_id, nxt, booked or month))
+    return late, "late"
 
 
 def register(app, c, today):
@@ -88,6 +110,8 @@ def register(app, c, today):
 
     def now_s(): return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
+    def q_(s_, a=()): return [dbx.values(r) for r in db().execute(s_, a).fetchall()]
+
     @app.post("/api/earnings/calculate")
     @auth("admin", perm="finance")
     def earn_calc():
@@ -98,41 +122,44 @@ def register(app, c, today):
         p = pct()
         q = lambda s, a=(): [dbx.values(r) for r in db().execute(s, a).fetchall()]   # v0.8.40: was tuple(r), which is the column names on PostgreSQL
         x = lambda s, a=(): db().execute(s, a)
-        res, locked = run_month(q, x, m, p, g.user["id"], now_s(), apply=not dry)
-        if locked: return err(f"{m} is already approved and cannot be recalculated", 409)
+        res, mode = run_month(q, x, m, p, g.user["id"], now_s(), apply=not dry, booked=today().isoformat()[:7])
         if not dry:
-            audit("earnings_calculated", "teacher_earnings", None, f"{m}: {len(res)} batch(es) at {p}%", new=str(sum(r["collected"] for r in res)))
+            audit("earnings_calculated", "teacher_earnings", None, f"{m}: {len(res)} batch(es) at {p}%" + (" (collected after approval)" if mode == "late" else ""),
+                  new=str(sum(r["collected"] for r in res)))
             db().commit()
-        return jsonify(month=m, dry_run=dry, share_percent=p, count=len(res), why=explain(m, res), **summary(m, res if dry else None))
+        return jsonify(month=m, dry_run=dry, mode=mode, share_percent=p, count=len(res), why=explain(m, res, mode), **summary(m, res if dry else None))
 
-    def explain(m, res):
-        """v0.8.49: what Calculate found, in words, so an empty or small result is understood (it is not an error)."""
+    def explain(m, res, mode="month"):
+        """v0.8.51: what Calculate found, in words (fees are counted by the month they are FOR)."""
         n = lambda r: int((r or {}).get("s") or 0)
-        paid = n(one("SELECT COALESCE(SUM(amount_mvr),0) s FROM payments WHERE SUBSTR(paid_on,1,7)=?", (m,)))
-        counted = sum(r["collected"] for r in res)
-        reg = n(one("SELECT COALESCE(SUM(p.amount_mvr),0) s FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE SUBSTR(p.paid_on,1,7)=? AND i.kind='registration'", (m,)))
+        got = n(one("SELECT COALESCE(SUM(p.amount_mvr),0) s FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE p.reversed_at IS NULL AND i.status<>'void' AND i.period=?", (m,)))
+        counted = n(one(f"SELECT COALESCE(SUM(p.amount_mvr),0) s FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE p.reversed_at IS NULL AND {FEE_RULE} AND i.period=?", (m,)))
+        owed = n(one("SELECT COALESCE(SUM(amount_due_mvr-waived_mvr-paid_mvr),0) s FROM invoices i WHERE i.status IN ('unpaid','slip_submitted') AND i.kind<>'registration' AND i.period=?", (m,)))
         nt = {r["batch_id"] for r in res if r["teacher_id"] is None and r["collected"]}
         no_teacher = [f"{x['course_name']} {x['code']}" for x in rows("SELECT b.id, b.code, c.name AS course_name FROM batches b JOIN courses c ON c.id=b.course_id") if x["id"] in nt]
-        recent = rows("SELECT SUBSTR(paid_on,1,7) AS month, SUM(amount_mvr) AS s FROM payments WHERE reversed_at IS NULL GROUP BY SUBSTR(paid_on,1,7) ORDER BY 1 DESC LIMIT 6")
         msg = []
-        if not paid: msg.append(f"No fee payments were recorded with a payment date in {m}. Teacher earnings count fees in the month they were PAID, not the month of the invoice.")
+        if mode == "late":
+            add = sum(r["teacher_share"] for r in res)
+            msg.append(f"{m} is approved. " + (f"MVR {sum(r['collected'] for r in res):,} for {m} fees was collected after approval: teachers' share MVR {add:,} is added as "
+                                               "accrued (late) earnings. Press Approve to make it payable." if res else "Nothing new was collected for it since it was approved."))
+        elif not counted:
+            msg.append(f"No fees for {m} have been collected yet (teacher earnings count the fees FOR {m}, whenever they are paid).")
         else:
-            msg.append(f"MVR {paid:,} was paid in {m}; MVR {counted:,} of it is on batches and counted for teachers.")
-            if reg: msg.append(f"MVR {reg:,} is registration fees (not shared with teachers).")
-            if paid - counted - reg > 0: msg.append(f"MVR {paid - counted - reg:,} is on invoices with no batch (hand-made invoices that are not monthly fees), or reversed: not shared.")
+            msg.append(f"Fees for {m} collected so far: MVR {counted:,} on batches, counted for teachers.")
+        if got - counted > 0: msg.append(f"MVR {got - counted:,} for {m} is registration fees or on invoices with no batch: not shared with teachers.")
+        if owed: msg.append(f"MVR {owed:,} of {m} fees is still unpaid. When it is collected after you approve {m}, press Calculate on {m} again: it is added as accrued earnings.")
         if no_teacher: msg.append("These batches have no teacher, so their share goes to the academy: " + ", ".join(no_teacher) + ". Choose a teacher in Batches, then press Calculate again.")
-        if not res and recent: msg.append("Months with fee payments: " + ", ".join(f"{r['month']} (MVR {int(r['s']):,})" for r in recent) + ".")
         return msg
 
     def summary(m, live=None):
         if live is None:
             items = rows("SELECT e.*, b.code AS batch_code, c.name AS course_name, u.full_name AS teacher_name FROM teacher_earnings e JOIN batches b ON b.id=e.batch_id "
-                         "JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=e.teacher_id WHERE e.period=? ORDER BY c.name, b.code", (m,))
-            items = [dict(r) for r in items]
+                         "JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=e.teacher_id WHERE e.period=? ORDER BY e.seq, c.name, b.code", (m,))
+            items = [dict(r) | {"late": bool(r["seq"])} for r in items]
         else:
             names = {r["id"]: r for r in rows("SELECT b.id, b.code AS batch_code, c.name AS course_name, u.full_name AS teacher_name FROM batches b JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=b.teacher_id")}
             items = [{"batch_id": r["batch_id"], "teacher_id": r["teacher_id"], "collected_mvr": r["collected"], "teacher_share_mvr": r["teacher_share"],
-                      "academy_share_mvr": r["academy_share"], "share_percent": r["pct"], "status": "preview", **{k: names[r["batch_id"]][k] for k in ("batch_code", "course_name", "teacher_name")}} for r in live]
+                      "academy_share_mvr": r["academy_share"], "share_percent": r["pct"], "status": "preview", "late": bool(r.get("late")), **{k: names[r["batch_id"]][k] for k in ("batch_code", "course_name", "teacher_name")}} for r in live]
         by_t = {}
         for r in items:
             t = by_t.setdefault(r["teacher_id"], {"teacher_id": r["teacher_id"], "teacher_name": r["teacher_name"], "collected_mvr": 0, "teacher_share_mvr": 0, "academy_share_mvr": 0, "batches": 0})
@@ -155,7 +182,12 @@ def register(app, c, today):
         if a.get("teacher_id") or a.get("batch_id"):
             out["by_teacher"] = [t for t in out["by_teacher"] if any(r["teacher_id"] == t["teacher_id"] for r in out["items"])]
             out["totals"] = {k: sum(r[k] for r in out["items"]) for k in ("collected_mvr", "teacher_share_mvr", "academy_share_mvr")}
-        return jsonify(month=m, share_percent_now=pct(), **out)
+        # v0.8.51: an approved month with fees collected for it since (not calculated yet): say so
+        pending = 0
+        if is_approved(q_, m):
+            done = int(one("SELECT COALESCE(SUM(collected_mvr),0) s FROM teacher_earnings WHERE period=? AND (status='approved' OR seq>0)", (m,))["s"])
+            pending = sum(r["collected"] for r in compute(q_, m, pct())) - done
+        return jsonify(month=m, share_percent_now=pct(), approved=is_approved(q_, m), late_not_calculated=pending, **out)
 
     # ---------------- Session 31 ----------------
     def pay_totals(tid=None):
@@ -172,17 +204,19 @@ def register(app, c, today):
         d = request.get_json(silent=True) or {}
         try: m = month_arg(d.get("month"))
         except ValueError as x: return err(str(x))
-        if m >= today().isoformat()[:7]: return err("A month can only be approved after it has ended")
-        if one("SELECT 1 x FROM teacher_earnings WHERE period=? AND status='approved' LIMIT 1", (m,)): return err(f"{m} is already approved", 409)
-        q = lambda s, a=(): [dbx.values(r) for r in db().execute(s, a).fetchall()]   # v0.8.40: was tuple(r), which is the column names on PostgreSQL
-        run_month(q, lambda s, a=(): db().execute(s, a), m, pct(), g.user["id"], now_s(), apply=True)
+        # v0.8.51: the current month can be approved too (teachers are paid around the 15th); its fees collected later become late rows
+        if m > today().isoformat()[:7]: return err("That month has not started yet")
+        late = is_approved(q_, m)   # v0.8.51: an approved month: approve what was collected for it since (accrued), if anything
+        if late and not one("SELECT 1 x FROM teacher_earnings WHERE period=? AND status='draft' LIMIT 1", (m,)):
+            return err(f"{m} is already approved. Press Calculate first to add fees collected for it since then.", 409)
+        if not late: run_month(q_, lambda s, a=(): db().execute(s, a), m, pct(), g.user["id"], now_s(), apply=True)
         tot = int(one("SELECT COALESCE(SUM(teacher_share_mvr),0) s FROM teacher_earnings WHERE period=?", (m,))["s"])
-        n = int(one("SELECT COUNT(*) n FROM teacher_earnings WHERE period=?", (m,))["n"])
-        if not n: db().rollback(); return err(f"Nothing to approve for {m}: no payments were collected")
+        n = int(one("SELECT COUNT(*) n FROM teacher_earnings WHERE period=? AND status='draft'", (m,))["n"])
+        if not n: db().rollback(); return err(f"Nothing to approve for {m}: no fees for {m} were collected")
         if d.get("expected_teacher_total") not in (None, "") and str(d["expected_teacher_total"]) != str(tot):
             db().rollback(); return err(f"The figures changed since you looked: teacher total is now {tot} MVR. Review {m} again.", 409)
         db().execute("UPDATE teacher_earnings SET status='approved', approved_at=?, approved_by=? WHERE period=? AND status<>'approved'", (now_s(), g.user["id"], m))
-        audit("earnings_approved", "teacher_earnings", None, f"{m}: {n} row(s)", new=str(tot)); db().commit()
+        audit("earnings_approved", "teacher_earnings", None, f"{m}: {n} row(s)" + (" collected after approval (accrued)" if late else ""), new=str(tot)); db().commit()
         return jsonify(month=m, approved=n, teacher_total=tot, **summary(m))
 
     @app.get("/api/earnings/teachers")
@@ -191,7 +225,8 @@ def register(app, c, today):
         tp = pay_totals(); names = {r["id"]: r["full_name"] for r in rows("SELECT id, full_name FROM users WHERE role='teacher'")}
         items = [{"teacher_id": t, "teacher_name": names.get(t), "earned_mvr": e, "paid_mvr": p, "outstanding_mvr": e - p} for t, (e, p) in tp.items()]
         items.sort(key=lambda r: (r["teacher_name"] or ""))
-        return jsonify(items=items, totals={k: sum(r[k] for r in items) for k in ("earned_mvr", "paid_mvr", "outstanding_mvr")}, note="Earned counts approved months only.")
+        everyone = [{"id": r["id"], "full_name": r["full_name"]} for r in rows("SELECT id, full_name FROM users WHERE role='teacher' AND is_active=1 ORDER BY full_name")]   # v0.8.51: for the salary expense form
+        return jsonify(items=items, teachers=everyone, totals={k: sum(r[k] for r in items) for k in ("earned_mvr", "paid_mvr", "outstanding_mvr")}, note="Earned counts approved months only.")
 
     PAY_SQL = "SELECT p.*, u.full_name AS teacher_name FROM teacher_payments p JOIN users u ON u.id=p.teacher_id"
 
@@ -209,8 +244,15 @@ def register(app, c, today):
         if method not in ("cash", "bank_transfer", "cheque", "other"): return err("Method must be cash, bank_transfer, cheque or other")
         e, p = pay_totals(tid).get(tid, [0, 0])
         if amt > e - p: return err(f"That is more than the outstanding {e - p} MVR for this teacher (approved months only)", 409)
-        cur = db().execute("INSERT INTO teacher_payments(teacher_id,amount_mvr,paid_on,method,reference,note,recorded_by,created_at) VALUES(?,?,?,?,?,?,?,?)",
-                           (tid, amt, day, method, (d.get("reference") or "").strip()[:80] or None, (d.get("note") or "").strip()[:300] or None, g.user["id"], now_s()))
+        note = (d.get("note") or "").strip()[:300] or None
+        # v0.8.51: a payment to a teacher is also a salary EXPENSE (category "Teacher salaries"), so it is entered once and shows in both places
+        kid = one("SELECT id FROM expense_categories WHERE LOWER(name)=LOWER(?)", (SALARY_CATEGORY,))
+        kid = kid["id"] if kid else db().execute("INSERT INTO expense_categories(name,is_active) VALUES(?,1)", (SALARY_CATEGORY,)).lastrowid
+        tname = one("SELECT full_name FROM users WHERE id=?", (tid,))["full_name"]
+        exp = db().execute("INSERT INTO expenses(expense_date,amount_mvr,category_id,description,entered_by,teacher_id) VALUES(?,?,?,?,?,?)",
+                           (day, amt, kid, (f"Salary: {tname}" + (f" ({note})" if note else ""))[:500], g.user["id"], tid)).lastrowid
+        cur = db().execute("INSERT INTO teacher_payments(teacher_id,amount_mvr,paid_on,method,reference,note,recorded_by,created_at,expense_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                           (tid, amt, day, method, (d.get("reference") or "").strip()[:80] or None, note, g.user["id"], now_s(), exp))
         audit("teacher_payment", "teacher_payment", cur.lastrowid, f"teacher {tid}, {method}, {day}", new=str(amt)); db().commit()
         return jsonify(id=cur.lastrowid, outstanding_mvr=e - p - amt), 201
 
@@ -230,6 +272,9 @@ def register(app, c, today):
         if r["voided_at"]: return err("Already voided", 409)
         if not why: return err("Give a reason")
         db().execute("UPDATE teacher_payments SET voided_at=?, voided_by=?, void_reason=? WHERE id=?", (now_s(), g.user["id"], why[:300], pid))
+        if r.get("expense_id"):   # v0.8.51: the matching salary expense goes too
+            db().execute("DELETE FROM expenses WHERE id=?", (r["expense_id"],))
+            audit("expense_delete", "expense", r["expense_id"], f"salary payment voided: {why[:150]}", old=str(r["amount_mvr"]))
         audit("teacher_payment_void", "teacher_payment", pid, why[:200], old=str(r["amount_mvr"])); db().commit()
         return jsonify(ok=True)
 
@@ -242,9 +287,10 @@ def register(app, c, today):
             try: args.append(int(a["teacher_id"]))
             except ValueError: raise ValueError("Bad teacher id")
             w.append("e.teacher_id=?")
-        return rows("SELECT e.period, COALESCE(u.full_name,'(no teacher)') AS teacher, c.name AS course, b.code AS batch, e.collected_mvr, e.share_percent, e.teacher_share_mvr, e.academy_share_mvr, e.status "
+        return rows("SELECT e.period, COALESCE(u.full_name,'(no teacher)') AS teacher, c.name AS course, b.code AS batch, e.collected_mvr, e.share_percent, e.teacher_share_mvr, e.academy_share_mvr, "
+                    "CASE WHEN e.seq>0 THEN e.status || ' (collected late, ' || COALESCE(e.booked_month,'') || ')' ELSE e.status END AS status "
                     "FROM teacher_earnings e JOIN batches b ON b.id=e.batch_id JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=e.teacher_id WHERE " + " AND ".join(w) +
-                    " ORDER BY e.period DESC, teacher, course, batch", tuple(args))
+                    " ORDER BY e.period DESC, teacher, course, batch, e.seq", tuple(args))
 
     REPORT_COLS = ["period", "teacher", "course", "batch", "collected_mvr", "share_percent", "teacher_share_mvr", "academy_share_mvr", "status"]
 
@@ -302,7 +348,7 @@ def register(app, c, today):
         if (c.raw_setting("teachers_see_earnings") or SS.default_of("teachers_see_earnings")).strip() not in ("1", "true", "yes", "on"):
             return err("Earnings are not shown to teachers", 403)
         me = g.user["id"]; e, p = pay_totals(me).get(me, [0, 0])
-        items = rows("SELECT e.period, c.name AS course_name, b.code AS batch_code, e.collected_mvr, e.share_percent, e.teacher_share_mvr FROM teacher_earnings e JOIN batches b ON b.id=e.batch_id "
+        items = rows("SELECT e.period, c.name AS course_name, b.code AS batch_code, e.collected_mvr, e.share_percent, e.teacher_share_mvr, e.seq>0 AS late, e.booked_month FROM teacher_earnings e JOIN batches b ON b.id=e.batch_id "
                      "JOIN courses c ON c.id=b.course_id WHERE e.teacher_id=? AND e.status='approved' ORDER BY e.period DESC, c.name, b.code", (me,))
         pays = rows("SELECT id, amount_mvr, paid_on, method, reference FROM teacher_payments WHERE teacher_id=? AND voided_at IS NULL ORDER BY paid_on DESC, id DESC", (me,))
         return jsonify(earned_mvr=e, paid_mvr=p, outstanding_mvr=e - p, items=items, payments=pays, note="Approved months only; registration fees are not part of teacher earnings.")

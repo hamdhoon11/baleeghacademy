@@ -80,7 +80,7 @@ class S49(unittest.TestCase):
     def test_05_calculate_explains(self):
         r = self.c.post("/api/earnings/calculate", json={"month": "2026-10"}, headers=self.H).get_json()
         self.assertEqual(r["count"], 0)
-        self.assertIn("month they were PAID", " ".join(r["why"]))
+        self.assertIn("count the fees FOR 2026-10, whenever they are paid", " ".join(r["why"]))   # v0.8.51: by fee month
 
 
 if __name__ == "__main__":

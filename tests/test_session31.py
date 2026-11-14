@@ -73,7 +73,7 @@ class S31(unittest.TestCase):
         self.sql("UPDATE invoices SET status='void' WHERE student_id=?", (s3,))   # s3 never paid; keep March figures to the two paying students
 
     def test_04_approve_rules(self):
-        self.assertEqual(self.post("/api/earnings/approve", {"month": "2027-03"}).status_code, 400)     # March is not over yet
+        self.assertEqual(self.post("/api/earnings/approve", {"month": "2027-04"}).status_code, 400)     # v0.8.51: a month not started yet (the current month may be approved)
         self.app.config["NOW"] = NOW(28); self.app.config["NOW"] = lambda: dt.datetime(2027, 4, 5, 12, 0, tzinfo=MVT)
         self.post("/api/earnings/calculate", {"month": "2027-03"})
         r = self.post("/api/earnings/approve", {"month": "2027-03", "expected_teacher_total": 1}); self.assertEqual(r.status_code, 409)   # figures differ from what was reviewed
@@ -81,7 +81,7 @@ class S31(unittest.TestCase):
         r = self.post("/api/earnings/approve", {"month": "2027-03", "expected_teacher_total": tot}); self.assertEqual(r.status_code, 200, r.get_json())
         self.assertEqual(self.sql("SELECT COUNT(DISTINCT status) FROM teacher_earnings WHERE period='2027-03'")[0][0], 1)
         self.assertEqual(self.post("/api/earnings/approve", {"month": "2027-03"}).status_code, 409)
-        self.assertEqual(self.post("/api/earnings/calculate", {"month": "2027-03"}).status_code, 409)
+        r = self.post("/api/earnings/calculate", {"month": "2027-03"}); self.assertEqual((r.status_code, r.get_json()["mode"], r.get_json()["count"]), (200, "late", 0))   # v0.8.51: nothing new since approval
         self.assertEqual(self.post("/api/earnings/approve", {"month": "2027-02"}).status_code, 400)     # nothing collected in February
 
     def test_05_payments_to_teachers(self):
