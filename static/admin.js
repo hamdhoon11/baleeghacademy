@@ -118,7 +118,7 @@ DO.peBulkOff = async () => { if (!await ui.confirm(t("bulk_deactivate_q").replac
 DO.peBulkOn = async () => { await bulkRun("ppl", id => api("/users/" + id, "PATCH", {is_active: true})); };
 views.people = async () => {
   const roleF = S.pf || "";
-  const u = await api("/users" + (roleF ? "?role=" + roleF : ""));
+  const [u] = await Promise.all([api("/users" + (roleF ? "?role=" + roleF : "")), bmLoad()]);   // v0.8.55: + who is in which batch
   const [e, help] = await Promise.all([S.eu ? api("/users/" + S.eu).catch(() => null) : null, api("/password-help").catch(() => [])]);
   const self = S.user.id, full = !S.user.permissions;
   mount(() => {
@@ -159,10 +159,12 @@ views.people = async () => {
   const editor = e ? `<div class="panel" data-detail><h2>${esc(t("edit"))}: ${esc(e.full_name)} ${tag(t(e.role))}</h2><form class="row" id="fue">${iv("eu_n", "name", e.full_name)}${iv("eu_l", "Login ID", e.login_id, "text", 'autocomplete="off"')}${iv("eu_e", "email", e.email, "email")}${iv("eu_p", "Phone", e.phone, "tel")}${e.id === self ? "" : sel("eu_r", "role", roles, e.role)}${prof}${perms}${sup}${iv("eu_pw", "Set a new password (leave empty to keep)", "", "text", 'autocomplete="off"')}<label class="inl"><input type="checkbox" id="eu_mc" ${e.must_change_password ? "checked" : ""}> ${esc(t("Must change password at next sign-in"))}</label><label class="inl"><input type="checkbox" id="eu_a" ${e.is_active ? "checked" : ""} ${e.id === self ? "disabled" : ""}> ${esc(t("Account active"))}</label>${bar(`<button class="btn alt">${t("save")}</button>`, `<button type="button" class="btn" data-do="euClose">${t("cancel")}</button>`, e.id === self ? "" : `<button type="button" class="btn" data-do="euReset" data-id="${e.id}">${esc(t("Reset password"))}</button> <button type="button" class="btn danger" data-do="euDel" data-id="${e.id}">${t("delete")}</button>`)}</form><p class="hint">${esc(t("Enrollments"))}: ${e.enrollments} · ${esc(t("Batches taught"))}: ${e.batches_taught}. ${esc(t("People with enrollments, grades or invoices cannot be deleted or change role. Disable the account instead."))}</p></div>` : "";
   // search (name, login ID, email) and paging on the client: GET /api/users has no search parameter
   const q = (S.pq || "").toLowerCase(), lim = S.plim || 30;
-  const found = q ? u.filter(x => [x.full_name, x.login_id, x.email].some(v => String(v || "").toLowerCase().includes(q))) : u;
+  const bv = bfVal("people");
+  const found = bfSort("people", (q ? u.filter(x => [x.full_name, x.login_id, x.email].some(v => String(v || "").toLowerCase().includes(q))) : u)
+    .filter(x => (!bv || bv === "sort" || (x.role !== "admin" && bfKeep("people", x.id, undefined, x.role))) && (x.role === "admin" ? !bfrVal("people") : bfRec("people", x.id))), x => x.id, x => x.full_name, null, x => x.role);
   const canBulk = x => x.id !== self;
-  const rows = found.slice(0, lim).map(x => `<tr><td>${canBulk(x) ? bulkBox("ppl", x.id, x.full_name) + " " : ""}${esc(x.full_name)}</td><td>${esc(x.login_id || "")}</td><td>${esc(x.email)}</td><td>${esc(t(x.role))}${x.permissions !== null ? " " + tag(t("Limited"), "warn") : x.is_super ? " " + tag(t("Superadmin"), "ok") : x.role === "admin" ? " " + tag(t("Full"), "ok") : ""}</td><td>${x.is_active ? "✓" : "✗"}<span class="sr-only">${esc(t(x.is_active ? "active" : "inactive"))}</span></td><td><button class="btn sm" data-do="euEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("");
-  const listbar = `<form id="pqf" class="listbar" role="search"><label>${esc(t("role"))}<select id="pf"><option value="">${esc(t("all"))}</option>${roles.map(r => `<option value="${r[0]}" ${r[0] === roleF ? "selected" : ""}>${esc(r[1])}</option>`).join("")}</select></label><label>${esc(t("search"))}<input id="pq" type="search" value="${esc(S.pq || "")}" placeholder="${esc(t("people_search_hint"))}"></label><button class="btn">${t("search")}</button></form>`;
+  const rows = found.slice(0, lim).map(x => `<tr><td>${canBulk(x) ? bulkBox("ppl", x.id, x.full_name) + " " : ""}<span class="pnm">${esc(x.full_name)}${x.role !== "admin" ? bfTag(x.id, x.role) : ""}</span></td><td>${esc(x.login_id || "")}</td><td>${esc(x.email)}</td><td>${esc(t(x.role))}${x.permissions !== null ? " " + tag(t("Limited"), "warn") : x.is_super ? " " + tag(t("Superadmin"), "ok") : x.role === "admin" ? " " + tag(t("Full"), "ok") : ""}</td><td>${x.is_active ? "✓" : "✗"}<span class="sr-only">${esc(t(x.is_active ? "active" : "inactive"))}</span></td><td><button class="btn sm" data-do="euEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("");
+  const listbar = `<form id="pqf" class="listbar" role="search"><label>${esc(t("role"))}<select id="pf"><option value="">${esc(t("all"))}</option>${roles.map(r => `<option value="${r[0]}" ${r[0] === roleF ? "selected" : ""}>${esc(r[1])}</option>`).join("")}</select></label>${bfBar("people")}<label>${esc(t("search"))}<input id="pq" type="search" value="${esc(S.pq || "")}" placeholder="${esc(t("people_search_hint"))}"></label><button class="btn">${t("search")}</button></form>`;
   const add = addPanel("person", "Add person", form("fu", field("un", "name") + field("ue", "email", "email") + `<label>${esc(t("Contact number"))}<input id="uph" type="tel" inputmode="tel" autocomplete="tel" required minlength="7" maxlength="30" pattern="[+]?[0-9 ()-]{7,}" placeholder="7771234" title="${esc(t("At least 7 digits, like 7771234 or +960 7771234"))}"></label>` + field("up", "password", "password") + field("ur", "role", "", roles)));
   return `${e ? crumbFor(e.full_name, {eu: null}) : ""}<h1>${t("people")}</h1>${tmpPanel()}${helpPanel(help)}${editor}${add}<div class="panel">${listbar}${bulkBar("ppl", [["peBulkOn", "bulk_activate"], ["peBulkOff", "bulk_deactivate", true]], found.slice(0, lim).filter(canBulk).map(x => x.id))}${bulkAll("ppl", found.slice(0, lim).filter(canBulk).map(x => x.id))}${found.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("Login ID")}</th><th>${t("email")}</th><th>${t("role")}</th><th>${t("is_active")}</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "peMore")}</div>${impPanel()}`;
 };
@@ -201,7 +203,7 @@ DO.euDel = async d => {
 
 // ---------- enrollments: drop, move, delete a mistake. Session 11: searchable pickers, list search and paging, collapsed Add panel ----------
 views.enrollments = async () => {
-  const [e, st, b, ev] = await Promise.all([api("/enrollments"), api("/users?role=student"), api("/batches"), api("/enrollment-events")]);
+  const [e, st, b, ev] = await Promise.all([api("/enrollments"), api("/users?role=student"), api("/batches"), api("/enrollment-events"), bmLoad()]);
   const m = e.find(x => x.id === S.em);
   const hist = `<div class="panel"><h2>${t("Transfers and withdrawals")}</h2><p><button class="btn sm alt" data-do="evCsv">${t("Download CSV")}</button> <button class="btn sm alt" data-do="evXlsx">${t("Download Excel")}</button> <button class="btn sm alt" data-do="evPdf">${t("Download PDF")}</button></p>${ev.length ? `<table><thead><tr><th>${t("date")}</th><th>${t("kind")}</th><th>${t("student_name")}</th><th>${t("Previous batch")}</th><th>${t("New batch")}</th><th>${t("Reason")}</th></tr></thead><tbody>${ev.map(x => `<tr><td>${esc(x.effective_date || "?")}</td><td>${esc(t(x.kind === "transfer" ? "Transfer" : "Withdrawal"))}</td><td>${esc(x.student_name)} <span class="hint">${esc(x.student_code || "")}</span></td><td>${esc((x.from_course || "") + " " + (x.from_batch_code || ""))}</td><td>${esc((x.to_course || "") + " " + (x.to_batch_code || ""))}</td><td>${esc(x.reason || "")}</td></tr>`).join("")}</tbody></table>` : `<p class="hint">${t("empty")}</p>`}</div>`;
   const bo = b.filter(x => x.course_active).map(x => [x.id, x.course_name + " " + x.code]);   // inactive courses are not offered for new enrolments
@@ -214,8 +216,10 @@ views.enrollments = async () => {
   const studs = [["", "-"], ...st.filter(isActive).map(s => [s.id, personLabel(s)])];   // active students only, as on the Batches screen
   const add = addPanel("enrollment", "Add enrollment", form("fe", pickField("es", "student", studs, "") + pickField("eb", "batch", [["", "-"], ...bo], "") + `<label>${t("start_date_optional")}<input id="esd" type="date" max="${mvToday()}"><span class="hint">${t("start_date_hint")}</span></label>`, "enroll"));
   const q = (S.enq || "").toLowerCase(), lim = S.enlim || 30;
-  const found = q ? e.filter(r => [r.student_name, r.course_name, r.batch_code, r.status, r.enrol_code].some(v => String(v || "").toLowerCase().includes(q))) : e;
-  const listbar = `<form id="enqf" class="listbar" role="search"><label>${esc(t("search"))}<input id="enq" type="search" value="${esc(S.enq || "")}" placeholder="${esc(t("enrol_search_hint"))}"></label><button class="btn">${t("search")}</button></form>`;
+  const found = bfSort("enr", (q ? e.filter(r => [r.student_name, r.course_name, r.batch_code, r.status, r.enrol_code].some(v => String(v || "").toLowerCase().includes(q))) : e)
+    .filter(r => bfVal("enr") !== "none" && bfKeep("enr", r.student_id, r.batch_id) && bfRec("enr", r.student_id, String(r.enrolled_at || "").slice(0, 10))),
+    r => r.student_id, r => r.student_name, r => r.batch_id, null, r => String(r.enrolled_at || "").slice(0, 10));   // v0.8.55
+  const listbar = `<form id="enqf" class="listbar" role="search">${bfBar("enr")}<label>${esc(t("search"))}<input id="enq" type="search" value="${esc(S.enq || "")}" placeholder="${esc(t("enrol_search_hint"))}"></label><button class="btn">${t("search")}</button></form>`;
   return `${m ? crumbFor(m.student_name, {em: null}) : ""}<h1>${t("enrollments")}</h1>${mover}${add}<div class="panel">${listbar}${found.length ? `${bulkBar("enr", [["emBulkStart", "Set start date"]], found.slice(0, lim).map(r => r.id))}${bulkAll("enr", found.slice(0, lim).map(r => r.id))}<table><thead><tr><th></th><th>${t("student_name")}</th><th>${t("course_name")}</th><th>${t("batch_code")}</th><th>${t("status")}</th><th>${t("start_date")}</th><th></th></tr></thead><tbody>${found.slice(0, lim).map(r => `<tr><td>${bulkBox("enr", r.id, r.student_name + " " + r.batch_code)}</td><td>${esc(r.student_name)}</td><td>${esc(r.course_name)}</td><td>${esc(r.batch_code)}</td><td>${esc(t(r.status))}</td><td><bdi dir="ltr">${esc(fmtDate(r.enrolled_at))}</bdi></td><td>${["active", "waitlist"].includes(r.status) ? `<button class="btn sm" data-do="emSet" data-id="${r.id}" data-s="dropped" data-name="${esc(r.student_name)}">${t("drop")}</button> ` : ""}<button class="btn sm" data-do="emEdit" data-id="${r.id}">${t("edit")}</button></td></tr>`).join("")}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "enMore")}</div>${hist}`;
 };
 DO.enMore = () => { S.enlim = (S.enlim || 30) + 30; };
@@ -260,7 +264,8 @@ DO.emDel = async d => {
 // ---------- admissions (Session 10): ONE view. The review panel sits above the list; deleting ID copies is its own action with a confirmation ----------
 views.admissions = async () => {
   const f = S.filter || "pending";
-  const [list, bs] = await Promise.all([api("/applications?status=" + f), api("/batches")]);
+  const [list0, bs] = await Promise.all([api("/applications?status=" + f), api("/batches"), bmLoad()]);
+  const list = bfSort("apps", list0.filter(r => bfKeep("apps", null, r.batch_id || null) || (bfVal("apps") === "none" && !r.batch_id)), r => null, r => r.full_name, r => r.batch_id);   // v0.8.55: by the batch asked for
   const a = S.sel ? list.find(x => x.id === S.sel) : null;
   const editable = a && ["pending", "waitlist"].includes(a.status);
   const [full, courses] = editable ? await Promise.all([api("/applications/" + a.id), api("/courses")]) : [null, []];
@@ -277,7 +282,7 @@ views.admissions = async () => {
       <p><button type="button" class="btn sm alt" data-do="apBack">${t("back")}</button></p></div>` : "";
   const C = full ? (() => { const bopts = [["", "-"], ...bs.filter(x => x.course_id === full.course_id).map(x => [x.id, x.code])];
     return `<div class="panel"><h2>${esc(t("Correct details"))}</h2><form class="row" id="fa">${iv("fa_n", "name", full.full_name)}${iv("fa_d", "date_of_birth", full.date_of_birth, "date")}${iv("fa_p", "Phone", full.phone, "tel")}${iv("fa_e", "email", full.email, "email")}${iv("fa_i", "Island", full.island)}${iv("fa_g", "Grade / class", full.grade)}${sel("fa_c", "course", courses.filter(x => x.is_active || x.id === full.course_id).map(x => [x.id, x.name + " " + (x.level || "")]), full.course_id)}${sel("fa_b", "batch", bopts, full.batch_id)}${full.is_minor ? iv("fa_gn", "guardian_name", full.guardian_name) + iv("fa_gr", "Guardian relationship", full.guardian_relationship) + iv("fa_gp", "Guardian phone", full.guardian_phone) : ""}<button class="btn alt">${t("save")}</button></form><p class="hint">${esc(t("If you change the course, pick the batch again after saving."))}</p></div>`; })() : "";
-  return `${a ? crumbFor(a.full_name, {sel: null}) : ""}<h1>${t("admissions")}</h1>${R}${D}${C}<div class="panel"><p>${xlBtns("/applications/export", "status=" + f, "applications-" + f)}</p><label>${t("status")}<select id="af">${["pending", "waitlist", "approved", "rejected"].map(x => `<option value="${x}" ${x === f ? "selected" : ""}>${esc(t(x === "waitlist" ? "waitlist" : x))}</option>`).join("")}</select></label>${["pending", "waitlist"].includes(f) ? bulkBar("apps", [...(f === "pending" ? [["apBulkWait", "put_waitlist"]] : []), ["apBulkReject", "reject", true]], list.map(r => r.id)) + bulkAll("apps", list.map(r => r.id)) : ""}${table(["ref", "full_name", "course_name", "batch_code", "phone", "created_at"], list, r => `${["pending", "waitlist"].includes(f) ? bulkBox("apps", r.id, r.full_name) + " " : ""}<button class="btn sm" data-do="apReview" data-id="${r.id}" data-rev="${r.id}">${t("review")}</button>`, t("admissions"))}</div>`;
+  return `${a ? crumbFor(a.full_name, {sel: null}) : ""}<h1>${t("admissions")}</h1>${R}${D}${C}<div class="panel"><p>${xlBtns("/applications/export", "status=" + f, "applications-" + f)}</p><label>${t("status")}<select id="af">${["pending", "waitlist", "approved", "rejected"].map(x => `<option value="${x}" ${x === f ? "selected" : ""}>${esc(t(x === "waitlist" ? "waitlist" : x))}</option>`).join("")}</select></label> ${bfBar("apps", false)}${["pending", "waitlist"].includes(f) ? bulkBar("apps", [...(f === "pending" ? [["apBulkWait", "put_waitlist"]] : []), ["apBulkReject", "reject", true]], list.map(r => r.id)) + bulkAll("apps", list.map(r => r.id)) : ""}${table(["ref", "full_name", "course_name", "batch_code", "phone", "created_at"], list, r => `${["pending", "waitlist"].includes(f) ? bulkBox("apps", r.id, r.full_name) + " " : ""}<button class="btn sm" data-do="apReview" data-id="${r.id}" data-rev="${r.id}">${t("review")}</button>`, t("admissions"))}</div>`;
 };
 DO.apBulkWait = async () => { const had = bulkSel("apps").includes(S.sel); await bulkRun("apps", id => api("/applications/" + id + "/waitlist", "POST")); if (had) closeDetail({sel: null}); };
 DO.apBulkReject = async () => {
@@ -638,9 +643,35 @@ views.dashboard = async () => {
     ["Submissions", d.submissions], ["Graded", d.graded], ["Waiting for grading", d.pending_grading]]);
   const fin = d.financial ? `<h2>${t("Finance")}</h2>` + cards([["Revenue", "MVR " + d.financial.revenue], ["Expenses", "MVR " + d.financial.expenses], [d.financial.net < 0 ? "Net loss" : "Net profit", "MVR " + d.financial.net], ["Outstanding fees", "MVR " + d.financial.outstanding], ["Teacher earnings", "MVR " + d.financial.teacher_earnings], ["Academy revenue", "MVR " + d.financial.academy_revenue]]) : "";
   const fee = d.fees ? cards([[t("fx_unpaid_invoices"), d.fees.unpaid_invoices], [t("fx_overdue_invoices"), d.fees.overdue_invoices], [t("fx_slips_pending"), d.fees.slips_pending]]) : "";
-  const [store, todo, on] = await Promise.all([storagePanel(true), api("/admin/todo").catch(() => null), S.user.permissions ? null : api("/admin/presence/summary").catch(() => null)]);
-  return `<h1>${t("dashboard")}</h1>${store.banner}${onlinePanel(on)}${todoPanel(todo)}<div class="panel">${filt}<p class="hint">${t("No dates chosen means all time. Accounts: ")}${d.student_accounts} ${t("Students")}, ${d.teacher_accounts} ${t("Teachers")}.</p></div>${acad}${fin}${fee}<div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
+  const [store, todo, on, bov] = await Promise.all([storagePanel(true), api("/admin/todo").catch(() => null), S.user.permissions ? null : api("/admin/presence/summary").catch(() => null),
+    api("/admin/batch-overview").catch(() => null)]);
+  return `<h1>${t("dashboard")}</h1>${store.banner}${onlinePanel(on)}${todoPanel(todo)}${batchPanel(bov)}<div class="panel">${filt}<p class="hint">${t("No dates chosen means all time. Accounts: ")}${d.student_accounts} ${t("Students")}, ${d.teacher_accounts} ${t("Teachers")}.</p></div>${acad}${fin}${fee}<div class="panel">${esc(t("apply_link"))}: <a href="/apply.html" target="_blank" rel="noopener">/apply.html</a></div>`;
 };
+
+// v0.8.55: Dashboard -> Batches: students, new in 30 days and this month's fees per batch; the latest enrolments and people added
+function batchPanel(d) {
+  if (!d || !d.batches.length) return "";
+  const mon = (() => { const [y, m] = d.month.split("-"); return new Date(Date.UTC(+y, +m - 1, 1)).toLocaleString("en", {month: "short", year: "numeric", timeZone: "UTC"}); })();
+  const bar = (a, b) => b ? `<span class="hbt" style="display:flex;width:100%;max-width:9rem;height:10px;margin:.25rem 0 .25rem auto" title="${a} / ${b}"><i style="width:${(100 * a / b).toFixed(1)}%;background:#2a78d6"></i><i style="width:${(100 * Math.max(0, b - a) / b).toFixed(1)}%;background:#eb6834"></i></span>` : "";
+  const used = d.batches.filter(b => b.students || (d.fees && b.due)), empty = d.batches.length - used.length;
+  const rows = used.map(b => `<div class="cl"><div><b>${esc(b.name)}</b>${b.teacher ? `<span class="hint bft">${esc(b.teacher)}</span>` : ""}`
+    + `<span class="hint">${b.students}${b.capacity ? " / " + b.capacity : ""} ${esc(t("students"))}</span>${b.new ? " " + tag("+" + b.new + " " + t("New"), "ok") : ""}</div>`
+    + `<div style="text-align:end;min-width:9rem">${d.fees ? `<span class="hint">${esc(mon)}</span> <bdi dir="ltr" style="white-space:nowrap">${b.collected.toLocaleString("en")} / ${b.due.toLocaleString("en")}</bdi>${bar(b.collected, b.due)}${b.owing ? tag(b.owing + " " + t("still owe"), "bad") + " " : ""}` : ""}`
+    + `<button type="button" class="btn sm alt" data-do="adBatch" data-id="${b.id}">${esc(t(d.fees ? "Fees" : "Students"))}</button></div></div>`).join("");
+  const li = (list, f) => list.length ? `<ul class="plain">${list.map(f).join("")}</ul>` : `<p class="hint">${esc(t("None yet."))}</p>`;
+  return `<div class="panel" id="adbat"><h2>${esc(t("Batches"))}</h2>
+    <p class="hint">${esc(t("Students now, new in the last 30 days" + (d.fees ? ", and this month's fees collected / due (MVR; blue = collected, orange = still to pay)." : ".")))}</p>
+    ${rows || `<p class="hint">${esc(t("None yet."))}</p>`}${empty ? `<p class="hint">${esc(t("{n} batch(es) with no students are not shown.").replace("{n}", empty))}</p>` : ""}
+    <div class="row mt1"><div><h3>${esc(t("Recently enrolled"))}</h3>${li(d.recent_enrolled, x => `<li>${esc(x.name)} <span class="hint">· ${esc(x.batch)} · ${ltr(x.date)}</span></li>`)}</div>
+    <div><h3>${esc(t("Recently added"))}</h3>${li(d.recent_added, x => `<li>${esc(x.name)} <span class="hint">· ${esc(t(x.role))} · ${ltr(x.date)}</span></li>`)}</div></div>
+    <p class="rowflex"><button type="button" class="btn sm alt" data-do="adRecent" data-k="e30">${esc(t("Enrolled in the last 30 days"))}</button><button type="button" class="btn sm alt" data-do="adRecent" data-k="a30">${esc(t("Added in the last 30 days"))}</button></p></div>`;
+}
+DO.adBatch = d => {   // open the batch: its fee grid (Fees) or its students (People)
+  S.bf = {...(S.bf || {}), people: String(d.id)};
+  if (S.user.tabs.includes("fees")) { S.fxRec = {...(S.fxRec || {}), batch: String(d.id), period: "", q: ""}; S.fxt = "record"; return go({view: "fees"}); }
+  return go({view: "people"});
+};
+DO.adRecent = d => { S.bfr = {...(S.bfr || {}), [d.k[0] === "e" ? "enr" : "people"]: d.k}; return go({view: d.k[0] === "e" ? "enrollments" : "people"}); };
 
 // Session 27: exports and CSV import (the import panel is drawn at the bottom of People)
 const exQuery = f => { const q = new URLSearchParams(); if (f.q) q.set("q", f.q); if (f.batch) q.set("batch_id", f.batch); if (f.status) q.set("status", f.status); return q.toString(); };
@@ -758,7 +789,7 @@ function onAgo(stamp, now) {
 }
 const onWarn = (p, lim) => (p.failed_24h >= lim ? tag(t("failed_signins_24h").replace("{n}", p.failed_24h), "warn") + " " : "") + (p.new_device ? tag(t("New device") + ": " + p.new_device, "warn") : "");
 views.online = async () => {
-  const d = await api("/admin/presence"), f = S.onf = S.onf || {role: "", st: "", q: ""};
+  const [d] = await Promise.all([api("/admin/presence"), bmLoad()]), f = S.onf = S.onf || {role: "", st: "", q: ""};
   mount(() => {
     ["role", "st"].forEach(k => { const el = $("#on_" + k); if (el) el.onchange = () => { f[k] = el.value; render(); }; });
     const fq = $("#on_qf"); if (fq) fq.onsubmit = ev => { ev.preventDefault(); f.q = val("on_q"); render(); };
@@ -766,14 +797,16 @@ views.online = async () => {
   const q = (f.q || "").toLowerCase(), lim = d.failed_warn;
   const list = d.people.filter(p => (!f.role || p.role === f.role)
     && (!f.st || (["online", "away", "offline"].includes(f.st) ? p.status === f.st : f.st === "warnings" ? (p.failed_24h >= lim || p.new_device) : p.account === f.st))
-    && (!q || [p.full_name, p.login_id, p.ip].some(v => String(v || "").toLowerCase().includes(q))));
+    && (!q || [p.full_name, p.login_id, p.ip].some(v => String(v || "").toLowerCase().includes(q)))
+    && (!bfVal("online") || bfVal("online") === "sort" || (p.role !== "admin" && bfKeep("online", p.id, undefined, p.role)))
+    && (p.role === "admin" ? !bfrVal("online") : bfRec("online", p.id)));   // v0.8.55
   S.onInfo = Object.fromEntries(d.people.map(p => [p.id, p]));
   const c = d.counts, br = d.by_role;
   const card = (k, v, st) => `<button type="button" class="stat" data-do="onPick" data-v="${st}" aria-pressed="${f.st === st}" style="text-align:start;cursor:pointer;font:inherit${f.st === st ? ";outline:2px solid var(--brand,#0b7)" : ""}"><b><bdi dir="ltr">${fmtNum(v)}</bdi></b>${esc(t(k))}</button>`;
   const cards = `<div class="stats">${card("Online now", c.online, "online")}${card("Away", c.away, "away")}${card("Offline", c.offline, "offline")}${card("Paused", c.paused, "paused")}${card("Suspended", c.suspended, "suspended")}${card("Warnings", c.warnings, "warnings")}</div>`
     + `<p class="hint">${["student", "teacher", "admin"].map(r => `${esc(t(r === "student" ? "Students" : r === "teacher" ? "Teachers" : "Admins"))} ${esc(t("online_count"))}: <b>${br[r].online}</b> / ${br[r].total}`).join(" · ")}</p>`;
   const sel_ = (id, cur, opts) => `<select id="${id}">${opts.map(o => `<option value="${o[0]}" ${o[0] === cur ? "selected" : ""}>${esc(t(o[1]))}</option>`).join("")}</select>`;
-  const bar_ = `<form id="on_qf" class="listbar" role="search"><label>${esc(t("role"))}${sel_("on_role", f.role, [["", "all"], ["student", "Students"], ["teacher", "Teachers"], ["admin", "Admins"]])}</label>`
+  const bar_ = `<form id="on_qf" class="listbar" role="search">${bfBar("online")}<label>${esc(t("role"))}${sel_("on_role", f.role, [["", "all"], ["student", "Students"], ["teacher", "Teachers"], ["admin", "Admins"]])}</label>`
     + `<label>${esc(t("Status"))}${sel_("on_st", f.st, [["", "all"], ["online", "Online"], ["away", "Away"], ["offline", "Offline"], ["paused", "Paused"], ["suspended", "Suspended"], ["disabled", "Disabled"], ["warnings", "Warnings"]])}</label>`
     + `<label>${esc(t("search"))}<input id="on_q" type="search" value="${esc(f.q || "")}" placeholder="${esc(t("Name, login ID or IP"))}"></label><button class="btn">${t("search")}</button></form>`;
   const can = !!d.can_act;   // v0.8.48: every admin sees the list; only the superadmin signs out, pauses, suspends (bans) or restores

@@ -66,6 +66,29 @@ class S53(unittest.TestCase):
         self.assertEqual(self.c.get("/api/fees/status-grid.pdf?end=bad", headers=self.H).status_code, 400)
         self.assertEqual(self.c.get("/api/fees/status-grid.pdf").status_code, 401)
 
+    def test_04_batch_members(self):   # v0.8.55: the Batch filter's data
+        j = self.c.get("/api/batch-members", headers=self.H).get_json()
+        names = [b["name"] for b in j["batches"]]
+        self.assertTrue({"Arabic A1", "Arabic A2"} <= set(names)); self.assertEqual(names, sorted(names))
+        self.assertEqual(j["students"][str(self.s[0])], [self.b1]); self.assertEqual(j["students"][str(self.s[2])], [self.b2])
+        self.assertTrue(any({self.b1, self.b2} <= set(v) for v in j["teachers"].values()))
+        self.assertEqual(self.c.get("/api/batch-members").status_code, 401)
+
+    def test_05_recent_and_dashboard(self):   # v0.8.55: dates for "recently enrolled / added", and Dashboard -> Batches
+        j = self.c.get("/api/batch-members", headers=self.H).get_json()
+        self.assertEqual(j["today"], "2026-11-14")
+        self.assertTrue(j["enrolled"][str(self.s[0])]); self.assertTrue(j["added"][str(self.s[0])])
+        d = self.c.get("/api/admin/batch-overview", headers=self.H).get_json()
+        a1 = [b for b in d["batches"] if b["id"] == self.b1][0]
+        self.assertEqual((a1["students"], a1["due"], a1["teacher"]), (2, 1000, "Teacher"))
+        self.assertTrue(d["fees"]); self.assertTrue(d["recent_enrolled"]); self.assertTrue(d["recent_added"])
+        self.sql_("UPDATE users SET must_change_password=0")
+        uid = self.c.post("/api/users", json={"email": "lim@s53.test", "password": PW, "full_name": "Lim", "role": "admin", "phone": "7771234"}, headers=self.H).get_json()["id"]
+        self.c.patch(f"/api/users/{uid}", json={"permissions": ["people"]}, headers=self.H); self.sql_("UPDATE users SET must_change_password=0")
+        L = {"Authorization": "Bearer " + self.c.post("/api/auth/login", json={"login": "lim@s53.test", "password": PW}).get_json()["token"]}
+        d = self.c.get("/api/admin/batch-overview", headers=L).get_json()
+        self.assertFalse(d["fees"]); self.assertNotIn("due", d["batches"][0])   # no Fees area: no money figures
+
 
 if __name__ == "__main__":
     unittest.main()
