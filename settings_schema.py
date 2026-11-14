@@ -43,11 +43,19 @@ GROUPS = [
         S("first_invoice_mode", "select", "full", "First invoice for a new student", "full = charge the whole month; skip = start billing next month.", options=["full", "skip"]),
         S("first_invoice_grace_days", "number", "7", "Grace days before the first invoice is due", min=0, max=60),
         S("receipt_prefix", "text", "BA-R-", "Receipt number prefix", "Up to 12 letters, digits, - _ or /"),
-        S("reminder_template_en", "longtext", "", "Overdue reminder (English)"),
+        S("reminder_template_en", "longtext", "", "Overdue reminder for one invoice (email)"),
+        # v0.8.48: one WhatsApp message per person with the total and the months (Fees -> Reminders)
+        S("wa_overdue_template", "longtext", "Assalaamu alaikum {name}. This is a reminder from {academy}: your fees of MVR {amount} for {months} are overdue "
+          "({count} unpaid {month_word}). Please settle the payment as soon as possible and send us the slip. If you have already paid, please ignore this message. Thank you.\n\n{details}",
+          "Overdue fees message (WhatsApp)", "One message per student with everything overdue. You can use {name} {amount} {months} {count} {month_word} {days_overdue} {details} {academy} {guardian}."),
+        S("wa_due_soon_template", "longtext", "Assalaamu alaikum {name}. A friendly reminder from {academy}: MVR {amount} for {months} is due on {due_date}. "
+          "Please settle the payment before the due date. Thank you.\n\n{details}",
+          "Fee due soon message (WhatsApp)", "Sent in the days before the due date. You can use {name} {amount} {months} {count} {due_date} {days_left} {details} {academy} {guardian}."),
     ]),
     ("notifications", "Notifications and reminders", "In-app messages for students, teachers and admins. A daily run (07:30 Maldives time) sends the fee and assignment reminders; 0 turns a reminder off.", [
         S("notify_enabled", "bool", "1", "Notifications on", "Turn off to stop creating any new notification (existing ones stay visible)."),
-        S("remind_fee_days_before", "number", "3", "Fee due soon: remind students this many days before the due date", min=0, max=14),
+        S("remind_fee_days_before", "number", "5", "Fee due soon: remind students this many days before the due date",
+          "v0.8.48: also how long the 'settle before the due date' banner shows on the student's Home and in Fees -> Reminders (WhatsApp).", min=0, max=14),
         S("remind_overdue_every_days", "number", "7", "Overdue fee: remind students every this many days", "The first reminder is sent the day after the due date.", min=0, max=60),
         S("remind_assignment_days_before", "number", "1", "Assignment due: remind students this many days before", "Only students who have not handed in yet are reminded.", min=0, max=14),
     ]),
@@ -98,8 +106,9 @@ TAB_ANY = {("admin", "timetable"): ("batches", "classroom"), ("student", "my_fil
            ("teacher", "my_files"): ("classroom", "tutorials")}
 
 
-# v0.8.47: tabs only a full admin (no permission limit) ever gets; there is no area to tick for them
-FULL_ONLY = {("admin", "online")}
+# v0.8.47: tabs only a full admin (no permission limit) ever gets; there is no area to tick for them.
+# v0.8.48: empty. Every admin may see "Who's online"; only the superadmin may act on it (checked by the server on every action).
+FULL_ONLY = set()
 
 
 def tabs_for(role, perms):

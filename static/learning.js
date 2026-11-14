@@ -315,14 +315,14 @@ DO.saveGAll = async d => {
   return false;
 };
 
-DO.xlAtt = async d => { const m = val("xl_am") || mvToday().slice(0, 7); await fetchFile(`/batches/${d.b}/attendance.xlsx?month=${m}`, {name: `attendance-${d.c}-${m}.xlsx`}); return false; };
+DO.xlAtt = async d => { const m = val("xl_am") || mvToday().slice(0, 7), x = d.x || "xlsx"; await fetchFile(`/batches/${d.b}/attendance.${x}?month=${m}`, {name: `attendance-${d.c}-${m}.${x}`}); return false; };   // v0.8.48: .pdf too
 CT.gradebook = async b => {
   const g = await api(`/batches/${b.id}/gradebook`);
   const mine = S.user.role === "teacher" ? (await api(`/my/given-grades?batch_id=${b.id}`)).grades : [];
   const given = mine.length ? `<div class="panel"><h2>${t("grades_i_gave")}</h2><table><thead><tr><th>${t("student")}</th><th>${t("title")}</th><th>${t("grade")}</th><th>${t("feedback")}</th></tr></thead><tbody>${mine.map(x => `<tr><td>${esc(x.full_name)}</td><td>${esc(x.title)}</td><td>${x.grade}/${x.max_points}</td><td>${esc(x.feedback || "–")}</td></tr>`).join("")}</tbody></table></div>` : "";
   const mo = mvToday().slice(0, 7);
-  const xl = `<div class="panel"><h2>${t("xl_downloads")}</h2><div class="rowflex row"><button type="button" class="btn sm alt" data-do="xlGet" data-p="/batches/${b.id}/gradebook" data-n="gradebook-${esc(b.code)}" data-x="xlsx">${t("xl_gradebook")}</button>
-    <label>${t("fx_month")}<input id="xl_am" type="month" value="${mo}"></label><button type="button" class="btn sm alt" data-do="xlAtt" data-b="${b.id}" data-c="${esc(b.code)}">${t("xl_attendance")}</button></div></div>`;
+  const xl = `<div class="panel"><h2>${t("xl_downloads")}</h2><div class="rowflex row"><button type="button" class="btn sm alt" data-do="xlGet" data-p="/batches/${b.id}/gradebook" data-n="gradebook-${esc(b.code)}" data-x="xlsx">${t("xl_gradebook")}</button><button type="button" class="btn sm alt" data-do="xlGet" data-p="/batches/${b.id}/gradebook" data-n="gradebook-${esc(b.code)}" data-x="pdf">${t("Gradebook PDF")}</button>
+    <label>${t("fx_month")}<input id="xl_am" type="month" value="${mo}"></label><button type="button" class="btn sm alt" data-do="xlAtt" data-b="${b.id}" data-c="${esc(b.code)}">${t("xl_attendance")}</button><button type="button" class="btn sm alt" data-do="xlAtt" data-b="${b.id}" data-c="${esc(b.code)}" data-x="pdf">${t("Attendance PDF")}</button></div></div>`;
   return given + xl + `<div class="panel"><h2>${t("gradebook")}</h2><table><thead><tr><th>${t("student")}</th><th>${t("graded_items")}</th><th>${t("avg_pct")}</th><th>${t("attendance_pct")}</th></tr></thead><tbody>${g.map(s => `<tr><td>${esc(s.full_name)}</td><td>${s.graded_items}</td><td>${pct(s.avg_pct)}</td><td>${pct(s.attendance_pct)} ${s.low_attendance ? tag(t("low_attendance"), "bad") : ""}</td></tr>`).join("")}</tbody></table>${g.length ? "" : `<p>${t("empty")}</p>`}</div>`;
 };
 

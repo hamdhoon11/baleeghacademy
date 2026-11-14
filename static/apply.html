@@ -117,6 +117,12 @@ async function init() {
     $("#retry").onclick = init; $("#go").disabled = true; applyText(); return;
   }
   batches = bs; wa = info.whatsapp; minorAge = info.minor_age || 18; maxMb = info.upload_max_mb || 4;
+  if (info.logo_url) {   // v0.8.48: the academy's logo instead of the built-in mark
+    const mk = document.querySelector("header .mark"), im = document.createElement("img");
+    im.src = info.logo_url; im.alt = ""; im.className = "mark"; im.style.cssText = "background:#fff;object-fit:contain;padding:2px;width:auto;max-width:4.5rem";
+    if (mk) mk.replaceWith(im);
+    const l = document.querySelector('link[rel="icon"]'); if (l) l.href = info.logo_url;
+  }
   if (info.applications_open === false) { $("#f").hidden = true; const m = document.createElement("div"); m.className = "msg err"; m.textContent = info.applications_closed_message || "Applications are closed at the moment. Please contact us on WhatsApp."; $("#f").before(m); }
   $("#wa").href = "https://wa.me/" + wa + "?text=" + encodeURIComponent("Assalaamu alaikum, I have a question about joining " + info.academy_name);
   const open = courses.filter(c => c.status === "open");

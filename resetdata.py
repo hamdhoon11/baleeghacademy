@@ -1,6 +1,6 @@
 """v0.8.41: "Clear portal data". Removes everything that was entered into the portal and keeps the admins.
 
-  POST /api/admin/reset-data    full admins only (Settings area, permissions = all).
+  POST /api/admin/reset-data    the superadmin only (v0.8.48; before: any full admin). Settings area.
        {}                                  -> a preview: what would be deleted, per table. Nothing is changed.
        {"apply": true, "password": "...",  -> deletes. Needs the admin's own password and the exact words DELETE ALL DATA.
         "confirm": "DELETE ALL DATA",
@@ -91,7 +91,7 @@ def wipe(conn, script, reset_numbers=False):
     """Deletes inside the caller's transaction (the caller commits or rolls back). Returns {table: rows deleted}."""
     done = {}
     for t in _tables(conn, script):
-        n = conn.execute(f"DELETE FROM {t}").rowcount
+        n = conn.execute("DELETE FROM stored_files WHERE area<>'branding'" if t == "stored_files" else f"DELETE FROM {t}").rowcount   # v0.8.48: the logo stays, like the settings
         if n: done[t] = n
     n = conn.execute("DELETE FROM users WHERE role<>'admin'").rowcount
     if n: done["users"] = n
@@ -118,6 +118,8 @@ def register(app, c, script, check_password):
     @c.auth("admin", perm="settings")
     def reset_data():
         if g.user["permissions"] is not None: return c.err("Only a full admin can clear the portal's data", 403)
+        bad = c.super_only("Only the superadmin can clear the portal's data")   # v0.8.48
+        if bad: return bad
         d = request.get_json(silent=True) or {}
         db = c.db()
         if not d.get("apply"):

@@ -15,7 +15,7 @@ import os
 
 from flask import send_file, send_from_directory
 
-AREAS = ("ids", "learning", "slips", "receipts")
+AREAS = ("ids", "learning", "slips", "receipts", "branding")   # v0.8.48: branding = the academy logo (the only file anyone may see without signing in)
 
 
 def _safe(name):

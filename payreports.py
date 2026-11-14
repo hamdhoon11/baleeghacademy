@@ -173,6 +173,36 @@ def register(app, c, today):
     @auth("admin", perm=AREA)
     def payrep_xlsx(): return download("xlsx")
 
+    @app.get("/api/fees/payment-report.pdf")
+    @auth("admin", perm=AREA)
+    def payrep_pdf():   # v0.8.48: same rows and filters as the screen, the CSV and the Excel
+        import reportpdf as R
+        try: month, out, tot, others, otot = build(args_of())
+        except ValueError as x: return err(str(x))
+        f = {k: v for k, v in args_of().items() if v and k != "month"}
+        names = {}
+        if f.get("course_id"): names["course"] = (one("SELECT name FROM courses WHERE id=?", (f["course_id"],)) or {}).get("name")
+        if f.get("batch_id"): names["batch"] = (one("SELECT code FROM batches WHERE id=?", (f["batch_id"],)) or {}).get("code")
+        if f.get("kind"): names["type"] = "tuition classes" if f["kind"] == "tuition" else "courses"
+        if f.get("status"): names["status"] = STATUS_KEYS.get(f["status"], f["status"])
+        sub = f"Month {month}" + "".join(f" · {k}: {v}" for k, v in names.items() if v) + " · amounts in MVR"
+        pdates = lambda r: ", ".join(p["paid_on"] for p in r["payments"])
+        blocks = [("stats", [("Students", tot["students"]), ("Due (MVR)", tot["due"]), ("Paid (MVR)", tot["paid"]), ("Still to pay (MVR)", tot["balance"]),
+                             ("Paid in full", tot.get("paid_count", 0)), ("Unpaid", tot.get("unpaid_count", 0))]),
+                  ("table", ["Student", "ID", "Course", "Batch", "Fee", "Due", "Paid", "Balance", "Status", "Payment dates"],
+                   [[r["student_name"], r["student_code"] or "", r["course_name"], r["batch_code"], r["monthly_fee_mvr"], r["amount_due_mvr"] - r["waived_mvr"],
+                     r["paid_mvr"], r["balance_mvr"], r["status_label"], pdates(r)] for r in out],
+                   {"widths": [3, 1.8, 2.6, 1.1, 1, 1, 1, 1, 1.3, 2.4], "right": {4, 5, 6, 7},
+                    "total": ["Total", "", "", "", tot["fee"], tot["due"], tot["paid"], tot["balance"], "", ""]})]
+        if others:
+            blocks += [("heading", "Other invoices this month"),
+                       ("table", ["Student / customer", "Revenue type", "Description", "Due", "Paid", "Balance", "Status", "Payment dates"],
+                        [[r["student_name"] + (" (not in the portal)" if r["walk_in"] else ""), r["revenue_type_name"], r["description"], r["amount_due_mvr"] - r["waived_mvr"],
+                          r["paid_mvr"], r["balance_mvr"], r["status_label"], pdates(r)] for r in others],
+                        {"widths": [3, 1.8, 3, 1, 1, 1, 1.3, 2.4], "right": {3, 4, 5}, "total": ["Total", "", "", otot["due"], otot["paid"], otot["balance"], "", ""]})]
+        audit("export_payment_report", "report", None, f"pdf {month} {len(out)} rows"); db().commit()
+        return app.extensions["pdf"]("Payment report", blocks, f"payments-{month}", subtitle=sub)
+
     @app.get("/api/fees/student-history/<int:sid>")
     @auth("admin", perm=AREA)
     def student_history(sid):

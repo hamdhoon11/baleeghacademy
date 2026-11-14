@@ -331,7 +331,7 @@ def register(app, c):
         i = get_invoice(iid)
         if not i: return err("Invoice not found", 404)
         c_ = one("SELECT level FROM courses WHERE id=?", (i["course_id"],))
-        data = receipts.build_invoice({"academy": setting("academy_name", "Baleegh Academy"), "phone": setting("contact_phone"), "invoice_no": i["number"],
+        data = receipts.build_invoice({"academy": setting("academy_name", "Baleegh Academy"), "phone": setting("contact_phone"), "logo": app.extensions["branding"]["logo_bytes"](), "invoice_no": i["number"],
                                        "student_id": i["student_id"], "student": i["student_name"], "course": (i["course_name"] + (" " + c_["level"] if c_ and c_["level"] else "")) if i["course_name"] else i["description"],
                                        "batch": i["batch_code"] or "-", "period": i["period"], "due_date": i["due_date"], "amount": i["amount_mvr"], "discount": i["discount_mvr"],
                                        "amount_due": i["amount_due_mvr"], "paid": i["paid_mvr"], "balance": i["balance"], "status": i["status"]})
@@ -770,7 +770,14 @@ def register(app, c):
     @app.get("/api/my/fees/summary")
     @auth("student", perm="fees")
     def my_fees_summary():
-        return jsonify(open_totals(g.user["id"]))
+        out = open_totals(g.user["id"])
+        fd = app.extensions.get("feedue")   # v0.8.48: what is overdue (total and months) and what falls due in the next few days
+        if fd:
+            p = fd["dues"](today(), g.user["id"]).get(f"s{g.user['id']}") or {}
+            pick = lambda b, kind: b and {k: b[k] for k in ("total", "count", "months", "months_text", "first_due", "days_overdue", "days_left")} | {"text": fd["notice"](b, kind)}
+            out["reminder"] = {"window_days": fd["window"](), "overdue": pick(p.get("overdue"), "overdue"), "due_soon": pick(p.get("due_soon"), "due_soon"),
+                               "slips_waiting": p.get("slips_waiting", 0)}
+        return jsonify(out)
 
     @app.get("/api/my/fees")
     @auth("student", perm="fees")
@@ -1034,7 +1041,7 @@ def register(app, c):
         p = one("SELECT p.*, i.period, i.description, COALESCE(u.full_name, i.customer_name) AS student_name, c.name AS cname, c.level, b.code FROM payments p JOIN invoices i ON i.id=p.invoice_id "
                 "LEFT JOIN users u ON u.id=p.student_id LEFT JOIN courses c ON c.id=i.course_id LEFT JOIN batches b ON b.id=i.batch_id WHERE p.id=?", (pid,))
         if not p or (g.user["role"] == "student" and p["student_id"] != g.user["id"]): return err("Receipt not found", 404)
-        data = receipts.build({"academy": setting("academy_name", "Baleegh Academy"), "phone": setting("contact_phone"), "receipt_no": p["receipt_no"], "paid_on": p["paid_on"],
+        data = receipts.build({"academy": setting("academy_name", "Baleegh Academy"), "phone": setting("contact_phone"), "logo": app.extensions["branding"]["logo_bytes"](), "receipt_no": p["receipt_no"], "paid_on": p["paid_on"],
                                "student": p["student_name"], "course": (p["cname"] + (" " + p["level"] if p["level"] else "")) if p["cname"] else p["description"], "batch": p["code"] or "-",
                                "invoice_no": inv_no({"period": p["period"], "id": p["invoice_id"]}), "period": p["period"], "amount": p["amount_mvr"],
                                "method": METHOD_LABEL.get(p["method"], p["method"]), "reference": p["reference"], "reversed": bool(p["reversed_at"])})
@@ -1057,7 +1064,7 @@ def register(app, c):
         pl = [{"paid_on": p["paid_on"], "receipt_no": p["receipt_no"], "invoice_number": inv_no({"period": p["period"], "id": p["invoice_id"]}),
                "method": METHOD_LABEL.get(p["method"], p["method"]), "amount": p["amount_mvr"], "reversed": bool(p["reversed_at"])} for p in pays]
         tot = {"due": sum(i["amount_due"] - i["waived"] for i in il), "paid": sum(p["amount"] for p in pl if not p["reversed"]), "balance": sum(i["balance"] for i in il)}
-        data = receipts.build_statement({"academy": setting("academy_name", "Baleegh Academy"), "phone": setting("contact_phone"), "student": u["full_name"],
+        data = receipts.build_statement({"academy": setting("academy_name", "Baleegh Academy"), "phone": setting("contact_phone"), "logo": app.extensions["branding"]["logo_bytes"](), "student": u["full_name"],
                                          "student_code": u["student_code"], "generated": t0.isoformat(), "invoices": il, "payments": pl, "totals": tot})
         audit_c("view_statement", "user", sid, g.user["role"]); db().commit()
         resp = Response(data, mimetype="application/pdf")
@@ -1166,7 +1173,31 @@ def register(app, c):
             p["invoiced"] += i["amount_due_mvr"] - i["waived_mvr"]; p["collected"] += i["paid_mvr"]; p["outstanding"] += i["balance"]; p["invoices"] += 1
         owing = [{k: i[k] for k in ("id", "number", "student_id", "student_name", "course_name", "batch_code", "balance", "due_date", "overdue", "days_overdue", "status",
                                     "description", "revenue_type_name", "walk_in")} for i in invs if i["balance"] > 0]
-        return {"month": month, "totals": tot, "by_course": list(per.values()), "by_type": sorted(by_type.values(), key=lambda x: -x["invoiced"]), "owing": owing, "invoices": invs}
+        # v0.8.48: batch by batch (invoices with no batch, such as hand-made ones, in one "No batch" row), how many are paid, and the last 6 months
+        teach = {r["id"]: r for r in rows("SELECT b.id, u.full_name AS teacher_name FROM batches b LEFT JOIN users u ON u.id=b.teacher_id")}
+        bb, status = {}, {"paid": 0, "partial": 0, "unpaid": 0, "overdue": 0}
+        for i in invs:
+            st = "paid" if i["balance"] <= 0 else "overdue" if i["overdue"] else "partial" if i["paid_mvr"] > 0 else "unpaid"
+            status[st] += 1
+            p = bb.setdefault(i["batch_id"], {"batch_id": i["batch_id"], "batch_code": i["batch_code"] or "No batch", "course_name": i["course_name"] or ("Other (no course)" if not i["batch_id"] else ""),
+                                              "teacher_name": (teach.get(i["batch_id"]) or {}).get("teacher_name") or "", "students": set(), "invoices": 0, "invoiced": 0, "collected": 0,
+                                              "outstanding": 0, "paid": 0, "partial": 0, "unpaid": 0, "overdue": 0})
+            p["students"].add(i["student_id"] or ("w", i["student_name"])); p["invoices"] += 1
+            p["invoiced"] += i["amount_due_mvr"] - i["waived_mvr"]; p["collected"] += i["paid_mvr"]; p["outstanding"] += i["balance"]; p[st] += 1
+        by_batch = []
+        for p in bb.values():
+            p["students"] = len(p["students"]); p["rate"] = round(100 * p["collected"] / p["invoiced"]) if p["invoiced"] else 0
+            by_batch.append(p)
+        by_batch.sort(key=lambda x: (x["batch_id"] is None, (x["course_name"] or "").lower(), x["batch_code"]))
+        y, mo = int(month[:4]), int(month[5:7])
+        months = [f"{(y * 12 + mo - 1 - k) // 12:04d}-{(y * 12 + mo - 1 - k) % 12 + 1:02d}" for k in range(5, -1, -1)]
+        tr = {r["period"]: r for r in rows("SELECT period, COALESCE(SUM(amount_due_mvr-waived_mvr),0) AS invoiced, COALESCE(SUM(paid_mvr),0) AS collected FROM invoices "
+                                          f"WHERE status!='void' AND period IN ({','.join('?' * 6)}) GROUP BY period", months)}
+        trend = [{"month": m_, "invoiced": int((tr.get(m_) or {}).get("invoiced") or 0), "collected": int((tr.get(m_) or {}).get("collected") or 0)} for m_ in months]
+        for x in trend: x["outstanding"] = max(0, x["invoiced"] - x["collected"])
+        tot["rate"] = round(100 * tot["collected"] / tot["invoiced"]) if tot["invoiced"] else 0
+        return {"month": month, "totals": tot, "by_course": list(per.values()), "by_type": sorted(by_type.values(), key=lambda x: -x["invoiced"]), "owing": owing, "invoices": invs,
+                "by_batch": by_batch, "status_counts": status, "trend": trend}
 
     @app.get("/api/fees/report")
     @auth("admin", perm="fees")
@@ -1194,6 +1225,42 @@ def register(app, c):
     @app.get("/api/fees/report.xlsx")
     @auth("admin", perm="fees")
     def fees_report_xlsx(): return fees_report_export("xlsx")   # v0.8.38
+
+    @app.get("/api/fees/report.pdf")
+    @auth("admin", perm="fees")
+    def fees_report_pdf():   # v0.8.48: the monthly report as a PDF: totals, charts, batch by batch, by course and type, who owes
+        import reportpdf as R
+        month = request.args.get("month") or month_of(today())
+        if not PERIOD.match(month): return err("Month must look like 2026-03")
+        r = report(month); T = r["totals"]
+        label = app.extensions["feedue"]["month_label"]
+        bat = r["by_batch"]
+        blocks = [("stats", [("Invoiced (MVR)", T["invoiced"]), ("Collected (MVR)", T["collected"]), ("Still to pay (MVR)", T["outstanding"]),
+                             ("Collection rate", f"{T['rate']}%"), ("Invoices", T["invoice_count"]), ("Overdue", T["overdue_count"])]),
+                  ("bars", "Collected and still to pay, by batch (MVR)", [f"{b['course_name']} {b['batch_code']}".strip() for b in bat],
+                   [("Collected", [b["collected"] for b in bat], R.BLUE), ("Still to pay", [b["outstanding"] for b in bat], R.ORANGE)]),
+                  ("columns", "Last 6 months (MVR)", [label(x["month"]) for x in r["trend"]],
+                   [("Collected", [x["collected"] for x in r["trend"]], R.BLUE), ("Still to pay", [x["outstanding"] for x in r["trend"]], R.ORANGE)]),
+                  ("heading", "Batch by batch"),
+                  ("table", ["Course", "Batch", "Teacher", "Students", "Invoiced", "Collected", "Still to pay", "Collected %", "Paid", "Part paid", "Unpaid", "Overdue"],
+                   [[b["course_name"], b["batch_code"], b["teacher_name"], b["students"], b["invoiced"], b["collected"], b["outstanding"], f"{b['rate']}%",
+                     b["paid"], b["partial"], b["unpaid"], b["overdue"]] for b in bat],
+                   {"widths": [3, 1.6, 2.2, 1, 1.3, 1.3, 1.3, 1.1, .8, .9, .9, .9], "right": set(range(3, 12)),
+                    "total": ["Total", "", "", sum(b["students"] for b in bat), T["invoiced"], T["collected"], T["outstanding"], f"{T['rate']}%",
+                              sum(b["paid"] for b in bat), sum(b["partial"] for b in bat), sum(b["unpaid"] for b in bat), sum(b["overdue"] for b in bat)]}),
+                  ("heading", "By course"),
+                  ("table", ["Course", "Invoices", "Invoiced", "Collected", "Still to pay"], [[x["course_name"], x["invoices"], x["invoiced"], x["collected"], x["outstanding"]] for x in r["by_course"]],
+                   {"widths": [4, 1, 1.4, 1.4, 1.4]}),
+                  ("heading", "By revenue type"),
+                  ("table", ["Revenue type", "Invoices", "Invoiced", "Collected", "Still to pay"], [[x["revenue_type_name"], x["invoices"], x["invoiced"], x["collected"], x["outstanding"]] for x in r["by_type"]],
+                   {"widths": [4, 1, 1.4, 1.4, 1.4]}),
+                  ("heading", "Who still has to pay"),
+                  ("table", ["Student", "Invoice", "Course / item", "Batch", "Due date", "Status", "Still to pay"],
+                   [[o["student_name"] + (" (not in the portal)" if o["walk_in"] else ""), o["number"], o["course_name"] or o["description"], o["batch_code"] or "",
+                     o["due_date"], f"overdue {o['days_overdue']} days" if o["overdue"] else o["status"].replace("_", " "), o["balance"]] for o in r["owing"]],
+                   {"widths": [3, 2, 3, 1.4, 1.4, 1.8, 1.3], "right": {6}})]
+        audit_c("export_fees_pdf", "report", None, month); db().commit()
+        return app.extensions["pdf"](f"Monthly fees report: {label(month)}", blocks, f"fees-{month}", subtitle=f"Month {month} · amounts in MVR · void invoices left out")
 
     def dashboard_extra():
         t = today()

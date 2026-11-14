@@ -189,6 +189,7 @@ def create_app(config=None):
         pub = {k: u[k] for k in ("id", "login_id", "email", "full_name", "role", "must_change_password")}
         pub["permissions"] = pl
         pub["tabs"] = SS.tabs_for(u["role"], pl)
+        pub["is_super"] = is_super(u)   # v0.8.48
         return pub
 
     def auth(*roles, perm=None):
@@ -205,7 +206,7 @@ def create_app(config=None):
                 except jwt.PyJWTError:
                     return err("Session expired. Sign in again.", 401)
                 u = one("SELECT id,login_id,email,full_name,role,is_active,must_change_password,permissions,token_version,suspended_at,paused_until,"
-                        "last_seen_at,signed_out_at,account_message FROM users WHERE id=?", (p["sub"],))
+                        "last_seen_at,signed_out_at,account_message,is_super FROM users WHERE id=?", (p["sub"],))
                 if not u or not u["is_active"]:
                     return err("Account disabled", 403)
                 # v0.8.47: signed out, suspended or paused by a full admin. 401 makes the page sign out and show the message.
@@ -345,6 +346,23 @@ def create_app(config=None):
     def is_full_admin(u):
         return u["role"] == "admin" and u["is_active"] and u["permissions"] is None
 
+    # ---------- v0.8.48: the superadmin ----------
+    # Only a superadmin clears the portal's data (Settings) and signs out, pauses, suspends or restores accounts (Who's online). Other admins can
+    # still SEE who is online. A superadmin is always an active full admin. While no active full admin has is_super=1 (a new or upgraded
+    # database, or the last one was turned off by hand), the earliest active full admin counts as the superadmin, so nobody is ever locked out.
+    def super_ids():
+        ids = [r["id"] for r in rows("SELECT id FROM users WHERE role='admin' AND is_active=1 AND permissions IS NULL AND is_super=1 ORDER BY id")]
+        if ids: return ids
+        r = one("SELECT MIN(id) AS id FROM users WHERE role='admin' AND is_active=1 AND permissions IS NULL")
+        return [r["id"]] if r and r["id"] else []
+
+    def is_super(u):
+        if not u or u.get("role") != "admin" or not u.get("is_active", 1) or u.get("permissions") is not None: return False
+        return bool(u.get("is_super")) or u["id"] in super_ids()
+
+    def super_only(msg="Only the superadmin can do this"):
+        return None if is_super(g.user) else err(msg, 403)
+
     @app.get("/api/users")
     @auth("admin")
     def users_list():
@@ -353,14 +371,16 @@ def create_app(config=None):
         full = has_perm(g.user, "people")
         if not full and not can_any(g.user, *PICKER_AREAS): return err("Your account does not have permission for this area", 403)
         role = request.args.get("role")
-        sql = ("SELECT id,login_id,email,full_name,role,phone,is_active,created_at,permissions FROM users" if full
+        sql = ("SELECT id,login_id,email,full_name,role,phone,is_active,created_at,permissions,is_super FROM users" if full
                else "SELECT id,full_name,role,is_active FROM users")
         args = ()
         if role in ("admin", "teacher", "student"):
             sql += " WHERE role=?"; args = (role,)
         out = rows(sql + " ORDER BY id", args)
+        sup = set(super_ids()) if full else set()
         for r in out if full else ():
             r["permissions"] = None if r["permissions"] is None else [x for x in r["permissions"].split(",") if x]
+            r["is_super"] = r["id"] in sup
         return jsonify(out)
 
     @app.get("/api/users/<int:uid>")
@@ -369,6 +389,7 @@ def create_app(config=None):
         u = one("SELECT id,login_id,email,full_name,role,phone,is_active,must_change_password,created_at,permissions FROM users WHERE id=?", (uid,))
         if not u: return err("User not found", 404)
         u["permissions"] = None if u["permissions"] is None else [x for x in u["permissions"].split(",") if x]
+        u["is_super"] = uid in super_ids()   # v0.8.48
         if u["role"] == "student":
             u.update(one("SELECT date_of_birth,grade,island,guardian_name,guardian_relationship,guardian_phone FROM students WHERE user_id=?", (uid,)) or {})
         if u["role"] == "teacher":
@@ -427,6 +448,20 @@ def create_app(config=None):
         mine = uid == g.user["id"]
         if mine and d.get("is_active") in (0, False):
             return err("You cannot disable your own account")
+        # v0.8.48: a superadmin's account is changed only by a superadmin (no other admin can take it over, lock it or limit it)
+        target_super = uid in super_ids()
+        if target_super and not mine and not is_super(g.user): return err("Only the superadmin can change the superadmin's account", 403)
+        if "is_super" in d:
+            want = bool(d["is_super"]) and d["is_super"] not in ("0", "false")
+            if want != target_super:
+                if not is_super(g.user): return err("Only the superadmin can choose who is superadmin", 403)
+                if want and not (u["role"] == "admin" and u["is_active"] and u["permissions"] is None and d.get("role", "admin") == "admin"
+                                 and d.get("permissions", "all") in (None, "all") and d.get("is_active", 1) not in (0, False)):
+                    return err("Only an active full admin can be made superadmin. Give them full admin rights first.", 409)
+                if not want and len([i for i in super_ids() if i != uid]) == 0: return err("There must always be one superadmin. Make someone else superadmin first.", 409)
+        if target_super and not mine and not (d.get("is_super", True) in (0, False, "0", "false")):
+            if ("role" in d and d["role"] != "admin") or (d.get("permissions") not in (None, "all") and "permissions" in d):
+                return err("Remove superadmin from this account first", 409)
         sets, args, changed = [], [], []
         if "full_name" in d:
             if not str(d["full_name"] or "").strip(): return err("Name cannot be empty")
@@ -478,6 +513,9 @@ def create_app(config=None):
         prof = {}
         if new_role == "student": prof = {k: d[k] for k in STUDENT_FIELDS if k in d}
         if new_role == "teacher" and "bio" in d: prof = {"bio": d["bio"]}
+        if "is_super" in d and (bool(d["is_super"]) and d["is_super"] not in ("0", "false")) != target_super:
+            for i in super_ids(): db().execute("UPDATE users SET is_super=1 WHERE id=?", (i,))   # the one counted by default is written down first
+            sets.append("is_super=?"); args.append(0 if target_super else 1); changed.append("is_super")
         if not sets and not prof: return err("Nothing to update")
         if sets:
             try: db().execute(f"UPDATE users SET {','.join(sets)} WHERE id=?", (*args, uid))
@@ -493,6 +531,8 @@ def create_app(config=None):
             db().execute(f"UPDATE {tbl} SET {','.join(k + '=?' for k in prof)} WHERE user_id=?", (*prof.values(), uid))
             changed += list(prof)
         fill_codes()
+        if "is_super" in changed:
+            audit("superadmin_change", "user", uid, u["login_id"] or u["email"], old="yes" if target_super else "no", new="no" if target_super else "yes")
         if "permissions" in changed:
             audit("permission_change", "user", uid, u["login_id"] or u["email"], old=u["permissions"] or "all", new=one("SELECT permissions FROM users WHERE id=?", (uid,))["permissions"] or "all")
         audit("update_user", "user", uid, diff_detail(u, changed, {**d, "role": d.get("role", u["role"]), **({"login_id": norm_login(d["login_id"])} if "login_id" in d else {})}) if "password" not in changed else ",".join(changed))
@@ -507,6 +547,7 @@ def create_app(config=None):
         if not u: return err("User not found", 404)
         if uid == g.user["id"]: return err("Use Change password for your own account")
         if u["role"] == "admin" and g.user["permissions"] is not None: return err("Only a full admin can reset an admin's password", 403)
+        if uid in super_ids() and not is_super(g.user): return err("Only the superadmin can reset the superadmin's password", 403)
         pw = temp_password()
         db().execute("UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?", (generate_password_hash(pw), uid))
         ph = app.extensions.get("passhelp")
@@ -528,6 +569,9 @@ def create_app(config=None):
         if uid == g.user["id"]: return err("You cannot delete your own account")
         if u["role"] == "admin" and g.user["permissions"] is not None: return err("Only a full admin can delete an admin", 403)
         if is_full_admin(u) and not other_full_admins(uid): return err("This is the only full admin and cannot be deleted", 409)
+        if uid in super_ids():
+            if not is_super(g.user): return err("Only the superadmin can delete the superadmin's account", 403)
+            if not [i for i in super_ids() if i != uid]: return err("There must always be one superadmin. Make someone else superadmin first.", 409)
         try:
             db().execute("DELETE FROM students WHERE user_id=?", (uid,))
             db().execute("DELETE FROM teachers WHERE user_id=?", (uid,))
@@ -916,7 +960,8 @@ def create_app(config=None):
                        applications_open=g_("applications_open") != "0", applications_closed_message=g_("applications_closed_message"),
                        minor_age=int(g_("minor_age")),
                        # Session 21 (v0.8.33): the real upload limits, so the forms can check a file before sending it (on Vercel both are 4 MB)
-                       upload_max_mb=MAX_FILE // (1024 * 1024), learning_max_mb=common.cap_mb(int(app.config.get("LEARNING_MAX_MB", 20))))
+                       upload_max_mb=MAX_FILE // (1024 * 1024), learning_max_mb=common.cap_mb(int(app.config.get("LEARNING_MAX_MB", 20))),
+                       logo_url=app.extensions["branding"]["logo_url"]())   # v0.8.48
 
     @app.get("/api/public/batches")
     def public_batches():
@@ -1214,6 +1259,16 @@ def create_app(config=None):
     import learning
     ns = SimpleNamespace(db=db, rows=rows, one=one, raw_setting=raw_setting, audit=audit, err=err, auth=auth, need=need, UPLOADS=UPLOADS, store=store, has_perm=has_perm)
     ns.is_full_admin, ns.utc_stamp = is_full_admin, utc_stamp
+    ns.is_super, ns.super_ids, ns.super_only = is_super, super_ids, super_only   # v0.8.48
+    import branding, reportpdf   # v0.8.48: the academy logo; one PDF builder for every report
+    branding.register(app, ns)
+
+    def pdf_response(title, blocks, filename, subtitle="", landscape=True):
+        n = app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)
+        pdf = reportpdf.build(title, blocks, academy=setting("academy_name"), subtitle=subtitle, logo=app.extensions["branding"]["logo_bytes"](),
+                              landscape=landscape, generated=n.astimezone(MVT).strftime("%d %b %Y, %H:%M"))
+        return reportpdf.send(pdf, filename)
+    app.extensions["pdf"] = pdf_response
     presence.register(app, ns)   # v0.8.47: who is online; sign out, pause, suspend (full admins only)
     import notify
     notify.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 28: notifications (must come first: the modules below call ns.notify)
@@ -1247,6 +1302,8 @@ def create_app(config=None):
     # ---------- Phase 4: fees and payments (invoices, slips, receipts, reminders, reports) ----------
     import fees
     fees.register(app, ns)
+    import feereminders   # v0.8.48: reminders per person (total and months): Fees -> Reminders (WhatsApp), the student's Home, the daily notices
+    feereminders.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))
     transfers.register(app, ns)   # Session 13: transfer / withdrawal report
     import substitutions
     substitutions.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date(), utc_stamp)   # Session 22

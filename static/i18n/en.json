@@ -201,7 +201,7 @@
   "fx_tab_invoices": "Invoices",
   "fx_tab_record": "Record payment",
   "fx_tab_discounts": "Discounts and families",
-  "fx_tab_overdue": "Overdue and reminders",
+  "fx_tab_overdue": "Overdue invoices",
   "fx_tab_report": "Monthly report",
   "fx_tab_payrep": "Payment report",
   "fx_st_unpaid": "Unpaid",
@@ -1001,5 +1001,9 @@
   "failed_signins_24h": "{n} failed sign-ins (24 h)",
   "bulk_n_people": "{n} people ticked",
   "signout_all_hint": "Ends every open session except yours. People can sign in again straight away. Useful after a password leak or before an exam.",
-  "signed_out_n": "{n} accounts signed out"
+  "signed_out_n": "{n} accounts signed out",
+  "fx_tab_reminders": "Fee reminders (WhatsApp)",
+  "rem_hint": "One message per person with everything they owe and the months. Students also see it on their Home page and get a notice in the portal: overdue fees, and fees due in the next {n} days (Settings, Notifications). WhatsApp opens with the message written; press Send there.",
+  "rem_overdue_hint": "Everything past its due date, added up per person.",
+  "rem_soon_hint": "A reminder to settle the payment before the due date."
 }

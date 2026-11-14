@@ -199,16 +199,16 @@ class S28(unittest.TestCase):
         j = self.c.post("/api/notifications/run?dry_run=0", headers=self.H).get_json()
         self.assertEqual((j["dry_run"], j["fee_due_soon"], j["fee_overdue"], j["admin_digest"]), (False, 1, 1, 1))
         due = [i for i in self.inbox(self.S1)["items"] if i["kind"] == "fee_due_soon"]; self.assertEqual(len(due), 1)
-        self.assertIn("2027-03-12", due[0]["body"]); self.assertIn("1000 MVR", due[0]["body"])
+        self.assertIn("12 Mar 2027", due[0]["body"]); self.assertIn("MVR 1,000", due[0]["body"])   # v0.8.48: total and months, one notice per student
         od = [i for i in self.inbox(self.S2)["items"] if i["kind"] == "fee_overdue"]; self.assertEqual(len(od), 1)
-        self.assertIn("9 days", od[0]["body"]); self.assertIn("1000", od[0]["body"])
+        self.assertIn("9 days", od[0]["body"]); self.assertIn("MVR 1,000", od[0]["body"]); self.assertIn("Mar 2027", od[0]["body"])
         self.assertEqual(self.kinds(self.S3).count("fee_overdue"), 0)
         self.assertEqual(self.count("admin_overdue", 1), 1); self.assertEqual(self.count("admin_overdue", self.lim), 0)
         n = self.count()
         j2 = self.c.post("/api/notifications/run?dry_run=0", headers=self.H).get_json()
         self.assertEqual((j2["fee_due_soon"], j2["fee_overdue"], j2["assignment_due"], j2["admin_digest"]), (0, 0, 0, 0)); self.assertEqual(self.count(), n)
         st = self.c.get("/api/notifications/status", headers=self.H).get_json()
-        self.assertTrue(st["last_run"]); self.assertEqual((st["fee_days_before"], st["overdue_every_days"], st["assignment_days_before"]), (3, 7, 1))
+        self.assertTrue(st["last_run"]); self.assertEqual((st["fee_days_before"], st["overdue_every_days"], st["assignment_days_before"]), (5, 7, 1))   # v0.8.48: 5 days before by default
         self.assertTrue(any(r["action"] == "run_reminders" for r in self.sql("SELECT action FROM audit_log")))
 
     def test_13_overdue_repeats_every_n_days_and_digest_every_day(self):

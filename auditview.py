@@ -92,6 +92,23 @@ def register(app, c):
     @auth("admin", perm="audit")
     def audit_xlsx(): return audit_export("xlsx")   # v0.8.38
 
+    @app.get("/api/audit.pdf")
+    @auth("admin", perm="audit")
+    def audit_pdf():   # v0.8.48: at most 2,000 rows (a PDF is for reading; Excel has them all)
+        w, p, e = where_of(request.args)
+        if e: return err(e)
+        r = rows(f"SELECT a.*, u.full_name AS user_name {BASE}{w} ORDER BY a.id DESC LIMIT ?", (*p, 2000))
+        total = one(f"SELECT COUNT(*) n {BASE}{w}", p)["n"]
+        audit("export_audit_pdf", "report", None, f"{len(r)} rows" + (f"; filters: {dict(request.args)}" if request.args else "")); db().commit()
+        sub = " · ".join(f"{k}: {v}" for k, v in request.args.items() if v) or "Everything"
+        blocks = [("stats", [("Entries", total), ("In this PDF", len(r))])]
+        if total > len(r): blocks.append(("note", f"The newest {len(r):,} of {total:,} entries. Narrow the filters or download Excel for all of them."))
+        blocks.append(("table", ["When (UTC)", "Who", "Role", "Action", "What", "Details", "IP"],
+                       [[x["at"], x.get("user_name") or x.get("login_id") or "", x.get("user_role") or "", x["action"], f"{x.get('entity') or ''} {x.get('entity_id') or ''}".strip(),
+                         (x.get("detail") or "") + (f" ({x['old_value']} -> {x['new_value']})" if x.get("old_value") or x.get("new_value") else ""), x.get("ip") or ""] for x in r],
+                       {"widths": [1.9, 2, 1, 2, 1.4, 5, 1.3]}))
+        return app.extensions["pdf"]("Activity log", blocks, "activity-log", subtitle=sub)
+
     @app.get("/api/audit/summary")
     @auth("admin", perm="audit")
     def audit_summary():

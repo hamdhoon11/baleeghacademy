@@ -127,12 +127,14 @@ class Presence(unittest.TestCase):
         self.assertEqual(acts[-2:], ["account_suspend", "account_restore"])
 
     def test_07_only_full_admins(self):
+        # v0.8.48: every admin may LOOK (a limited admin gets the list and the tab); only the superadmin may act (see test_session48)
         L = self.tok("lim@s47.test", PW); T = self.tok("t1@s47.test", PW); S = self.tok("s2@s47.test", PW)
+        self.assertEqual(self.c.get("/api/admin/presence", headers=L).status_code, 200)
         for H, code in ((L, 403), (T, 403), (S, 403), ({}, 401)):
-            self.assertEqual(self.c.get("/api/admin/presence", headers=H).status_code, code)
+            if H is not L: self.assertEqual(self.c.get("/api/admin/presence", headers=H).status_code, code)
             for what in ("signout", "pause", "suspend", "restore"):
                 self.assertEqual(self.act(self.s1, what, {"reason": "x", "hours": 1}, H=H).status_code, code, what)
-        self.assertNotIn("online", self.c.get("/api/auth/me", headers=L).get_json()["user"]["tabs"])
+        self.assertIn("online", self.c.get("/api/auth/me", headers=L).get_json()["user"]["tabs"])
         self.assertIn("online", self.c.get("/api/auth/me", headers=self.H).get_json()["user"]["tabs"])
         self.assertNotIn("online", self.c.get("/api/auth/me", headers=T).get_json()["user"]["tabs"])
 
@@ -195,7 +197,7 @@ class Presence(unittest.TestCase):
         self.assertNotIn("password", " ".join(str(e) for e in h["events"]).replace("wrong password", ""))   # never a password
         s = self.c.get("/api/admin/presence/summary", headers=self.H).get_json()
         self.assertGreaterEqual(s["failed_24h"], 3); self.assertIn("online", s["counts"]); self.assertGreaterEqual(s["counts"]["warnings"], 1)
-        self.assertEqual(self.c.get(f"/api/admin/accounts/{self.s2}/history", headers=self.tok("lim@s47.test", PW)).status_code, 403)
+        self.assertEqual(self.c.get(f"/api/admin/accounts/{self.s2}/history", headers=self.tok("lim@s47.test", PW)).status_code, 200)   # v0.8.48: any admin may look
 
     def test_13_pause_end_notice_and_message_to_person(self):
         self.assertEqual(self.act(self.t1, "pause", {"hours": 1, "message": "Back after the exam board meeting"}).status_code, 200)

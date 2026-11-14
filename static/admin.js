@@ -139,6 +139,7 @@ views.people = async () => {
         if (e.role === "teacher") body.bio = nv("eu_bio");
         // permissions are sent only when the role is unchanged (changing the role resets them to "everything the new role has")
         if (full && e.id !== self && body.role === e.role) body.permissions = $("#pm_limited").checked ? [...document.querySelectorAll('input[name="pa"]:checked')].map(i => i.value) : "all";
+        if ($("#eu_super") && $("#eu_super").checked !== !!e.is_super) body.is_super = $("#eu_super").checked;   // v0.8.48
         await api("/users/" + e.id, "PATCH", body); closeDetail({eu: null});
       });
     }
@@ -150,13 +151,17 @@ views.people = async () => {
   const permAll = {admin: "Full admin (everything, including other admins' permissions)", teacher: "Everything a teacher has", student: "Everything a student has"};
   const perms = e && e.id !== self ? (full ? `<fieldset class="full days"><legend>${esc(t(permTitle[e.role]))}</legend><label><input type="radio" name="pm" id="pm_full" ${e.permissions === null ? "checked" : ""}> <span>${esc(t(permAll[e.role]))}</span></label><label><input type="radio" name="pm" id="pm_limited" ${e.permissions !== null ? "checked" : ""}> <span>${esc(t("Limited to the areas ticked below"))}</span></label><div id="pm_box" style="flex:1 1 100%;display:flex;flex-wrap:wrap;gap:.3rem">${ROLE_AREAS[e.role].map(k => `<label><input type="checkbox" name="pa" value="${k}" ${(e.permissions || []).includes(k) ? "checked" : ""}> <span>${esc(t(AREA_LABELS[k]))}</span></label>`).join("")}</div><p class="full m0 hint">${esc(t("Changing the role resets these permissions. Save the new role first, then set permissions."))}</p></fieldset>` : `<p class="hint">${esc(t("Only a full admin can change permissions."))}</p>`)
     : e && e.id === self ? `<p class="hint">${esc(t("You cannot change your own role or permissions. Ask another full admin."))}</p>` : "";
+  // v0.8.48: the superadmin box (only a superadmin sees it, only on another active full admin)
+  const sup = !e || e.role !== "admin" ? "" : e.is_super && e.id === self ? `<p class="full hint">${tag(t("Superadmin"), "ok")} ${esc(t("You are the superadmin: only you can clear the portal's data and sign out, pause or suspend accounts."))}</p>`
+    : S.user.is_super && e.id !== self ? `<label class="inl full"><input type="checkbox" id="eu_super" ${e.is_super ? "checked" : ""}> ${esc(t("Superadmin (can clear the portal's data and sign out, pause or suspend accounts)"))}</label>`
+    : e.is_super ? `<p class="full msg warn">${esc(t("This is the superadmin's account. Only the superadmin can change it."))}</p>` : "";
   if (e) S.euInfo = {name: e.full_name, role: e.role, login: e.login_id, enr: e.enrollments, taught: e.batches_taught};
-  const editor = e ? `<div class="panel" data-detail><h2>${esc(t("edit"))}: ${esc(e.full_name)} ${tag(t(e.role))}</h2><form class="row" id="fue">${iv("eu_n", "name", e.full_name)}${iv("eu_l", "Login ID", e.login_id, "text", 'autocomplete="off"')}${iv("eu_e", "email", e.email, "email")}${iv("eu_p", "Phone", e.phone, "tel")}${e.id === self ? "" : sel("eu_r", "role", roles, e.role)}${prof}${perms}${iv("eu_pw", "Set a new password (leave empty to keep)", "", "text", 'autocomplete="off"')}<label class="inl"><input type="checkbox" id="eu_mc" ${e.must_change_password ? "checked" : ""}> ${esc(t("Must change password at next sign-in"))}</label><label class="inl"><input type="checkbox" id="eu_a" ${e.is_active ? "checked" : ""} ${e.id === self ? "disabled" : ""}> ${esc(t("Account active"))}</label>${bar(`<button class="btn alt">${t("save")}</button>`, `<button type="button" class="btn" data-do="euClose">${t("cancel")}</button>`, e.id === self ? "" : `<button type="button" class="btn" data-do="euReset" data-id="${e.id}">${esc(t("Reset password"))}</button> <button type="button" class="btn danger" data-do="euDel" data-id="${e.id}">${t("delete")}</button>`)}</form><p class="hint">${esc(t("Enrollments"))}: ${e.enrollments} · ${esc(t("Batches taught"))}: ${e.batches_taught}. ${esc(t("People with enrollments, grades or invoices cannot be deleted or change role. Disable the account instead."))}</p></div>` : "";
+  const editor = e ? `<div class="panel" data-detail><h2>${esc(t("edit"))}: ${esc(e.full_name)} ${tag(t(e.role))}</h2><form class="row" id="fue">${iv("eu_n", "name", e.full_name)}${iv("eu_l", "Login ID", e.login_id, "text", 'autocomplete="off"')}${iv("eu_e", "email", e.email, "email")}${iv("eu_p", "Phone", e.phone, "tel")}${e.id === self ? "" : sel("eu_r", "role", roles, e.role)}${prof}${perms}${sup}${iv("eu_pw", "Set a new password (leave empty to keep)", "", "text", 'autocomplete="off"')}<label class="inl"><input type="checkbox" id="eu_mc" ${e.must_change_password ? "checked" : ""}> ${esc(t("Must change password at next sign-in"))}</label><label class="inl"><input type="checkbox" id="eu_a" ${e.is_active ? "checked" : ""} ${e.id === self ? "disabled" : ""}> ${esc(t("Account active"))}</label>${bar(`<button class="btn alt">${t("save")}</button>`, `<button type="button" class="btn" data-do="euClose">${t("cancel")}</button>`, e.id === self ? "" : `<button type="button" class="btn" data-do="euReset" data-id="${e.id}">${esc(t("Reset password"))}</button> <button type="button" class="btn danger" data-do="euDel" data-id="${e.id}">${t("delete")}</button>`)}</form><p class="hint">${esc(t("Enrollments"))}: ${e.enrollments} · ${esc(t("Batches taught"))}: ${e.batches_taught}. ${esc(t("People with enrollments, grades or invoices cannot be deleted or change role. Disable the account instead."))}</p></div>` : "";
   // search (name, login ID, email) and paging on the client: GET /api/users has no search parameter
   const q = (S.pq || "").toLowerCase(), lim = S.plim || 30;
   const found = q ? u.filter(x => [x.full_name, x.login_id, x.email].some(v => String(v || "").toLowerCase().includes(q))) : u;
   const canBulk = x => x.id !== self;
-  const rows = found.slice(0, lim).map(x => `<tr><td>${canBulk(x) ? bulkBox("ppl", x.id, x.full_name) + " " : ""}${esc(x.full_name)}</td><td>${esc(x.login_id || "")}</td><td>${esc(x.email)}</td><td>${esc(t(x.role))}${x.permissions !== null ? " " + tag(t("Limited"), "warn") : x.role === "admin" ? " " + tag(t("Full"), "ok") : ""}</td><td>${x.is_active ? "✓" : "✗"}<span class="sr-only">${esc(t(x.is_active ? "active" : "inactive"))}</span></td><td><button class="btn sm" data-do="euEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("");
+  const rows = found.slice(0, lim).map(x => `<tr><td>${canBulk(x) ? bulkBox("ppl", x.id, x.full_name) + " " : ""}${esc(x.full_name)}</td><td>${esc(x.login_id || "")}</td><td>${esc(x.email)}</td><td>${esc(t(x.role))}${x.permissions !== null ? " " + tag(t("Limited"), "warn") : x.is_super ? " " + tag(t("Superadmin"), "ok") : x.role === "admin" ? " " + tag(t("Full"), "ok") : ""}</td><td>${x.is_active ? "✓" : "✗"}<span class="sr-only">${esc(t(x.is_active ? "active" : "inactive"))}</span></td><td><button class="btn sm" data-do="euEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("");
   const listbar = `<form id="pqf" class="listbar" role="search"><label>${esc(t("role"))}<select id="pf"><option value="">${esc(t("all"))}</option>${roles.map(r => `<option value="${r[0]}" ${r[0] === roleF ? "selected" : ""}>${esc(r[1])}</option>`).join("")}</select></label><label>${esc(t("search"))}<input id="pq" type="search" value="${esc(S.pq || "")}" placeholder="${esc(t("people_search_hint"))}"></label><button class="btn">${t("search")}</button></form>`;
   const add = addPanel("person", "Add person", form("fu", field("un", "name") + field("ue", "email", "email") + field("up", "password", "password") + field("ur", "role", "", roles)));
   return `${e ? crumbFor(e.full_name, {eu: null}) : ""}<h1>${t("people")}</h1>${tmpPanel()}${helpPanel(help)}${editor}${add}<div class="panel">${listbar}${bulkBar("ppl", [["peBulkOn", "bulk_activate"], ["peBulkOff", "bulk_deactivate", true]], found.slice(0, lim).filter(canBulk).map(x => x.id))}${bulkAll("ppl", found.slice(0, lim).filter(canBulk).map(x => x.id))}${found.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("Login ID")}</th><th>${t("email")}</th><th>${t("role")}</th><th>${t("is_active")}</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "peMore")}</div>${impPanel()}`;
@@ -198,7 +203,7 @@ DO.euDel = async d => {
 views.enrollments = async () => {
   const [e, st, b, ev] = await Promise.all([api("/enrollments"), api("/users?role=student"), api("/batches"), api("/enrollment-events")]);
   const m = e.find(x => x.id === S.em);
-  const hist = `<div class="panel"><h2>${t("Transfers and withdrawals")}</h2><p><button class="btn sm alt" data-do="evCsv">${t("Download CSV")}</button> <button class="btn sm alt" data-do="evXlsx">${t("Download Excel")}</button></p>${ev.length ? `<table><thead><tr><th>${t("date")}</th><th>${t("kind")}</th><th>${t("student_name")}</th><th>${t("Previous batch")}</th><th>${t("New batch")}</th><th>${t("Reason")}</th></tr></thead><tbody>${ev.map(x => `<tr><td>${esc(x.effective_date || "?")}</td><td>${esc(t(x.kind === "transfer" ? "Transfer" : "Withdrawal"))}</td><td>${esc(x.student_name)} <span class="hint">${esc(x.student_code || "")}</span></td><td>${esc((x.from_course || "") + " " + (x.from_batch_code || ""))}</td><td>${esc((x.to_course || "") + " " + (x.to_batch_code || ""))}</td><td>${esc(x.reason || "")}</td></tr>`).join("")}</tbody></table>` : `<p class="hint">${t("empty")}</p>`}</div>`;
+  const hist = `<div class="panel"><h2>${t("Transfers and withdrawals")}</h2><p><button class="btn sm alt" data-do="evCsv">${t("Download CSV")}</button> <button class="btn sm alt" data-do="evXlsx">${t("Download Excel")}</button> <button class="btn sm alt" data-do="evPdf">${t("Download PDF")}</button></p>${ev.length ? `<table><thead><tr><th>${t("date")}</th><th>${t("kind")}</th><th>${t("student_name")}</th><th>${t("Previous batch")}</th><th>${t("New batch")}</th><th>${t("Reason")}</th></tr></thead><tbody>${ev.map(x => `<tr><td>${esc(x.effective_date || "?")}</td><td>${esc(t(x.kind === "transfer" ? "Transfer" : "Withdrawal"))}</td><td>${esc(x.student_name)} <span class="hint">${esc(x.student_code || "")}</span></td><td>${esc((x.from_course || "") + " " + (x.from_batch_code || ""))}</td><td>${esc((x.to_course || "") + " " + (x.to_batch_code || ""))}</td><td>${esc(x.reason || "")}</td></tr>`).join("")}</tbody></table>` : `<p class="hint">${t("empty")}</p>`}</div>`;
   const bo = b.filter(x => x.course_active).map(x => [x.id, x.course_name + " " + x.code]);   // inactive courses are not offered for new enrolments
   mount(() => {
     onSubmit("fe", () => { if (!val("es")) throw new Error(t("Choose a student")); if (!val("eb")) throw new Error(t("Choose a batch")); return api("/enrollments", "POST", {student_id: val("es"), batch_id: val("eb"), start_date: val("esd") || undefined}).then(r => r.earlier_invoices ? t("saved") + " " + t("earlier_invoices_made").replace("{n}", r.earlier_invoices) : r); });
@@ -244,6 +249,7 @@ DO.emMove = async d => {
   await api("/enrollments/" + d.id, "PATCH", {transfer_to_batch_id: val("em_b"), reason}); closeDetail({em: null}); flash(t("saved"), true);
 };
 DO.evCsv = () => fetchFile("/enrollment-events.csv", {name: "transfers-withdrawals.csv"});
+DO.evPdf = () => fetchFile("/enrollment-events.pdf", {name: "transfers-withdrawals.pdf"});   // v0.8.48
 DO.evXlsx = () => fetchFile("/enrollment-events.xlsx", {name: "transfers-withdrawals.xlsx"});   // v0.8.38
 DO.emDel = async d => {
   const i = S.emInfo || {};
@@ -321,9 +327,27 @@ views.settings = async () => {
     p.addEventListener("input", mark); p.addEventListener("change", mark);
   });
   const store = await storagePanel();
-  return `<h1>${t("settings")}</h1>${store.banner}${tabs({id: "settings", items: sc.groups.map(x => [x.id, t(x.title)]), current: g.id, onSelect: setSelect, label: t("settings")})}<div class="mt1 panel" id="setp"><h2>${esc(t(g.title))}</h2>${g.hint ? `<p class="hint">${esc(t(g.hint))}</p>` : ""}${g.items.map(input).join("")}<p><button class="btn" data-do="saveSet">${t("save")}</button> <span class="tag warn" id="setDirty" hidden>${esc(t("Unsaved changes"))}</span></p><p class="hint">${esc(t("Empty fields use the default. Every change is written to the audit log."))}</p></div>${store.panel}${resetPanel()}`;
+  return `<h1>${t("settings")}</h1>${store.banner}${tabs({id: "settings", items: sc.groups.map(x => [x.id, t(x.title)]), current: g.id, onSelect: setSelect, label: t("settings")})}<div class="mt1 panel" id="setp"><h2>${esc(t(g.title))}</h2>${g.hint ? `<p class="hint">${esc(t(g.hint))}</p>` : ""}${g.id === "academy" ? logoPanel() : ""}${g.items.map(input).join("")}<p><button class="btn" data-do="saveSet">${t("save")}</button> <span class="tag warn" id="setDirty" hidden>${esc(t("Unsaved changes"))}</span></p><p class="hint">${esc(t("Empty fields use the default. Every change is written to the audit log."))}</p></div>${store.panel}${resetPanel()}`;
 };
 DO.setTab = d => { S.sg = d.g; };
+// v0.8.48: the academy logo (sign-in page, menu, application form, browser tab, receipts and every report PDF)
+function logoPanel() {
+  const u = S.info && S.info.logo_url;
+  return `<div class="sub" id="logop"><b>${esc(t("Academy logo"))}</b><div class="rowflex mt1">${u ? `<img src="${esc(u)}" alt="${esc(t("Academy logo"))}" style="max-height:64px;max-width:200px;border:1px solid var(--line);border-radius:8px;padding:4px;background:#fff">` : `<span class="mark" aria-hidden="true" style="background:var(--sun);color:var(--lagoon-d)">ب</span> <span class="hint">${esc(t("No logo yet: the built-in mark is shown."))}</span>`}</div>`
+    + `<div class="rowflex mt1"><label>${esc(t("Choose a picture"))}<input type="file" id="logo_f" accept=".png,.jpg,.jpeg,image/png,image/jpeg"></label><button type="button" class="btn" data-do="logoUp">${esc(t(u ? "Change logo" : "Upload logo"))}</button>${u ? `<button type="button" class="btn alt danger" data-do="logoDel">${esc(t("Remove logo"))}</button>` : ""}</div>`
+    + `<p class="hint">${esc(t("PNG or JPG, up to 1 MB. A square or wide picture with a clear background works best. Shown on the sign-in page, in the menu, on the application form, on receipts and on every PDF report."))}</p></div>`;
+}
+const logoRefresh = async () => { try { S.info = await api("/public/info"); } catch (_) {} applyLogo(); };
+DO.logoUp = async () => {
+  const f = $("#logo_f"); if (!f || !f.files[0]) { flash(t("Choose a PNG or JPG picture"), false); return false; }
+  if (f.files[0].size > 1024 * 1024) { flash(t("The logo can be up to 1 MB. Make the picture smaller and try again."), false); return false; }
+  const fd = new FormData(); fd.append("file", f.files[0]);
+  await apiForm("/settings/logo", fd); await logoRefresh(); flash(t("Logo saved"), true);
+};
+DO.logoDel = async () => {
+  if (!await ui.confirm(t("Remove the logo? The built-in mark is shown again."), {okText: t("Remove logo")})) return false;
+  await api("/settings/logo", "DELETE"); await logoRefresh(); flash(t("Logo removed"), true);
+};
 
 // ---------- student information (Session 6): admins find a student and see profile, batches, attendance, grades and fees in one place ----------
 const siMoney = n => "MVR " + fmtNum(n || 0);
@@ -419,7 +443,7 @@ views.audit = async () => {
   const filters = form("fal", field("al_login_id", "Login ID") + field("al_role", "role", "text", roles) + field("al_action", "action", "text", [["", t("all")], ...acts.map(x => [x, x])])
     + field("al_batch_id", "batch", "text", [["", t("all")], ...b.map(x => [x.id, x.course_name + " " + x.code])]) + field("al_date_from", "From", "date") + field("al_date_to", "To", "date") + field("al_q", "Words in detail"), "Filter");
   const chips = sm ? `<div class="panel"><h2>${t("What has this " + (f.user_id ? "user" : "batch") + " done?")}</h2><p>${sm.total} ${t("actions")}${sm.first_at ? ` · ${esc(fmtTime(sm.first_at))} → ${esc(fmtTime(sm.last_at))}` : ""}</p><p>${sm.by_action.map(x => `<span class="chip">${esc(x.action)}: ${x.n}</span>`).join(" ")}</p>${f.batch_id ? `<p>${sm.by_user.map(x => `${esc(x.user_name || "?")} (${esc(x.user_role || "")}): ${x.n}`).join(" · ")}</p>` : ""}<p><button class="btn sm alt" data-do="alClear">${t("Show everything again")}</button></p></div>` : "";
-  const nav = `<p><button class="btn sm alt" data-do="alPage" data-n="-1" ${S.al.page <= 1 ? "disabled" : ""}>${t("Previous")}</button> ${t("Page")} ${S.al.page} <button class="btn sm alt" data-do="alPage" data-n="1" ${hasNext ? "" : "disabled"}>${t("Next")}</button> <button class="btn sm alt" data-do="alCsv">${t("Download CSV")}</button> <button class="btn sm alt" data-do="alXlsx">${t("Download Excel")}</button></p>`;
+  const nav = `<p><button class="btn sm alt" data-do="alPage" data-n="-1" ${S.al.page <= 1 ? "disabled" : ""}>${t("Previous")}</button> ${t("Page")} ${S.al.page} <button class="btn sm alt" data-do="alPage" data-n="1" ${hasNext ? "" : "disabled"}>${t("Next")}</button> <button class="btn sm alt" data-do="alCsv">${t("Download CSV")}</button> <button class="btn sm alt" data-do="alXlsx">${t("Download Excel")}</button> <button class="btn sm alt" data-do="alPdf">${t("Download PDF")}</button></p>`;
   const kv = (k, v) => v != null && v !== "" ? `<tr><th scope="row">${esc(t(k))}</th><td>${esc(v)}</td></tr>` : "";
   const rows = r.map((x, i) => `<tr><td><bdi dir="ltr">${esc(fmtTime(x.at))}</bdi></td><td>${esc(x.user_name || "–")}${x.user_role ? ` <span class="hint">${esc(t(x.user_role))}</span>` : ""}</td><td>${esc(x.action)}</td><td>${esc(x.entity || "")}${x.entity_id != null ? " " + esc(x.entity_id) : ""}</td><td>${esc(x.detail || "")}</td><td><button type="button" class="btn sm alt" data-do="alMore" data-id="${i}" aria-expanded="false" aria-controls="alx_${i}">${t("More")}</button></td></tr>`
     + `<tr class="xrow" id="alx_${i}" hidden><td colspan="6" data-label=""><table class="kv nostack"><tbody>${kv("role", x.user_role && t(x.user_role))}${kv("Login ID", x.login_id)}${kv("batch", x.batch_id)}${kv("Old value", x.old_value)}${kv("New value", x.new_value)}${kv("IP", x.ip)}</tbody></table><p>${x.user_id ? `<button class="btn sm alt" data-do="alUser" data-id="${x.user_id}">${t("This user")}</button> ` : ""}${x.batch_id ? `<button class="btn sm alt" data-do="alBatch" data-id="${x.batch_id}">${t("This batch")}</button>` : ""}</p></td></tr>`).join("");
@@ -432,6 +456,7 @@ DO.alBatch = d => { S.al = {page: 1, f: {batch_id: d.id}}; window.scrollTo(0, 0)
 DO.alClear = () => { S.al = {page: 1, f: {}}; };
 DO.alPage = d => { S.al.page = Math.max(1, S.al.page + (+d.n)); };
 DO.alCsv = () => fetchFile("/audit.csv?" + alQuery(), {name: "activity-log.csv"});
+DO.alPdf = () => fetchFile("/audit.pdf?" + alQuery(), {name: "activity-log.pdf"});   // v0.8.48
 DO.alXlsx = () => fetchFile("/audit.xlsx?" + alQuery(), {name: "activity-log.xlsx"});   // v0.8.38
 
 // ---------- Finance (Sessions 23, 24, 30, 31; one view since Session 8): dashboard, revenue, teacher earnings, then expenses and categories ----------
@@ -460,6 +485,7 @@ async function fnDashPanel() {   // financial dashboard and revenue (Session 24)
   const b = fnTable(["batch", "Course", "Collected"], rev.by_batch.map(r => `<tr><td>${esc(r.batch_code || "-")}</td><td>${esc(r.course_name || t("fx_no_course"))}</td><td>${fnMoney(r.collected)}</td></tr>`).join(""));
   return `<h2>${t("Financial dashboard")}</h2><p class="hint">${esc(dash.date_from || "")} → ${esc(dash.date_to || "")}</p>${cards}`
     + `<div class="panel"><h2>${t("Revenue")}</h2><p class="hint">${t("Revenue is money actually received (reversed payments are not counted).")}</p>${filt}`
+    + `<p><button type="button" class="btn sm alt" data-do="finPdf">${t("Download PDF")}</button></p>`
     + `<p>${t("Total collected")}: <b>${fnMoney(rev.total_collected)}</b> · ${t("Outstanding")}: <b>${fnMoney(rev.outstanding)}</b> · ${t("Course")}: ${fnMoney(rev.by_kind.course)} · ${t("Tuition class")}: ${fnMoney(rev.by_kind.tuition)}${rev.by_kind.other ? ` · ${t("fx_no_course")}: ${fnMoney(rev.by_kind.other)}` : ""}</p>${ty}${m}${c}${b}</div>`;
 }
 async function fnExpensesPanels() {   // expenses, categories, receipts (Session 23). Needs the "finance" area; the server refuses everyone else.
@@ -523,6 +549,7 @@ views.finance = async () => {
   const [dash, earn, exp] = await Promise.all([fnDashPanel(), feEarnPanel(), fnExpensesPanels()]);
   return `<h1>${t("finance")}</h1>${dash}${earn}${exp}`;
 };
+DO.finPdf = () => { const f = (S.fr || {}).f || {}; return fetchFile("/finance/report.pdf?" + new URLSearchParams(Object.entries(f).filter(([, v]) => v)).toString(), {name: "finance-report.pdf"}); };   // v0.8.48
 DO.fnPage = d => { S.fn.page = Math.max(1, S.fn.page + (+d.n)); };
 DO.fnEdit = d => { S.fn.edit = +d.id; window.scrollTo(0, 0); };
 DO.fnCancel = () => { S.fn.edit = null; };
@@ -554,7 +581,7 @@ async function feEarnPanel() {
     <div class="rowflex row"><label>${esc(t("Month"))}<input type="month" id="fe_month" placeholder="YYYY-MM" pattern="\\d{4}-\\d{2}"></label>
     <button class="btn" data-do="feShow">${esc(t("Show"))}</button><button class="btn alt" data-do="feCalc" ${approved ? "disabled" : ""}>${esc(t("Calculate"))}</button>
     <button class="btn" data-do="feApprove" data-total="${r.totals.teacher_share_mvr}" ${approved || !r.items.length ? "disabled" : ""}>${esc(t("Approve month"))}</button>
-    <button class="btn" data-do="feCsv">CSV</button><button class="btn" data-do="feXlsx">Excel</button></div>
+    <button class="btn" data-do="feCsv">CSV</button><button class="btn" data-do="feXlsx">Excel</button><button class="btn" data-do="fePdf">PDF</button></div>
     ${monthErr ? `<p class="msg err" role="alert">${esc(m)}: ${esc(monthErr)}</p>` : ""}
     ${!monthErr && !r.items.length ? `<p class="hint">${esc(t("fe_empty_hint"))}</p>` : ""}
     ${fnTable(["Teacher", "Batch", "Collected", "Share", "Teacher share", "Academy share", "status"], rowsHtml)}
@@ -577,6 +604,7 @@ DO.fePay = async d => {
 };
 DO.feVoid = async d => { const why = await ui.ask(t("Void") + ": " + (d.name || ""), {label: t("Reason"), required: true, multiline: true, okText: t("Void"), danger: true}); if (!why) return false; await api("/earnings/payments/" + d.id + "/void", "POST", {reason: why}); flash(t("saved"), true); };
 DO.feCsv = () => fetchFile("/earnings/report.csv?from=" + (val("fe_month") || feMonth()) + "&to=" + (val("fe_month") || feMonth()), {name: "teacher-earnings.csv"});
+DO.fePdf = () => fetchFile("/earnings/report.pdf?from=" + (val("fe_month") || feMonth()) + "&to=" + (val("fe_month") || feMonth()), {name: "teacher-earnings.pdf"});   // v0.8.48
 DO.feXlsx = () => fetchFile("/earnings/report.xlsx?from=" + (val("fe_month") || feMonth()) + "&to=" + (val("fe_month") || feMonth()), {name: "teacher-earnings.xlsx"});
 
 // ---------- Admin dashboard (Session 25; the only Dashboard since Session 8): academic and financial cards with filters, from one endpoint ----------
@@ -655,6 +683,7 @@ DO.stCheck = async () => { S.stMissing = await api("/admin/storage/missing"); };
 // ---------- v0.8.41: clear portal data (full admins only). Preview first, then the admin's password and the words DELETE ALL DATA ----------
 function resetPanel() {
   if (S.user.role !== "admin" || S.user.permissions) return "";
+  if (!S.user.is_super) return `<div class="panel mt1" id="resetp"><h2>${esc(t("rd_title"))}</h2><p class="hint">${esc(t("Only the superadmin can clear the portal's data."))}</p></div>`;   // v0.8.48
   return `<div class="panel mt1" id="resetp"><h2>${esc(t("rd_title"))}</h2><p class="hint">${esc(t("rd_hint"))}</p>`
     + `<p><button type="button" class="btn danger" data-do="rdStart">${esc(t("rd_button"))}</button></p></div>`;
 }
@@ -728,7 +757,9 @@ views.online = async () => {
   const bar_ = `<form id="on_qf" class="listbar" role="search"><label>${esc(t("role"))}${sel_("on_role", f.role, [["", "all"], ["student", "Students"], ["teacher", "Teachers"], ["admin", "Admins"]])}</label>`
     + `<label>${esc(t("Status"))}${sel_("on_st", f.st, [["", "all"], ["online", "Online"], ["away", "Away"], ["offline", "Offline"], ["paused", "Paused"], ["suspended", "Suspended"], ["disabled", "Disabled"], ["warnings", "Warnings"]])}</label>`
     + `<label>${esc(t("search"))}<input id="on_q" type="search" value="${esc(f.q || "")}" placeholder="${esc(t("Name, login ID or IP"))}"></label><button class="btn">${t("search")}</button></form>`;
+  const can = !!d.can_act;   // v0.8.48: every admin sees the list; only the superadmin signs out, pauses, suspends (bans) or restores
   const acts = p => {
+    if (!can) return `<div class="rowflex"><button type="button" class="btn sm alt" data-do="onHist" data-id="${p.id}">${esc(t("History"))}</button></div>`;
     const b = (k, label, cls = "") => `<button type="button" class="btn sm ${cls}" data-do="${k}" data-id="${p.id}">${esc(t(label))}</button>`;
     const hist = b("onHist", "History", "alt");
     if (p.is_self) return `<div class="rowflex"><span class="hint">${esc(t("You"))}</span>${hist}</div>`;
@@ -743,19 +774,20 @@ views.online = async () => {
       : p.account === "suspended" ? `${fmtTime(p.suspended_at)}${p.suspend_reason ? " · " + p.suspend_reason : ""}` : "";
     return tag(t(lbl), cls) + (why ? `<br><span class="hint">${esc(why)}</span>` : "") + (p.message ? `<br><span class="hint">${esc(t("Message to the person"))}: ${esc(p.message)}</span>` : "");
   };
-  const shown = list.slice(0, S.onlim || 50), canBulk = p => !p.is_self;
+  const shown = list.slice(0, S.onlim || 50), canBulk = p => can && !p.is_self;
   const rows = shown.map(p => {
     const [sl, sc] = ON_ST[p.status], w = onWarn(p, lim);
-    return `<tr><td><div>${canBulk(p) ? bulkBox("onl", p.id, p.full_name) + " " : ""}<b>${esc(p.full_name)}</b>${p.full_admin ? " " + tag(t("Full"), "ok") : ""}<br><span class="hint"><bdi dir="ltr">${esc(p.login_id || "")}</bdi></span>${w ? "<br>" + w : ""}</div></td><td>${esc(t(p.role))}</td>`
+    return `<tr><td><div>${canBulk(p) ? bulkBox("onl", p.id, p.full_name) + " " : ""}<b>${esc(p.full_name)}</b>${p.is_super ? " " + tag(t("Superadmin"), "ok") : p.full_admin ? " " + tag(t("Full"), "ok") : ""}<br><span class="hint"><bdi dir="ltr">${esc(p.login_id || "")}</bdi></span>${w ? "<br>" + w : ""}</div></td><td>${esc(t(p.role))}</td>`
       + `<td><div>${tag(t(sl), sc)} <span class="hint">${esc(p.status === "online" ? t("now") : onAgo(p.last_seen_at, d.now))}</span></div></td>`
       + `<td><div>${esc(p.device || "–")}${p.ip ? `<br><span class="hint"><bdi dir="ltr">${esc(p.ip)}</bdi></span>` : ""}</div></td><td><bdi dir="ltr">${esc(p.last_login_at ? fmtTime(p.last_login_at) : t("never"))}</bdi></td><td><div>${accCell(p)}</div></td><td>${acts(p)}</td></tr>`;
   }).join("");
   const ids = shown.filter(canBulk).map(p => p.id);
-  const bulk = bulkBar("onl", [["onBulkKick", "Sign out"], ["onBulkPause", "Pause"], ["onBulkSuspend", "Suspend", true], ["onBulkRestore", "Restore"]], ids) + bulkAll("onl", ids);
+  const bulk = !can ? "" : bulkBar("onl", [["onBulkKick", "Sign out"], ["onBulkPause", "Pause"], ["onBulkSuspend", "Suspend", true], ["onBulkRestore", "Restore"]], ids) + bulkAll("onl", ids);
   const table = list.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("role")}</th><th>${t("Status")}</th><th>${t("Device")}</th><th>${t("Last sign-in")}</th><th>${t("Account")}</th><th>${t("actions")}</th></tr></thead><tbody>${rows}</tbody></table>` : `<p>${t("no_match")}</p>`;
   const more = moreBtn(0, Math.min(S.onlim || 50, list.length), list.length, "onMore");
   return `<h1>${t("online")}</h1><p class="hint">${esc(t("online_hint"))}</p>${cards}<div class="panel">${bar_}${bulk}${table}${more}</div>`
-    + `<div class="panel"><h2>${esc(t("Sign out everyone"))}</h2><p class="hint">${esc(t("signout_all_hint"))}</p><p><button type="button" class="btn danger" data-do="onKickAll">${esc(t("Sign out everyone"))}…</button></p></div>`
+    + (can ? `<div class="panel"><h2>${esc(t("Sign out everyone"))}</h2><p class="hint">${esc(t("signout_all_hint"))}</p><p><button type="button" class="btn danger" data-do="onKickAll">${esc(t("Sign out everyone"))}…</button></p></div>`
+      : `<p class="msg warn">${esc(t("Only the superadmin can sign people out, pause, suspend (ban) or restore accounts. You can see who is online."))}</p>`)
     + `<p class="hint">${esc(t("Updated"))} <bdi dir="ltr">${esc(fmtTime(d.now))}</bdi> · ${esc(t("Times are Maldives time."))} <button type="button" class="btn sm" data-do="onRefresh">${esc(t("Refresh"))}</button></p>`;
 };
 DO.onMore = () => { S.onlim = (S.onlim || 50) + 50; };
