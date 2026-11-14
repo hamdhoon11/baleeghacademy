@@ -54,6 +54,18 @@ class S53(unittest.TestCase):
         self.assertEqual(self.c.get("/api/fees/status-grid?end=bad", headers=self.H).status_code, 400)
         self.assertEqual(self.c.get("/api/fees/status-grid").status_code, 401)
 
+    def test_03_pdf(self):   # v0.8.54
+        r = self.c.get("/api/fees/status-grid.pdf?months=3", headers=self.H)
+        self.assertEqual((r.status_code, r.mimetype), (200, "application/pdf")); self.assertTrue(r.data.startswith(b"%PDF"))
+        try:
+            from pypdf import PdfReader; import io
+            txt = "".join(p.extract_text() for p in PdfReader(io.BytesIO(r.data)).pages)
+            for w in ("Fee status by batch", "Arabic A1", "Aisha", "Sep 2026", "Collected", "To pay", "OK 500", "1/2 300", "Overdue"): self.assertIn(w, txt)
+        except ImportError: pass
+        self.assertEqual(self.c.get(f"/api/fees/status-grid.pdf?end=2026-10&months=1&batch_id={self.b2}", headers=self.H).status_code, 200)
+        self.assertEqual(self.c.get("/api/fees/status-grid.pdf?end=bad", headers=self.H).status_code, 400)
+        self.assertEqual(self.c.get("/api/fees/status-grid.pdf").status_code, 401)
+
 
 if __name__ == "__main__":
     unittest.main()
