@@ -437,7 +437,8 @@ CREATE TABLE IF NOT EXISTS expenses (
   updated_by INTEGER REFERENCES users(id),
   updated_at TEXT,
   recurring_id INTEGER,          -- v0.8.37: written by a recurring rule (NULL = entered by hand)
-  recurring_month TEXT
+  recurring_month TEXT,
+  teacher_id INTEGER REFERENCES users(id)   -- v0.8.51: a salary paid to this teacher (also a row in teacher_payments, linked by expense_id)
 );
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);
 -- v0.8.37: monthly expenses. recurring_done records each month written, so a month deleted by hand is not written again.
@@ -497,7 +498,7 @@ CREATE TABLE IF NOT EXISTS teacher_earnings (
   teacher_id INTEGER REFERENCES users(id),     -- the batch's teacher when it was calculated (NULL = batch had no teacher)
   batch_id INTEGER NOT NULL REFERENCES batches(id),
   period TEXT NOT NULL,                         -- YYYY-MM
-  collected_mvr INTEGER NOT NULL DEFAULT 0,     -- paid in the month minus payments reversed in the month (can be negative)
+  collected_mvr INTEGER NOT NULL DEFAULT 0,     -- v0.8.51: fees FOR this month (invoice month) collected; a late row: collected after approval (can be negative)
   share_percent INTEGER NOT NULL DEFAULT 50,    -- teacher's percent used for this row
   teacher_share_mvr INTEGER NOT NULL DEFAULT 0,
   academy_share_mvr INTEGER NOT NULL DEFAULT 0,
@@ -505,9 +506,11 @@ CREATE TABLE IF NOT EXISTS teacher_earnings (
   calculated_at TEXT,
   calculated_by INTEGER REFERENCES users(id),
   approved_at TEXT,
-  approved_by INTEGER REFERENCES users(id)
+  approved_by INTEGER REFERENCES users(id),
+  seq INTEGER NOT NULL DEFAULT 0,               -- v0.8.51: 0 = the month's own row; 1, 2, ... = fees for the month collected after it was approved (accrued)
+  booked_month TEXT                             -- v0.8.51: for a late row, the month it was found (YYYY-MM)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ux_earn_batch_period ON teacher_earnings(batch_id, period);
+-- v0.8.51: unique per (batch, month, seq); created in dbx.init_schema after the seq column exists (it replaces ux_earn_batch_period)
 CREATE INDEX IF NOT EXISTS idx_earn_teacher ON teacher_earnings(teacher_id, period);
 
 -- Session 31: payments made to teachers out of approved earnings.
@@ -523,7 +526,8 @@ CREATE TABLE IF NOT EXISTS teacher_payments (
   created_at TEXT NOT NULL,
   voided_at TEXT,
   voided_by INTEGER REFERENCES users(id),
-  void_reason TEXT
+  void_reason TEXT,
+  expense_id INTEGER              -- v0.8.51: the matching expense (salary); one payment = one expense, kept in step
 );
 CREATE INDEX IF NOT EXISTS idx_tpay_teacher ON teacher_payments(teacher_id, paid_on);
 

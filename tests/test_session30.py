@@ -45,7 +45,7 @@ class S30(unittest.TestCase):
         finally: con.close()
 
     def calc(self, month="2027-03", H=None, **kw): return self.c.post("/api/earnings/calculate", json={"month": month, **kw}, headers=self.H if H is None else H)
-    def row(self, b): return {r["batch_id"]: r for r in self.c.get("/api/earnings?month=2027-03", headers=self.H).get_json()["items"]}[b]
+    def row(self, b): return {r["batch_id"]: r for r in self.c.get("/api/earnings?month=2027-03", headers=self.H).get_json()["items"] if not r["seq"]}[b]
 
     def test_01_default_split_ten_thousand(self):
         self.assertEqual(__import__("earnings").split(10000, 50), (5000, 5000))
@@ -78,16 +78,19 @@ class S30(unittest.TestCase):
         self.c.put("/api/settings", json={"revenue_share_percent": "50"}, headers=self.H)
 
     def test_05_reversal_in_a_later_month_is_a_correction_there(self):
+        # v0.8.51: by fee month. While March is a draft, a reversal simply lowers March; after March is approved it becomes a late (negative) row.
         pid = self.sql("SELECT id FROM payments WHERE invoice_id=? AND paid_on='2027-03-12'", (self.i[1],))[0][0]
-        self.assertEqual(self.c.post(f"/api/payments/{pid}/reverse", json={"reason": "x"}, headers=self.H).status_code, 200)   # reversed 'now' = March 20, same month
-        self.calc(); self.assertEqual(self.row(self.b1)["collected_mvr"], 1400)
-        self.sql("UPDATE payments SET reversed_at='2027-04-03 10:00:00' WHERE id=?", (pid,))
-        self.app.config["NOW"] = lambda: dt.datetime(2027, 4, 20, 12, 0, tzinfo=MVT)
+        self.calc(); self.assertEqual(self.row(self.b1)["collected_mvr"], 1500)
+        self.sql("UPDATE teacher_earnings SET status='approved' WHERE period='2027-03'")
         try:
-            self.calc("2027-03"); self.assertEqual(self.row(self.b1)["collected_mvr"], 1500)      # March still counts it
-            self.calc("2027-04"); a = {r["batch_id"]: r for r in self.c.get("/api/earnings?month=2027-04", headers=self.H).get_json()["items"]}
-            self.assertEqual((a[self.b1]["collected_mvr"], a[self.b1]["teacher_share_mvr"]), (-100, -50))   # the correction lands in April
-        finally: self.app.config["NOW"] = lambda: dt.datetime(2027, 3, 20, 12, 0, tzinfo=MVT)
+            self.assertEqual(self.c.post(f"/api/payments/{pid}/reverse", json={"reason": "x"}, headers=self.H).status_code, 200)
+            j = self.calc("2027-03").get_json(); self.assertEqual(j["mode"], "late")
+            self.assertEqual(self.row(self.b1)["collected_mvr"], 1500)      # the approved row is not changed
+            late = [r for r in self.c.get("/api/earnings?month=2027-03", headers=self.H).get_json()["items"] if r["seq"]]
+            self.assertEqual([(r["batch_id"], r["collected_mvr"], r["teacher_share_mvr"], r["status"]) for r in late], [(self.b1, -100, -50, "draft")])   # the correction
+        finally:
+            self.sql("DELETE FROM teacher_earnings WHERE period='2027-03' AND seq>0"); self.sql("UPDATE teacher_earnings SET status='draft' WHERE period='2027-03'")
+            self.sql("UPDATE payments SET reversed_at=NULL, reversed_by=NULL, reverse_reason=NULL WHERE id=?", (pid,)); self.sql("UPDATE invoices SET paid_mvr=paid_mvr WHERE id=?", (self.i[1],))
 
     def test_06_void_invoice_excluded(self):
         self.sql("UPDATE invoices SET status='void' WHERE id=?", (self.i[2],))
@@ -99,8 +102,8 @@ class S30(unittest.TestCase):
         self.calc(); self.sql("UPDATE teacher_earnings SET status='approved' WHERE period='2027-03'")
         before = self.sql("SELECT batch_id,collected_mvr,teacher_share_mvr FROM teacher_earnings WHERE period='2027-03' ORDER BY batch_id")
         self.c.post("/api/payments", json={"invoice_id": self.i[0], "amount_mvr": 1, "method": "cash", "paid_on": "2027-03-15"}, headers=self.H)
-        self.assertEqual(self.calc().status_code, 409)
-        self.assertEqual(self.sql("SELECT batch_id,collected_mvr,teacher_share_mvr FROM teacher_earnings WHERE period='2027-03' ORDER BY batch_id"), before)
+        r = self.calc(); self.assertEqual(r.status_code, 200); self.assertEqual(r.get_json()["mode"], "late")   # v0.8.51: late rows, not a refusal
+        self.assertEqual(self.sql("SELECT batch_id,collected_mvr,teacher_share_mvr FROM teacher_earnings WHERE period='2027-03' AND status='approved' ORDER BY batch_id"), before)
 
     def test_08_permissions_and_input(self):
         for H in (self.NF, self.T, self.ST, {}):

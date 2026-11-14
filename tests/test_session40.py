@@ -44,12 +44,20 @@ class Earnings40(unittest.TestCase):
         cls.b1, cls.b2 = bt("A1", cls.t1), bt("A2", cls.t2)
         for s, b in zip(cls.st, (cls.b1, cls.b1, cls.b2)): assert P("/api/enrollments", {"student_id": s, "batch_id": b}).status_code == 201
         cls.i = [cls.c.get(f"/api/invoices?student_id={s}", headers=cls.H).get_json()[0]["id"] for s in cls.st]
+        # v0.8.51: earnings are by FEE month, so February's payments go on February invoices and March's on March invoices
+        cols = [r[1] for r in cls.sql_("PRAGMA table_info(invoices)") if r[1] != "id"]
+        cls.m = []
+        for iid in cls.i:
+            sel = ",".join("'2027-02'" if x == "period" else x for x in cols)
+            cls.sql_(f"INSERT INTO invoices({','.join(cols)}) SELECT {sel} FROM invoices WHERE id=?", (iid,))
+            feb = cls.sql_("SELECT MAX(id) FROM invoices")[0][0]
+            cls.m.append(iid); cls.i[cls.i.index(iid)] = feb   # the original stays March; the copy is February
         def pay(i, amt, day):
             r = P("/api/payments", {"invoice_id": i, "amount_mvr": amt, "method": "cash", "paid_on": day}); assert r.status_code == 201, r.get_json(); return r.get_json()["payment"]["id"]
         # February (a finished month): b1 = 600 + 300, b2 = 500.   March (the running month): b1 = 400, b2 = 500 paid and reversed (nets 0)
         pay(cls.i[0], 600, "2027-02-10"); pay(cls.i[1], 300, "2027-02-11"); pay(cls.i[2], 500, "2027-02-12")
-        pay(cls.i[0], 400, "2027-03-03")
-        gone = pay(cls.i[2], 500, "2027-03-04"); assert P(f"/api/payments/{gone}/reverse", {"reason": "twice"}).status_code == 200
+        pay(cls.m[0], 400, "2027-03-03")
+        gone = pay(cls.m[2], 500, "2027-03-04"); assert P(f"/api/payments/{gone}/reverse", {"reason": "twice"}).status_code == 200
         cls.T1 = cls.tok("t1@s40.test", PW)
 
     @classmethod
@@ -88,14 +96,14 @@ class Earnings40(unittest.TestCase):
         self.assertEqual(code, 200, j)
         rows = {r["batch_id"]: r for r in j["items"]}
         self.assertEqual((rows[self.b1]["collected_mvr"], rows[self.b1]["teacher_share_mvr"], rows[self.b1]["teacher_id"], rows[self.b1]["status"]), (400, 200, self.t1, "draft"))
-        self.assertEqual((rows[self.b2]["collected_mvr"], rows[self.b2]["teacher_share_mvr"], rows[self.b2]["teacher_id"]), (0, 0, self.t2))   # paid and reversed in March
-        self.assertEqual({t["teacher_id"]: t["teacher_share_mvr"] for t in j["by_teacher"]}, {self.t1: 200, self.t2: 0})
+        self.assertNotIn(self.b2, rows)   # v0.8.51: its March fee was paid and reversed, so nothing is collected for March
+        self.assertEqual({t["teacher_id"]: t["teacher_share_mvr"] for t in j["by_teacher"]}, {self.t1: 200})
         # a second run updates the same rows; a batch whose payments are all gone is set to 0, not left as it was
         self.sql_("UPDATE teacher_earnings SET collected_mvr=999, teacher_share_mvr=499 WHERE period='2027-03'")
         self.sql_("INSERT INTO teacher_earnings(teacher_id,batch_id,period,collected_mvr,teacher_share_mvr,academy_share_mvr) "
                   "SELECT teacher_id,id,'2027-01',50,25,25 FROM batches WHERE id=?", (self.b1,))
         self.assertEqual(self.J("post", "/api/earnings/calculate", json={"month": "2027-03"})[0], 200)
-        self.assertEqual(self.sql_("SELECT batch_id, collected_mvr, teacher_share_mvr FROM teacher_earnings WHERE period='2027-03' ORDER BY batch_id"), [(self.b1, 400, 200), (self.b2, 0, 0)])
+        self.assertEqual(self.sql_("SELECT batch_id, collected_mvr, teacher_share_mvr FROM teacher_earnings WHERE period='2027-03' ORDER BY batch_id"), [(self.b1, 400, 200)])
         self.assertEqual(self.J("post", "/api/earnings/calculate", json={"month": "2027-01"})[0], 200)
         self.assertEqual(self.sql_("SELECT collected_mvr, teacher_share_mvr FROM teacher_earnings WHERE period='2027-01'"), [(0, 0)])
         self.sql_("DELETE FROM teacher_earnings WHERE period='2027-01'")
@@ -104,8 +112,8 @@ class Earnings40(unittest.TestCase):
         self.as_postgres()
         code, j = self.J("get", "/api/earnings?month=2027-02")
         self.assertEqual((code, j["items"]), (200, []))          # nothing calculated yet: an empty month, not an error
-        code, j = self.J("post", "/api/earnings/approve", json={"month": "2027-03"})
-        self.assertEqual(code, 400, j); self.assertIn("after it has ended", j["error"])
+        code, j = self.J("post", "/api/earnings/approve", json={"month": "2027-04"})   # v0.8.51: the current month may be approved; a future one not
+        self.assertEqual(code, 400, j); self.assertIn("not started", j["error"])
         code, j = self.J("post", "/api/earnings/approve", json={"month": "2027-02", "expected_teacher_total": 1})
         self.assertEqual(code, 409, j); self.assertIn("700", j["error"])                       # figures differ from what was on screen
         self.assertEqual(self.sql_("SELECT COUNT(*) FROM teacher_earnings WHERE period='2027-02'")[0][0], 0)
@@ -114,7 +122,8 @@ class Earnings40(unittest.TestCase):
         self.assertEqual((j["approved"], j["teacher_total"]), (2, 700))
         self.assertTrue(all(r["status"] == "approved" for r in j["items"]))
         self.assertEqual(self.J("post", "/api/earnings/approve", json={"month": "2027-02"})[0], 409)
-        self.assertEqual(self.J("post", "/api/earnings/calculate", json={"month": "2027-02"})[0], 409)   # locked
+        code, j = self.J("post", "/api/earnings/calculate", json={"month": "2027-02"})   # v0.8.51: approved: only late collections, none here
+        self.assertEqual((code, j["mode"], j["count"]), (200, "late", 0))
         code, j = self.J("get", "/api/earnings/teachers")
         owed = {r["teacher_id"]: (r["earned_mvr"], r["paid_mvr"], r["outstanding_mvr"]) for r in j["items"]}
         self.assertEqual(owed, {self.t1: (450, 0, 450), self.t2: (250, 0, 250)})

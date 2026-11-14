@@ -9,7 +9,7 @@ What it does: (1) opening the app creates the new empty table (additive, also ha
 (2) for each month that has payments up to this month, writes DRAFT rows (one per batch) using the Teacher earnings setting (default 50%).
 Drafts are not approved and nothing is paid; you review them in Finance before Session 31's approval. It never changes payments, invoices,
 enrolments or an approved month. Safe to run twice (the second run only refreshes drafts). Needs the same environment as the web app."""
-import argparse, os, sys, datetime as dt
+import argparse, os, re, sys, datetime as dt
 import dbx, earnings, settings_schema as SS
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -20,14 +20,16 @@ def run(conn, apply, log=print, this_month=None):
     x = lambda s, a=(): conn.execute(s, a)
     try: pct = int((q("SELECT value FROM settings WHERE key='revenue_share_percent'") or [("",)])[0][0] or "")
     except ValueError: pct = int(SS.default_of("revenue_share_percent"))
-    months = sorted({r[0] for r in q("SELECT SUBSTR(paid_on,1,7) FROM payments") if r[0]} | {r[0] for r in q("SELECT SUBSTR(reversed_at,1,7) FROM payments WHERE reversed_at IS NOT NULL") if r[0]})
+    # v0.8.51: earnings are by fee month (the invoice's month)
+    months = sorted({r[0] for r in q("SELECT DISTINCT i.period FROM payments p JOIN invoices i ON i.id=p.invoice_id") if r[0] and re.match(r"^\d{4}-\d{2}$", r[0])})
     months = [m for m in months if m <= (this_month or dt.date.today().isoformat()[:7])]
     before_p = q("SELECT COUNT(*), COALESCE(SUM(amount_mvr),0) FROM payments")[0]
     before = q("SELECT COUNT(*) FROM teacher_earnings")[0][0]
     now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     for m in months:
-        res, locked = earnings.run_month(q, x, m, pct, None, now, apply=True)   # always inside the transaction; the dry run rolls it back
-        log(f"{m}: " + ("approved, skipped" if locked else f"{len(res)} batch(es), collected {sum(r['collected'] for r in res)} MVR, teacher {sum(r['teacher_share'] for r in res)}, academy {sum(r['academy_share'] for r in res)} (at {pct}%)"))
+        if earnings.is_approved(q, m): log(f"{m}: approved, skipped"); continue
+        res, _mode = earnings.run_month(q, x, m, pct, None, now, apply=True)   # always inside the transaction; the dry run rolls it back
+        log(f"{m}: " + ( f"{len(res)} batch(es), collected {sum(r['collected'] for r in res)} MVR, teacher {sum(r['teacher_share'] for r in res)}, academy {sum(r['academy_share'] for r in res)} (at {pct}%)"))
     after = q("SELECT COUNT(*) FROM teacher_earnings")[0][0]
     if q("SELECT COUNT(*), COALESCE(SUM(amount_mvr),0) FROM payments")[0] != before_p:
         conn.rollback(); raise SystemExit("STOPPED, nothing changed: the payments moved, which must never happen.")

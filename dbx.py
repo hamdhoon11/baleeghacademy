@@ -308,6 +308,13 @@ def init_schema(conn, base):
     upgrade_v0845(conn)
     for col, decl in V0847_USER_COLUMNS:
         if col not in conn.columns("users"): conn.execute(f"ALTER TABLE users ADD COLUMN {col} {decl}")
+    # v0.8.51: teacher earnings by fee month, with late (accrued) rows after approval: seq, booked_month; unique (batch, month, seq)
+    if "seq" not in conn.columns("teacher_earnings"): conn.execute("ALTER TABLE teacher_earnings ADD COLUMN seq INTEGER NOT NULL DEFAULT 0")
+    if "booked_month" not in conn.columns("teacher_earnings"): conn.execute("ALTER TABLE teacher_earnings ADD COLUMN booked_month TEXT")
+    if "teacher_id" not in conn.columns("expenses"): conn.execute("ALTER TABLE expenses ADD COLUMN teacher_id INTEGER REFERENCES users(id)")
+    if "expense_id" not in conn.columns("teacher_payments"): conn.execute("ALTER TABLE teacher_payments ADD COLUMN expense_id INTEGER")
+    conn.execute("DROP INDEX IF EXISTS ux_earn_batch_period")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_earn_batch_period_seq ON teacher_earnings(batch_id, period, seq)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_batch ON audit_log(batch_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id)")
     import auditlog; auditlog.install_triggers(conn)   # Session 21: the log can be added to but never changed or deleted

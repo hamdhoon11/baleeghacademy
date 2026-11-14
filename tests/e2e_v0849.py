@@ -32,7 +32,7 @@ try:
         check(a.locator("#errp", has_text="Server errors").count() == 1, "Settings shows the Server errors panel")
         a.goto(BASE + "/#finance"); a.wait_for_selector("#fe_month")
         a.click("[data-do=feCalc]"); a.wait_for_selector(".msg.warn", timeout=8000)
-        check(a.locator(".msg.warn", has_text="month they were PAID").count() == 1, "Calculate explains an empty month")
+        check(a.locator(".msg.warn", has_text="whenever they are paid").count() == 1, "Calculate explains an empty month")
         a.screenshot(path=os.path.join(OUT, "v0849-earnings.png"), full_page=True)
         br.close()
 finally:

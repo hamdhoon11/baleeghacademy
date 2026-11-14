@@ -491,16 +491,17 @@ async function fnDashPanel() {   // financial dashboard and revenue (Session 24)
 async function fnExpensesPanels() {   // expenses, categories, receipts (Session 23). Needs the "finance" area; the server refuses everyone else.
   S.fn = S.fn || {page: 1, f: {}, edit: null};
   const recs = await api("/recurring-expenses");   // first: it writes any monthly expense that is due, so the list below includes it
-  const [r, cats] = await Promise.all([api("/expenses?" + fnQuery({page: S.fn.page, per_page: 50})), api("/expense-categories")]);
+  const [r, cats, tch] = await Promise.all([api("/expenses?" + fnQuery({page: S.fn.page, per_page: 50})), api("/expense-categories"), api("/earnings/teachers").catch(() => ({teachers: []}))]);
   const f = S.fn.f, ed = S.fn.edit ? r.items.find(x => x.id === S.fn.edit) : null;
   const active = cats.filter(k => k.is_active || (ed && k.id === ed.category_id));
   mount(() => {
     FN_KEYS.forEach(k => { const el = $("#fn_" + k); if (el && f[k] != null) el.value = f[k]; });
-    if (ed) { $("#fx_date").value = ed.expense_date; $("#fx_amt").value = ed.amount_mvr; $("#fx_cat").value = ed.category_id; $("#fx_desc").value = ed.description || ""; }
+    if (ed) { $("#fx_date").value = ed.expense_date; $("#fx_amt").value = ed.amount_mvr; $("#fx_cat").value = ed.category_id; $("#fx_desc").value = ed.description || ""; if ($("#fx_tch")) $("#fx_tch").value = ed.teacher_id || ""; }
     onSubmit("ffn", async () => { S.fn = {page: 1, f: Object.fromEntries(FN_KEYS.filter(k => val("fn_" + k) !== "").map(k => [k, val("fn_" + k)])), edit: null}; });
     onSubmit("fex", async () => {
       const fd = new FormData();
       fd.append("expense_date", val("fx_date")); fd.append("amount_mvr", wholeNum("fx_amt", "Amount (MVR)", {min: 1, empty: false})); fd.append("category_id", val("fx_cat")); fd.append("description", val("fx_desc"));
+      if ($("#fx_tch")) fd.append("teacher_id", val("fx_tch"));   // v0.8.51: a salary: also counts as paid to the teacher
       const file = $("#fx_file").files[0]; if (file) fd.append("file", file);
       if (ed && $("#fx_rm") && $("#fx_rm").checked) fd.append("remove_receipt", "1");
       await apiForm(ed ? "/expenses/" + ed.id : "/expenses", fd, ed ? "PATCH" : "POST"); S.fn.edit = null;
@@ -515,10 +516,11 @@ async function fnExpensesPanels() {   // expenses, categories, receipts (Session
   const entry = `<form class="row" id="fex"><label>${esc(t("Expense date"))}<input id="fx_date" type="date" value="${mvToday()}" max="${mvToday()}" required></label>`
     + `<label>${esc(t("Amount (MVR)"))}<input id="fx_amt" type="number" min="1" step="1" inputmode="numeric" required></label>`
     + field("fx_cat", "Category", "text", active.map(k => [k.id, k.name])) + field("fx_desc", "Description")
+    + ((tch.teachers || []).length ? field("fx_tch", "Salary paid to teacher (optional)", "text", [["", t("Not a salary")], ...tch.teachers.map(x => [x.id, x.full_name])]) : "")
     + `<label>${t("Receipt (PDF, JPG or PNG)")}<input id="fx_file" type="file" accept=".pdf,.jpg,.jpeg,.png"></label>`
     + (ed && ed.has_receipt ? `<label><input id="fx_rm" type="checkbox"> ${t("Remove the current receipt")}</label>` : "")
     + `<button class="btn alt">${t(ed ? "Save" : "Add expense")}</button>${ed ? ` <button type="button" class="btn" data-do="fnCancel">${t("Cancel")}</button>` : ""}</form>`;
-  const body = r.items.map(x => `<tr><td>${esc(x.expense_date)}</td><td>${esc(x.category)}</td><td>${esc(x.description || "")}${x.recurring_id ? " " + tag(t("rec_monthly")) : ""}</td><td><bdi dir="ltr">${esc(x.amount_mvr)}</bdi></td><td>${x.has_receipt ? `<button class="btn sm alt" data-do="fnReceipt" data-id="${x.id}" data-name="${esc(x.receipt_name || "receipt")}">${t("Receipt")}</button>` : ""}</td>`
+  const body = r.items.map(x => `<tr><td>${esc(x.expense_date)}</td><td>${esc(x.category)}</td><td>${esc(x.description || "")}${x.recurring_id ? " " + tag(t("rec_monthly")) : ""}${x.teacher_name ? " " + tag(t("Salary") + ": " + x.teacher_name, "ok") : ""}</td><td><bdi dir="ltr">${esc(x.amount_mvr)}</bdi></td><td>${x.has_receipt ? `<button class="btn sm alt" data-do="fnReceipt" data-id="${x.id}" data-name="${esc(x.receipt_name || "receipt")}">${t("Receipt")}</button>` : ""}</td>`
     + `<td><button class="btn sm alt" data-do="fnEdit" data-id="${x.id}">${t("Edit")}</button> <button class="btn sm" data-do="fnDel" data-id="${x.id}" data-name="${esc(x.expense_date + " · " + x.category + " · MVR " + x.amount_mvr)}">${t("Delete")}</button></td></tr>`).join("");
   const nav = `<p><button class="btn sm alt" data-do="fnPage" data-n="-1" ${S.fn.page <= 1 ? "disabled" : ""}>${t("Previous")}</button> ${t("Page")} ${S.fn.page} <button class="btn sm alt" data-do="fnPage" data-n="1" ${r.page * r.per_page >= r.count ? "disabled" : ""}>${t("Next")}</button></p>`;
   const catRows = cats.map(k => `<span class="chip">${esc(k.name)} (${k.expense_count})${k.is_active ? "" : " · " + t("inactive")} <button class="btn sm alt" data-do="fnCatToggle" data-id="${k.id}" data-on="${k.is_active ? 0 : 1}">${t(k.is_active ? "Make inactive" : "Make active")}</button> <button class="btn sm alt" data-do="fnCatRename" data-id="${k.id}" data-name="${esc(k.name)}">${t("Rename")}</button>${k.expense_count ? "" : ` <button class="btn sm" data-do="fnCatDel" data-id="${k.id}" data-name="${esc(k.name)}">${t("Delete")}</button>`}</span>`).join(" ");
@@ -572,17 +574,20 @@ async function feEarnPanel() {
   const [r, tt, pays] = await Promise.all([
     api("/earnings?month=" + encodeURIComponent(m)).catch(x => { monthErr = x.message; S.fe = null; return {items: [], totals: {collected_mvr: 0, teacher_share_mvr: 0, academy_share_mvr: 0}}; }),
     api("/earnings/teachers"), api("/earnings/payments")]);
-  const approved = r.items.length && r.items.every(x => x.status === "approved");
-  const rowsHtml = r.items.map(x => `<tr><td>${esc(x.teacher_name || "-")}</td><td>${esc(x.course_name)} ${esc(x.batch_code)}</td><td>${fnMoney(x.collected_mvr)}</td><td>${x.share_percent}%</td><td>${fnMoney(x.teacher_share_mvr)}</td><td>${fnMoney(x.academy_share_mvr)}</td><td>${esc(t(x.status))}</td></tr>`).join("");
+  // v0.8.51: by fee month; an approved month can still get late (accrued) rows for fees collected after approval
+  const approved = !!r.approved, drafts = r.items.some(x => x.status === "draft");
+  const rowsHtml = r.items.map(x => `<tr><td>${esc(x.teacher_name || "-")}</td><td>${esc(x.course_name)} ${esc(x.batch_code)}${x.late ? `<br>${tag(t("Collected late (accrued)"), "warn")} <span class="hint">${esc(x.booked_month || "")}</span>` : ""}</td><td>${fnMoney(x.collected_mvr)}</td><td>${x.share_percent}%</td><td>${fnMoney(x.teacher_share_mvr)}</td><td>${fnMoney(x.academy_share_mvr)}</td><td>${esc(t(x.status))}</td></tr>`).join("");
   const tRows = tt.items.map(x => `<tr><td>${esc(x.teacher_name)}</td><td>${fnMoney(x.earned_mvr)}</td><td>${fnMoney(x.paid_mvr)}</td><td><b>${fnMoney(x.outstanding_mvr)}</b></td><td><button class="btn sm" data-do="fePay" data-id="${x.teacher_id}" data-name="${esc(x.teacher_name)}" data-owed="${esc(x.outstanding_mvr)}">${esc(t("Record payment"))}</button></td></tr>`).join("");
   const pRows = pays.map(x => `<tr${x.voided_at ? ' style="opacity:.5"' : ""}><td>${esc(x.paid_on)}</td><td>${esc(x.teacher_name)}</td><td>${fnMoney(x.amount_mvr)}</td><td>${esc(t("fx_m_" + x.method))} ${esc(x.reference || "")}</td><td>${x.voided_at ? esc(t("Voided")) : `<button class="btn sm danger" data-do="feVoid" data-id="${x.id}" data-name="${esc(x.teacher_name + " · MVR " + x.amount_mvr + " · " + x.paid_on)}">${esc(t("Void"))}</button>`}</td></tr>`).join("");
   mount(() => { const el = $("#fe_month"); if (el) el.value = m; });
   return `<div class="panel"><h2>${t("Teacher earnings")}</h2><p class="hint">${esc(t("Share of the fees actually collected each month (registration fees are not included). Approve a finished month to lock it."))}</p>
     <div class="rowflex row"><label>${esc(t("Month"))}<input type="month" id="fe_month" placeholder="YYYY-MM" pattern="\\d{4}-\\d{2}"></label>
-    <button class="btn" data-do="feShow">${esc(t("Show"))}</button><button class="btn alt" data-do="feCalc" ${approved ? "disabled" : ""}>${esc(t("Calculate"))}</button>
-    <button class="btn" data-do="feApprove" data-total="${r.totals.teacher_share_mvr}" ${approved || !r.items.length ? "disabled" : ""}>${esc(t("Approve month"))}</button>
+    <button class="btn" data-do="feShow">${esc(t("Show"))}</button><button class="btn alt" data-do="feCalc">${esc(t("Calculate"))}</button>
+    <button class="btn" data-do="feApprove" data-total="${r.totals.teacher_share_mvr}" ${!drafts ? "disabled" : ""}>${esc(t(approved ? "Approve late collections" : "Approve month"))}</button>
     <button class="btn" data-do="feCsv">CSV</button><button class="btn" data-do="feXlsx">Excel</button><button class="btn" data-do="fePdf">PDF</button></div>
     ${monthErr ? `<p class="msg err" role="alert">${esc(m)}: ${esc(monthErr)}</p>` : ""}
+    <p class="hint">${esc(t("Counted by fee month: the fees FOR the chosen month, whenever they were collected. After a month is approved, its fees collected later are added as accrued (late) rows: press Calculate, then Approve late collections."))}</p>
+    ${approved && r.late_not_calculated ? `<p class="msg warn" role="status">${esc(t("Approved. MVR {n} for this month was collected after approval and is not counted yet: press Calculate.").replace("{n}", Number(r.late_not_calculated).toLocaleString("en")))}</p>` : ""}
     ${S.fe && S.fe.why && S.fe.why.length ? `<div class="msg ${r.items.length ? "ok" : "warn"}" role="status">${S.fe.why.map(x => esc(x)).join("<br>")}</div>` : ""}
     ${!monthErr && !r.items.length && !(S.fe && S.fe.why) ? `<p class="hint">${esc(t("fe_empty_hint"))}</p>` : ""}
     ${fnTable(["Teacher", "Batch", "Collected", "Share", "Teacher share", "Academy share", "status"], rowsHtml)}

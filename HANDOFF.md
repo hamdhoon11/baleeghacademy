@@ -592,3 +592,7 @@
 - earnings: /api/earnings/calculate returns `why` (explanations); UI shows it.
 - POST /api/users needs a valid phone (TESTS: PORTAL_PHONE_OPTIONAL=1 in tests/__init__.py switches it off; test_session49 runs with it on).
 - Live failures could not be reproduced on PostgreSQL 16; ask the owner for the error reference (Settings → Server errors) if anything still fails.
+
+## Done: v0.8.51 (see CHANGES-v0.8.51.md)
+- earnings.compute(): by FEE month (invoices.period); run_month() returns (rows, mode "month"|"late"); approved month -> late rows seq>=1 (booked_month). Current month may be approved.
+- Salary link: expenses.teacher_id <-> teacher_payments.expense_id (finance.salary_sync; earnings payment creates a "Teacher salaries" expense; void deletes it).
