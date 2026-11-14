@@ -599,3 +599,6 @@
 
 ## Done: v0.8.52 (see CHANGES-v0.8.52.md)
 - fees.js FX.record(): filters (S.fxRec), open invoices grouped by batch -> student -> month buttons (DO.fxRecPick fills the form), payments show "For <fee month>". /api/payments: batch_id|none, period, q filters + course/batch fields.
+
+## Done: v0.8.53 (see CHANGES-v0.8.53.md)
+- GET /api/fees/status-grid (fees.py fee_grid); fees.js fxGrid() inside FX.record(); CSS .fg/.gc/.g-* in index.html (table.nostack).

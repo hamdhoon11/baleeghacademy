@@ -1006,6 +1006,48 @@ def register(app, c):
             raise
         return jsonify(payments=out, invoices=[get_invoice(i["id"]) for i in invs], total_mvr=sum(p["amount_mvr"] for p in out), warnings=warn), 201
 
+    @app.get("/api/fees/status-grid")
+    @auth("admin", perm="fees")
+    def fee_grid():
+        """v0.8.53: batch by batch, each student's fee for each month: paid / part paid / slip sent / unpaid / overdue / waived.
+        ?end=YYYY-MM (default this month) &months=1..12 (default 6) &batch_id= &q= (student name). Void invoices are left out."""
+        a = request.args
+        end = a.get("end") or month_of(today())
+        if not PERIOD.match(end): return err("Month must look like 2026-03")
+        try: n = max(1, min(12, int(a.get("months") or 6)))
+        except ValueError: return err("months must be a number")
+        y, mo = int(end[:4]), int(end[5:7])
+        months = [f"{(y * 12 + mo - 1 - k) // 12:04d}-{(y * 12 + mo - 1 - k) % 12 + 1:02d}" for k in range(n - 1, -1, -1)]
+        w, args = [f"i.period IN ({','.join('?' * n)})", "i.batch_id IS NOT NULL", "i.status<>'void'", "i.kind<>'registration'"], list(months)
+        if a.get("batch_id", "").isdigit(): w.append("i.batch_id=?"); args.append(int(a["batch_id"]))
+        if a.get("q"): w.append("LOWER(COALESCE(u.full_name,'')) LIKE ?"); args.append("%" + a["q"].strip().lower()[:60] + "%")
+        rs = rows("SELECT i.id, i.period, i.status, i.due_date, i.amount_due_mvr-i.waived_mvr AS due, i.paid_mvr AS paid, i.amount_due_mvr-i.waived_mvr-i.paid_mvr AS balance, "
+                  "i.batch_id, b.code AS batch_code, c.name AS course_name, u.id AS student_id, u.full_name, s.student_code, "
+                  "(SELECT MAX(p.paid_on) FROM payments p WHERE p.invoice_id=i.id AND p.reversed_at IS NULL) AS paid_on "
+                  "FROM invoices i JOIN batches b ON b.id=i.batch_id JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=i.student_id "
+                  "LEFT JOIN students s ON s.user_id=i.student_id WHERE " + " AND ".join(w) + " ORDER BY c.name, b.code, u.full_name, i.period", args)
+        t = today().isoformat()
+        out = {}
+        for r in rs:
+            st = ("waived" if r["status"] == "waived" else "paid" if r["balance"] <= 0 else "slip" if r["status"] == "slip_submitted"
+                  else "partial" if r["paid"] > 0 else "overdue" if r["due_date"] < t else "unpaid")
+            b = out.setdefault(r["batch_id"], {"batch_id": r["batch_id"], "name": f"{r['course_name']} {r['batch_code']}", "students": {},
+                                               "months": {m: {"due": 0, "collected": 0, "outstanding": 0} for m in months}})
+            p = b["students"].setdefault(r["student_id"], {"student_id": r["student_id"], "name": r["full_name"] or "", "student_code": r["student_code"], "cells": {}})
+            cell = p["cells"].get(r["period"])
+            if cell:   # two invoices for one month (rare): add them up, keep the worse state
+                order = ["paid", "waived", "slip", "partial", "unpaid", "overdue"]
+                cell.update(due=cell["due"] + r["due"], paid=cell["paid"] + r["paid"], balance=cell["balance"] + max(r["balance"], 0),
+                            status=max(cell["status"], st, key=order.index), id=cell["id"] if cell["balance"] > 0 else r["id"])
+            else:
+                p["cells"][r["period"]] = {"id": r["id"], "status": st, "due": r["due"], "paid": r["paid"], "balance": max(r["balance"], 0), "due_date": r["due_date"], "paid_on": r["paid_on"]}
+            mm = b["months"][r["period"]]; mm["due"] += r["due"]; mm["collected"] += r["paid"]; mm["outstanding"] += max(r["balance"], 0)
+        batches = []
+        for b in out.values():
+            b["students"] = sorted(b["students"].values(), key=lambda x: x["name"].lower())
+            batches.append(b)
+        return jsonify(months=months, batches=batches)
+
     @app.get("/api/payments")
     @auth("admin", perm="fees")
     def pay_list():
