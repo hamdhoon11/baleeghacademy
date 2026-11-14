@@ -4,6 +4,7 @@
 const ltr = s => `<bdi dir="ltr">${esc(s)}</bdi>`;
 const mvr = n => `<bdi dir="ltr">MVR ${esc(n)}</bdi>`;
 const fxMonth = () => mvToday().slice(0, 7);
+const fxMon = p => { const m = /^(\d{4})-(\d{2})$/.exec(p || ""); return m ? new Date(Date.UTC(+m[1], +m[2] - 1, 1)).toLocaleString("en", {month: "short", year: "numeric", timeZone: "UTC"}) : (p === "REG-FEE" ? t("Registration") : (p || "")); };   // v0.8.52: "Oct 2026"
 const fxBadge = i => i.overdue ? tag(t("fx_st_overdue"), "bad") : i.partly_paid ? tag(t("fx_st_partial"), "warn")
   : tag(t("fx_st_" + i.status), {paid: "ok", waived: "ok", unpaid: "warn", slip_submitted: "warn"}[i.status] || "");
 const fxPrMonth = () => (S.fxf || {}).prm || fxMonth();
@@ -237,6 +238,8 @@ DO.fxRemNext = async d => {
   return DO.fxRem({k: x.key, kind: x.kind, to: x.links.student ? "student" : Object.keys(x.links)[0]});
 };
 DO.fxRemMsg = async d => { const x = fxRemFind(d); if (x) await ui.show(x.name, `<p style="white-space:pre-wrap">${esc(x.message)}</p>`); return false; };
+DO.fxRecPick = d => { S.fxRecPick = +d.id; const fi = $("#fxp_i"); if (fi) { fi.value = d.id; const x = (S.fxRecInv || []).find(i => i.id === +d.id); if (x && $("#fxp_a")) $("#fxp_a").value = x.balance; $("#fxp_h").scrollIntoView({behavior: "smooth", block: "start"}); $("#fxp_a") && $("#fxp_a").focus({preventScroll: true}); } return false; };
+DO.fxRecClear = () => { S.fxRec = {batch: "", q: "", period: ""}; };
 DO.fxEmail = async d => { await api(`/invoices/${d.id}/reminders/email`, "POST", {}); flash(t("fx_email_sent"), true); };
 DO.fxPrCsv = async () => { const q = fxPrQuery(); await download("/fees/payment-report.csv?" + q, `payments-${fxPrMonth()}.csv`); return false; };
 DO.fxPrXlsx = async () => { const q = fxPrQuery(); await download("/fees/payment-report.xlsx?" + q, `payments-${fxPrMonth()}.xlsx`); return false; };
@@ -328,13 +331,47 @@ const FX = {
       <div class="panel"><h2>${t("fx_revenue_types")}</h2><p class="hint">${t("fx_revenue_types_hint")}</p>${types.map(typeRow).join("")}
       <form id="fxrt" class="row"><label>${t("fx_new_type")}<input id="fxrt_n" maxlength="60" required></label><button class="btn alt">${t("add")}</button></form></div>`;
   },
+  // v0.8.52: open fees batch by batch (tap a month to fill the form), and payments that say which month they paid for
   async record() {
-    const [inv, pays] = await Promise.all([api("/invoices?status=open"), api("/payments")]);
-    mount(() => onSubmit("fxp", () => fxSendPaid([val("fxp_i")], {amount: wholeNum("fxp_a", "fx_amount_received", {min: 1, empty: false}), method: val("fxp_m"), paid_on: val("fxp_d"), reference: val("fxp_r"), note: val("fxp_n"), file: $("#fxp_f").files[0] || null, notify: $("#fxp_t").checked})));
-    return `<div class="panel"><h2>${t("fx_tab_record")}</h2>${inv.length ? `<form id="fxp" class="row">${field("fxp_i", t("fx_invoice"), "", inv.map(i => [i.id, `${i.number} · ${i.student_name} · MVR ${i.balance}`]))}
+    const f = S.fxRec = S.fxRec || {batch: "", q: "", period: ""};
+    const qs = new URLSearchParams(Object.entries({batch_id: f.batch, period: f.period, q: f.q}).filter(([, v]) => v)).toString();
+    const [inv, pays, bl] = await Promise.all([api("/invoices?status=open"), api("/payments" + (qs ? "?" + qs : "")), api("/batches").catch(() => [])]);
+    const key = i => i.batch_id ? String(i.batch_id) : "none";
+    const shown = inv.filter(i => (!f.batch || key(i) === f.batch) && (!f.period || i.period === f.period) && (!f.q || (i.student_name || "").toLowerCase().includes(f.q.toLowerCase())));
+    S.fxRecInv = inv;
+    mount(() => {
+      onSubmit("fxp", () => fxSendPaid([val("fxp_i")], {amount: wholeNum("fxp_a", "fx_amount_received", {min: 1, empty: false}), method: val("fxp_m"), paid_on: val("fxp_d"), reference: val("fxp_r"), note: val("fxp_n"), file: $("#fxp_f").files[0] || null, notify: $("#fxp_t").checked}));
+      const fi = $("#fxp_i"); if (fi && S.fxRecPick && shown.some(i => i.id === S.fxRecPick)) { fi.value = S.fxRecPick; const x = inv.find(i => i.id === S.fxRecPick); if (x && $("#fxp_a")) $("#fxp_a").value = x.balance; }
+      const rf = $("#fxrf"); if (rf) rf.onsubmit = e => { e.preventDefault(); S.fxRec = {batch: val("fxrf_b"), period: val("fxrf_m"), q: val("fxrf_q")}; render(); };
+      for (const id of ["fxrf_b", "fxrf_m"]) { const el = $("#" + id); if (el) el.onchange = () => { S.fxRec = {batch: val("fxrf_b"), period: val("fxrf_m"), q: val("fxrf_q")}; render(); }; }
+      if (fi) fi.onchange = () => { const x = inv.find(i => i.id === +fi.value); if (x && $("#fxp_a")) $("#fxp_a").value = x.balance; };
+    });
+    // filters: batch, fee month, name (they narrow both the open fees and the payments below)
+    const batches = [...new Map(inv.filter(i => i.batch_id).map(i => [String(i.batch_id), `${i.course_name || ""} ${i.batch_code || ""}`.trim()])).entries()];
+    for (const b of bl || []) if (!batches.some(([k]) => k === String(b.id))) batches.push([String(b.id), `${b.course_name || ""} ${b.code || ""}`.trim()]);
+    batches.sort((a, b) => a[1].localeCompare(b[1]));
+    const months = [...new Set(inv.map(i => i.period).concat(pays.map(p => p.period)))].filter(Boolean).sort().reverse();
+    const filt = `<form id="fxrf" class="row"><label>${esc(t("Batch"))}<select id="fxrf_b"><option value="">${esc(t("All batches"))}</option>${batches.map(([k, n]) => `<option value="${esc(k)}" ${f.batch === k ? "selected" : ""}>${esc(n)}</option>`).join("")}<option value="none" ${f.batch === "none" ? "selected" : ""}>${esc(t("No batch (other invoices)"))}</option></select></label>`
+      + `<label>${esc(t("Fee month"))}<select id="fxrf_m"><option value="">${esc(t("All months"))}</option>${months.map(m => `<option value="${esc(m)}" ${f.period === m ? "selected" : ""}>${esc(fxMon(m))}</option>`).join("")}</select></label>`
+      + `<label>${esc(t("Student"))}<input id="fxrf_q" value="${esc(f.q)}" placeholder="${esc(t("Name"))}"></label><button class="btn alt">${esc(t("Show"))}</button>${f.batch || f.period || f.q ? `<button type="button" class="btn" data-do="fxRecClear">${esc(t("Clear"))}</button>` : ""}</form>`;
+    // open fees grouped by batch, then by student; each month is a button that fills the form
+    const groups = new Map();
+    for (const i of shown) {
+      const g = groups.get(key(i)) || {name: i.batch_id ? `${i.course_name || ""} ${i.batch_code || ""}`.trim() : t("No batch (other invoices)"), people: new Map(), total: 0};
+      const pk = i.student_id || "w" + i.student_name;
+      const pe = g.people.get(pk) || {name: i.student_name, items: []};
+      pe.items.push(i); g.people.set(pk, pe); g.total += i.balance; groups.set(key(i), g);
+    }
+    const grp = [...groups.entries()].sort((a, b) => (a[0] === "none") - (b[0] === "none") || a[1].name.localeCompare(b[1].name));
+    const open = grp.map(([k, g]) => `<details class="sub" ${grp.length === 1 || f.batch ? "open" : ""}><summary><b>${esc(g.name)}</b> <span class="hint">· ${g.people.size} ${esc(t(g.people.size === 1 ? "student" : "students"))} · ${mvr(g.total.toLocaleString("en"))} ${esc(t("to pay"))}</span></summary>`
+      + [...g.people.values()].sort((a, b) => a.name.localeCompare(b.name)).map(pe => `<div class="cl"><span>${esc(pe.name)}</span><span class="seg">${pe.items.sort((a, b) => a.period.localeCompare(b.period)).map(i => `<button type="button" class="btn sm ${i.status === "slip_submitted" ? "alt" : ""}" data-do="fxRecPick" data-id="${i.id}" title="${esc(i.number)}">${esc(fxMon(i.period))} · ${mvr(i.balance)}${i.status === "slip_submitted" ? " · " + esc(t("Slip sent")) : ""}</button>`).join("")}</span></div>`).join("")
+      + `</details>`).join("");
+    return `<div class="panel"><h2>${t("fx_tab_record")}</h2>${filt}
+      <h3>${esc(t("Fees to collect"))}</h3><p class="hint">${esc(t("Tap a month to fill in the form below with that fee and its amount."))}</p>${open || `<p>${t("fx_nothing_open")}</p>`}
+      <h3 id="fxp_h">${esc(t("Record a payment"))}</h3>${shown.length ? `<form id="fxp" class="row">${field("fxp_i", t("fx_invoice"), "", shown.map(i => [i.id, `${fxMon(i.period)} · ${i.student_name} · ${i.course_name ? i.course_name + " " + (i.batch_code || "") : (i.description || "")} · MVR ${i.balance}`]))}
       <label>${t("fx_amount_received")}<input id="fxp_a" type="number" min="1" step="1" inputmode="numeric" required></label>${field("fxp_m", t("fx_method"), "", ["cash", "bank_transfer", "other"].map(m => [m, t("fx_m_" + m)]))}
-      <label>${t("date")}<input id="fxp_d" type="date" max="${mvToday()}" value="${mvToday()}"></label><label>${t("fx_reference")}<input id="fxp_r"></label><label>${t("fx_note")}<input id="fxp_n"></label><label>${t("fx_attach_slip")}<input id="fxp_f" type="file" accept="${FX_SLIP_ACCEPT}"><span class="hint">${t("fx_attach_slip_hint")}</span></label><label class="inl"><input id="fxp_t" type="checkbox" checked> ${t("fx_tell_student")}</label><button class="btn alt">${t("fx_record")}</button></form>` : `<p>${t("fx_nothing_open")}</p>`}</div>
-      <div class="panel"><h2>${t("fx_payments")}</h2>${pays.slice(0, 30).map(p => `<div class="cl ${p.reversed_at ? "off" : ""}"><div><b>${esc(p.student_name)}</b> · ${mvr(p.amount_mvr)} · ${t("fx_m_" + p.method)}<br><span class="hint">${ltr(p.receipt_no)} · ${ltr(p.invoice_number)} · ${ltr(p.paid_on)}${p.reversed_at ? " · " + esc(p.reverse_reason || "") : ""}</span></div>
+      <label>${t("date")}<input id="fxp_d" type="date" max="${mvToday()}" value="${mvToday()}"></label><label>${t("fx_reference")}<input id="fxp_r"></label><label>${t("fx_note")}<input id="fxp_n"></label><label>${t("fx_attach_slip")}<input id="fxp_f" type="file" accept="${FX_SLIP_ACCEPT}"><span class="hint">${t("fx_attach_slip_hint")}</span></label><label class="inl"><input id="fxp_t" type="checkbox" checked> ${t("fx_tell_student")}</label><button class="btn alt">${t("fx_record")}</button></form>` : `<p>${t("empty")}</p>`}</div>
+      <div class="panel"><h2>${t("fx_payments")}</h2><p class="hint">${esc(t("Each payment shows the fee month it paid for, and the day it was paid."))}${f.batch || f.period || f.q ? " " + esc(t("Filtered as above.")) : ""}</p>${pays.slice(0, 100).map(p => `<div class="cl ${p.reversed_at ? "off" : ""}"><div><b>${esc(p.student_name)}</b> · ${mvr(p.amount_mvr)} · ${t("fx_m_" + p.method)}<br><span class="chip">${esc(t("For"))} ${esc(fxMon(p.period))}</span> ${p.course_name ? `<span class="hint">${esc(p.course_name)} ${esc(p.batch_code || "")}</span>` : ""}<br><span class="hint">${esc(t("Paid on"))} ${ltr(p.paid_on)} · ${ltr(p.receipt_no)} · ${ltr(p.invoice_number)}${p.reversed_at ? " · " + esc(p.reverse_reason || "") : ""}</span></div>
       <div class="seg">${p.reversed_at ? tag(t("fx_reversed"), "bad") : `${p.slip_id ? `<button class="btn sm alt" data-do="fxView" data-id="${p.slip_id}" data-name="${esc(p.slip_file_name || "slip")}">${t("fx_view_slip")}</button>` : ""}<button class="btn sm" data-do="fxRcpt" data-id="${p.id}" data-no="${esc(p.receipt_no)}">${t("fx_receipt")}</button><button class="btn sm" data-do="fxRev" data-id="${p.id}">${t("fx_reverse")}</button>`}</div></div>`).join("") || `<p>${t("empty")}</p>`}</div>`;
   },
   async discounts() {

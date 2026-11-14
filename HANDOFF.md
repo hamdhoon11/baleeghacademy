@@ -596,3 +596,6 @@
 ## Done: v0.8.51 (see CHANGES-v0.8.51.md)
 - earnings.compute(): by FEE month (invoices.period); run_month() returns (rows, mode "month"|"late"); approved month -> late rows seq>=1 (booked_month). Current month may be approved.
 - Salary link: expenses.teacher_id <-> teacher_payments.expense_id (finance.salary_sync; earnings payment creates a "Teacher salaries" expense; void deletes it).
+
+## Done: v0.8.52 (see CHANGES-v0.8.52.md)
+- fees.js FX.record(): filters (S.fxRec), open invoices grouped by batch -> student -> month buttons (DO.fxRecPick fills the form), payments show "For <fee month>". /api/payments: batch_id|none, period, q filters + course/batch fields.

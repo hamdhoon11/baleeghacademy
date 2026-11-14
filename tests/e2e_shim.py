@@ -9,7 +9,10 @@
    - waits until the app shell (nav) is really there.
 3. Selectors for the shared sub-tabs (Session 12): subtab("classroom", "schedule") instead of the old [data-do=ctab][data-v=...].
 """
-import sqlite3
+import os, sqlite3
+# 4. v0.8.49: Add person needs a contact number. The older scripts create people without one through the API, so the servers they start
+#    switch that rule off (they copy os.environ after importing this). tests/e2e_v0849.py removes it to check the rule.
+os.environ.setdefault("PORTAL_PHONE_OPTIONAL", "1")
 from playwright.sync_api import Page
 
 _click = Page.click
