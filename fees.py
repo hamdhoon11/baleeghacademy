@@ -1015,8 +1015,19 @@ def register(app, c):
             if not PERIOD.match(m): return err("Month must look like 2026-03")
             w += ["p.paid_on>=?", "p.paid_on<?"]; a += [m + "-01", next_month_start(m).isoformat()]
         if request.args.get("invoice_id", "").isdigit(): w.append("p.invoice_id=?"); a.append(int(request.args["invoice_id"]))
-        sql = ("SELECT p.*, i.period, i.description, COALESCE(u.full_name, i.customer_name) AS student_name, s.file_name AS slip_file_name, rt.name AS revenue_type_name "
+        # v0.8.52: by batch ("none" = invoices with no batch), by fee month (the invoice's month), by student name
+        bid = request.args.get("batch_id", "")
+        if bid == "none": w.append("i.batch_id IS NULL")
+        elif bid.isdigit(): w.append("i.batch_id=?"); a.append(int(bid))
+        if request.args.get("period"):
+            if not PERIOD.match(request.args["period"]): return err("Month must look like 2026-03")
+            w.append("i.period=?"); a.append(request.args["period"])
+        if request.args.get("q"):
+            w.append("LOWER(COALESCE(u.full_name, i.customer_name, '')) LIKE ?"); a.append("%" + request.args["q"].strip().lower()[:60] + "%")
+        sql = ("SELECT p.*, i.period, i.description, i.batch_id, COALESCE(u.full_name, i.customer_name) AS student_name, s.file_name AS slip_file_name, rt.name AS revenue_type_name, "
+               "c.name AS course_name, b.code AS batch_code, st.student_code "
                "FROM payments p JOIN invoices i ON i.id=p.invoice_id LEFT JOIN users u ON u.id=p.student_id" + RT_JOIN +
+               " LEFT JOIN courses c ON c.id=i.course_id LEFT JOIN batches b ON b.id=i.batch_id LEFT JOIN students st ON st.user_id=p.student_id"
                " LEFT JOIN payment_slips s ON s.id=p.slip_id"
                + (" WHERE " + " AND ".join(w) if w else "") + " ORDER BY p.id DESC LIMIT 500")
         out = rows(sql, a)

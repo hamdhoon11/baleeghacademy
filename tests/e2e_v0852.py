@@ -1,0 +1,64 @@
+"""Optional browser test, v0.8.52 (390 and 1280 px): Fees -> Record payment shows open fees batch by batch; tapping a month fills the form;
+payments say which fee month they paid for; batch and month filters narrow both lists. Run: python tests/e2e_v0852.py"""
+import os, sys, time, subprocess, tempfile, json, sqlite3, urllib.request
+from playwright.sync_api import sync_playwright
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import e2e_shim  # noqa: F401
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+tmp = tempfile.mkdtemp(); DB = os.path.join(tmp, "v.db")
+env = dict(os.environ, DATABASE_PATH=DB, ADMIN_EMAIL="admin@v.test", ADMIN_PASSWORD="AdminPass123", PORT="5097", SECRET_KEY="v" * 32, SEED_DEMO="0")
+subprocess.run([sys.executable, "seed.py"], cwd=ROOT, env=env, check=True, capture_output=True)
+def sql(q, a=()):
+    c = sqlite3.connect(DB)
+    try: r = c.execute(q, a).fetchall(); c.commit(); return r
+    finally: c.close()
+sql("UPDATE users SET must_change_password=0")
+srv = subprocess.Popen([sys.executable, "app.py"], cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(2)
+BASE = "http://127.0.0.1:5097"; errors = []
+OUT = os.environ.get("E2E_SHOTS") or tempfile.gettempdir()
+def check(ok, m):
+    print("PASS" if ok else "FAIL", m)
+    if not ok: errors.append(m)
+def api(path, body=None, tok=None):
+    r = urllib.request.Request(BASE + "/api" + path, data=json.dumps(body).encode() if body is not None else None, headers={"Content-Type": "application/json", **({"Authorization": "Bearer " + tok} if tok else {})})
+    return json.load(urllib.request.urlopen(r))
+try:
+    adm = api("/auth/login", {"login": "admin@v.test", "password": "AdminPass123"})["token"]
+    def mk(e, n, role="student"):
+        i = api("/users", {"email": e, "password": "Password123", "full_name": n, "role": role, "phone": "7771234"}, adm)["id"]; sql("UPDATE users SET must_change_password=0"); return i
+    t1 = mk("t1@v.test", "Ustaz Ahmed", "teacher")
+    ss = [mk(f"s{i}@v.test", n) for i, n in enumerate(["Aisha Ali", "Ibrahim Naseem", "Hassan Rasheed", "Mariyam Shifa"])]
+    co = api("/courses", {"name": "Arabic Level 1", "monthly_fee_mvr": 500, "status": "open"}, adm)["id"]
+    co2 = api("/courses", {"name": "Quran Tuition", "monthly_fee_mvr": 300, "status": "open", "kind": "tuition"}, adm)["id"]
+    b1 = api("/batches", {"course_id": co, "code": "A1", "teacher_id": t1, "capacity": 20, "days": "Wed", "start_time": "16:00"}, adm)["id"]
+    b2 = api("/batches", {"course_id": co2, "code": "Q1", "teacher_id": t1, "capacity": 20, "days": "Thu", "start_time": "16:00"}, adm)["id"]
+    for i, s in enumerate(ss): api("/enrollments", {"student_id": s, "batch_id": b1 if i < 3 else b2, "start_date": "2026-09-01"}, adm)
+    iid = sql("SELECT id FROM invoices WHERE student_id=? AND period='2026-09'", (ss[0],))[0][0]
+    api("/payments", {"invoice_id": iid, "amount_mvr": 500, "method": "cash", "paid_on": "2026-11-10"}, adm)
+    with sync_playwright() as p:
+        br = p.chromium.launch()
+        for w in (390, 1280):
+            a = br.new_context(viewport={"width": w, "height": 900}).new_page(); a.on("pageerror", lambda e: errors.append(str(e)))
+            e2e_shim.login(a, BASE, "admin@v.test", "AdminPass123", db=DB)
+            a.goto(BASE + "/#fees"); a.wait_for_selector("[data-tabs=fees]"); a.click(e2e_shim.subtab("fees", "record")); a.wait_for_selector("#fxrf")
+            check(a.locator("details.sub summary", has_text="Arabic Level 1 A1").count() == 1 and a.locator("details.sub summary", has_text="Quran Tuition Q1").count() == 1, f"[{w}] open fees grouped by batch")
+            check(a.locator(".cl", has_text="Payment").count() + a.locator(".chip", has_text="For Sep 2026").count() >= 1, f"[{w}] the payment says it was for Sep 2026")
+            check(a.locator("text=Paid on 2026-11-10").count() >= 1, f"[{w}] and the day it was paid")
+            a.screenshot(path=os.path.join(OUT, f"v0852-record-{w}.png"), full_page=True)
+            # tap a month: fills the form
+            a.locator("details.sub", has_text="Quran Tuition Q1").locator("summary").click()
+            a.locator("details.sub", has_text="Quran Tuition Q1").locator("[data-do=fxRecPick]").first.click(); a.wait_for_timeout(400)
+            sel = a.evaluate("document.querySelector('#fxp_i').selectedOptions[0].textContent")
+            check("Sep 2026" in sel and "Mariyam Shifa" in sel and a.input_value("#fxp_a") == "300", f"[{w}] tapping Sep 2026 fills the invoice and amount ({sel})")
+            # filter by batch
+            a.select_option("#fxrf_b", str(b2)); a.wait_for_selector("details.sub summary:has-text('Quran Tuition Q1')")
+            a.wait_for_timeout(500)
+            check(a.locator("details.sub summary", has_text="Arabic Level 1 A1").count() == 0, f"[{w}] batch filter shows only that batch")
+            check(a.evaluate("[...document.querySelectorAll('#fxp_i option')].every(o => o.textContent.includes('Quran'))"), f"[{w}] the form lists only that batch's fees")
+            check(a.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), f"[{w}] no sideways scrolling")
+            a.select_option("#fxrf_b", ""); a.wait_for_timeout(500)
+            a.context.close()
+        br.close()
+finally:
+    srv.terminate()
+print("\n" + ("ALL PASS" if not errors else f"{len(errors)} FAILED: " + "; ".join(errors)))
+sys.exit(1 if errors else 0)
