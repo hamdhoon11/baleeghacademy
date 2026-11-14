@@ -66,6 +66,14 @@ class S53(unittest.TestCase):
         self.assertEqual(self.c.get("/api/fees/status-grid.pdf?end=bad", headers=self.H).status_code, 400)
         self.assertEqual(self.c.get("/api/fees/status-grid.pdf").status_code, 401)
 
+    def test_04_batch_members(self):   # v0.8.55: the Batch filter's data
+        j = self.c.get("/api/batch-members", headers=self.H).get_json()
+        names = [b["name"] for b in j["batches"]]
+        self.assertTrue({"Arabic A1", "Arabic A2"} <= set(names)); self.assertEqual(names, sorted(names))
+        self.assertEqual(j["students"][str(self.s[0])], [self.b1]); self.assertEqual(j["students"][str(self.s[2])], [self.b2])
+        self.assertTrue(any({self.b1, self.b2} <= set(v) for v in j["teachers"].values()))
+        self.assertEqual(self.c.get("/api/batch-members").status_code, 401)
+
 
 if __name__ == "__main__":
     unittest.main()

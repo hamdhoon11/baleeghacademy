@@ -108,7 +108,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--lagoon)}
 .btn.big{font-size:1.1rem;padding:.7rem 1.6rem}
 .banner{background:#fbefc8;color:#5c4300;border-radius:var(--r-sm);padding:.6rem .8rem;margin-bottom:.8rem;white-space:pre-wrap}
 .msg{padding:.7rem .9rem;border-radius:var(--r-sm);margin-bottom:.9rem;border-inline-start:4px solid currentColor}
-.msg.err{background:#f8e1dc;color:var(--coral)}.msg.ok{background:#dff1e3;color:#1f6b35}.msg.warn{background:#fbefc8;color:#7a5a00}.fg{border-collapse:separate;border-spacing:3px;width:auto;min-width:100%}.fg th{text-align:left;font-weight:600;white-space:nowrap;position:sticky;left:0;background:var(--white);z-index:1;padding:.2rem .4rem}.fg thead th{position:static}
+.msg.err{background:#f8e1dc;color:var(--coral)}.msg.ok{background:#dff1e3;color:#1f6b35}.msg.warn{background:#fbefc8;color:#7a5a00}.bfl select{min-width:11rem}.bft{font-size:.8rem;display:block}.pnm{display:inline-block;text-align:inherit}
+.fg{border-collapse:separate;border-spacing:3px;width:auto;min-width:100%}.fg th{text-align:left;font-weight:600;white-space:nowrap;position:sticky;left:0;background:var(--white);z-index:1;padding:.2rem .4rem}.fg thead th{position:static}
 .fg td.c,.fg th.c{text-align:center;padding:0}.fg td.bad{color:#9b2c1c;font-weight:600}.fg tfoot th,.fg tfoot td{font-size:.85rem;color:var(--ink2)}
 .gc{display:inline-flex;align-items:center;justify-content:center;gap:.2rem;min-width:4.2rem;min-height:2.1rem;padding:0 .4rem;border-radius:6px;font-size:.85rem;font-variant-numeric:tabular-nums;border:1px solid transparent;font:inherit;font-size:.85rem;cursor:default}
 button.gc{cursor:pointer}button.gc:hover{filter:brightness(.95)}p .gc{min-width:1.6rem;min-height:1.4rem;padding:0}
@@ -642,6 +643,36 @@ function navHtml(tabList) {
     + `<div class="sheet" id="sheet" role="group" aria-label="${esc(t("all_sections"))}"><button type="button" class="tab qj" id="qjSheet">${icon("search")}<span class="tl">${esc(t("qj_search"))}</span></button><div class="ovf">${restHtml}</div><div class="foot"><div class="me"><span class="av" aria-hidden="true">${esc(initials)}</span><span class="who"><b>${esc(u.full_name)}</b><small>${esc(t(u.role))}</small></span></div><button type="button" class="tab" id="so" title="${esc(t("signout"))}">${icon("out")}<span class="tl">${esc(t("signout"))}</span></button></div></div></nav>`;
 }
 // Cards on a phone need each cell to know its column title, so copy the header text onto the cells (and keep screen readers happy).
+// v0.8.55: one Batch filter for every list of students. bfBar(key) draws it; bfKeep(key, studentId, batchId?) says if a row stays;
+// bfSort(key, list, idOf, nameOf, batchOf?) puts rows in batch order when "All, sorted by batch" is chosen; bfTag(id) names a student's batches.
+// The choice is kept per screen in S.bf[key]. Data: GET /api/batch-members (cached 30 s).
+async function bmLoad() {
+  if (S.bm && Date.now() - S.bm.at < 30000) return S.bm;
+  try { const r = await api("/batch-members"); S.bm = {...r, at: Date.now(), name: Object.fromEntries(r.batches.map(b => [b.id, b.name]))}; }
+  catch (_) { S.bm = {batches: [], students: {}, teachers: {}, name: {}, at: Date.now()}; }
+  return S.bm;
+}
+const bfVal = key => ((S.bf || {})[key] || "");
+function bfBar(key) {
+  const v = bfVal(key), bm = S.bm || {batches: []};
+  return `<label class="bfl">${esc(t("Batch"))}<select data-bf="${esc(key)}"><option value="">${esc(t("All batches"))}</option><option value="sort" ${v === "sort" ? "selected" : ""}>${esc(t("All, sorted by batch"))}</option>`
+    + bm.batches.filter(b => b.active || String(b.id) === v).map(b => `<option value="${b.id}" ${String(b.id) === v ? "selected" : ""}>${esc(b.name)}</option>`).join("")
+    + `<option value="none" ${v === "none" ? "selected" : ""}>${esc(t("Not in a batch"))}</option></select></label>`;
+}
+const bfOf = (id, role) => ((S.bm || {})[role === "teacher" ? "teachers" : "students"] || {})[String(id)] || [];
+function bfKeep(key, id, batchId, role) {
+  const v = bfVal(key); if (!v || v === "sort") return true;
+  const ids = batchId !== undefined && batchId !== null ? [batchId] : (id ? bfOf(id, role) : []);
+  return v === "none" ? !ids.length : ids.map(String).includes(v);
+}
+const bfLabel = (id, batchId, role) => { const ids = batchId ? [batchId] : bfOf(id, role); return ids.map(b => (S.bm.name || {})[b] || "").filter(Boolean).sort()[0] || "\uffff"; };
+function bfSort(key, list, idOf, nameOf, batchOf, roleOf) {
+  if (bfVal(key) !== "sort") return list;
+  return [...list].sort((a, b) => bfLabel(idOf(a), batchOf && batchOf(a), roleOf && roleOf(a)).localeCompare(bfLabel(idOf(b), batchOf && batchOf(b), roleOf && roleOf(b))) || String(nameOf(a) || "").localeCompare(String(nameOf(b) || "")));
+}
+const bfTag = (id, role) => { const n = bfOf(id, role).map(b => (S.bm.name || {})[b]).filter(Boolean); return n.length ? ` <span class="hint bft">${esc(n.join(", "))}</span>` : ""; };
+document.addEventListener("change", e => { const k = e.target && e.target.dataset && e.target.dataset.bf; if (k) { S.bf = {...(S.bf || {}), [k]: e.target.value}; render(); } });
+
 function labelTables(root) {
   root.querySelectorAll("table").forEach(tb => {
     const hr = tb.tHead && tb.tHead.rows[0]; if (!hr || tb.classList.contains("nostack")) return;

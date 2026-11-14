@@ -698,6 +698,19 @@ def create_app(config=None):
                  "(SELECT COUNT(*) FROM enrollments e WHERE e.batch_id=b.id AND e.status='active') AS enrolled "
                  "FROM batches b JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=b.teacher_id")
 
+    @app.get("/api/batch-members")
+    @auth("admin")
+    def batch_members():
+        """v0.8.55: who is in which batch (active enrolments) and who teaches it, for the Batch filter on every list. Any admin."""
+        bs = rows("SELECT b.id, b.code, b.teacher_id, c.name AS course_name, c.is_active AS course_active FROM batches b JOIN courses c ON c.id=b.course_id ORDER BY c.name, b.code")
+        by = {}
+        for r in rows("SELECT student_id, batch_id FROM enrollments WHERE status='active'"):
+            by.setdefault(str(r["student_id"]), []).append(r["batch_id"])
+        teach = {}
+        for b in bs:
+            if b["teacher_id"]: teach.setdefault(str(b["teacher_id"]), []).append(b["id"])
+        return jsonify(batches=[{"id": b["id"], "name": f"{b['course_name']} {b['code']}", "active": bool(b["course_active"])} for b in bs], students=by, teachers=teach)
+
     @app.get("/api/batches")
     @auth()
     def batches_list():
