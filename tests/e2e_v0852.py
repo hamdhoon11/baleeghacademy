@@ -43,6 +43,12 @@ try:
             check(a.locator("details.sub summary", has_text="Arabic Level 1 A1").count() == 1 and a.locator("details.sub summary", has_text="Quran Tuition Q1").count() == 1, f"[{w}] open fees grouped by batch")
             check(a.locator(".cl", has_text="Payment").count() + a.locator(".chip", has_text="For Sep 2026").count() >= 1, f"[{w}] the payment says it was for Sep 2026")
             check(a.locator("text=Paid on 2026-11-10").count() >= 1, f"[{w}] and the day it was paid")
+            # v0.8.53: the fee status grid, coloured and labelled
+            a.locator("details.sub", has_text="Arabic Level 1 A1").locator("summary").click()
+            row = a.locator("details.sub", has_text="Arabic Level 1 A1").locator("tr", has_text="Aisha Ali")
+            check(row.locator(".g-paid").count() == 1 and row.locator(".g-over, .g-unpaid").count() >= 1, f"[{w}] grid: Aisha's September is green, later months red")
+            check(a.locator("details.sub", has_text="Arabic Level 1 A1").locator("tfoot", has_text="Collected").count() == 1, f"[{w}] grid: collected and to-pay per month")
+            check(a.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), f"[{w}] grid scrolls inside its box, not the page")
             a.screenshot(path=os.path.join(OUT, f"v0852-record-{w}.png"), full_page=True)
             # tap a month: fills the form
             a.locator("details.sub", has_text="Quran Tuition Q1").locator("summary").click()
