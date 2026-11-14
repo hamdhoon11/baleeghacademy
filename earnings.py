@@ -103,7 +103,26 @@ def register(app, c, today):
         if not dry:
             audit("earnings_calculated", "teacher_earnings", None, f"{m}: {len(res)} batch(es) at {p}%", new=str(sum(r["collected"] for r in res)))
             db().commit()
-        return jsonify(month=m, dry_run=dry, share_percent=p, count=len(res), **summary(m, res if dry else None))
+        return jsonify(month=m, dry_run=dry, share_percent=p, count=len(res), why=explain(m, res), **summary(m, res if dry else None))
+
+    def explain(m, res):
+        """v0.8.49: what Calculate found, in words, so an empty or small result is understood (it is not an error)."""
+        n = lambda r: int((r or {}).get("s") or 0)
+        paid = n(one("SELECT COALESCE(SUM(amount_mvr),0) s FROM payments WHERE SUBSTR(paid_on,1,7)=?", (m,)))
+        counted = sum(r["collected"] for r in res)
+        reg = n(one("SELECT COALESCE(SUM(p.amount_mvr),0) s FROM payments p JOIN invoices i ON i.id=p.invoice_id WHERE SUBSTR(p.paid_on,1,7)=? AND i.kind='registration'", (m,)))
+        nt = {r["batch_id"] for r in res if r["teacher_id"] is None and r["collected"]}
+        no_teacher = [f"{x['course_name']} {x['code']}" for x in rows("SELECT b.id, b.code, c.name AS course_name FROM batches b JOIN courses c ON c.id=b.course_id") if x["id"] in nt]
+        recent = rows("SELECT SUBSTR(paid_on,1,7) AS month, SUM(amount_mvr) AS s FROM payments WHERE reversed_at IS NULL GROUP BY SUBSTR(paid_on,1,7) ORDER BY 1 DESC LIMIT 6")
+        msg = []
+        if not paid: msg.append(f"No fee payments were recorded with a payment date in {m}. Teacher earnings count fees in the month they were PAID, not the month of the invoice.")
+        else:
+            msg.append(f"MVR {paid:,} was paid in {m}; MVR {counted:,} of it is on batches and counted for teachers.")
+            if reg: msg.append(f"MVR {reg:,} is registration fees (not shared with teachers).")
+            if paid - counted - reg > 0: msg.append(f"MVR {paid - counted - reg:,} is on invoices with no batch (hand-made invoices that are not monthly fees), or reversed: not shared.")
+        if no_teacher: msg.append("These batches have no teacher, so their share goes to the academy: " + ", ".join(no_teacher) + ". Choose a teacher in Batches, then press Calculate again.")
+        if not res and recent: msg.append("Months with fee payments: " + ", ".join(f"{r['month']} (MVR {int(r['s']):,})" for r in recent) + ".")
+        return msg
 
     def summary(m, live=None):
         if live is None:

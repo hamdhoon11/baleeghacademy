@@ -567,3 +567,17 @@ CREATE TABLE IF NOT EXISTS login_events (
 );
 CREATE INDEX IF NOT EXISTS idx_login_events_user ON login_events(user_id, at);
 CREATE INDEX IF NOT EXISTS idx_login_events_at ON login_events(at);
+
+-- v0.8.49: unexpected server errors ("Something went wrong on the server"), so the cause can be found without the hosting logs.
+-- Kept 90 days / last 500. Never holds passwords or request bodies: only where, who, the error's type and message and the code lines.
+CREATE TABLE IF NOT EXISTS server_errors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ref TEXT NOT NULL,
+  at TEXT NOT NULL,
+  method TEXT,
+  path TEXT,
+  user_id INTEGER,
+  error_type TEXT,
+  message TEXT,
+  trace TEXT
+);

@@ -123,7 +123,7 @@ views.people = async () => {
   const self = S.user.id, full = !S.user.permissions;
   mount(() => {
     onSubmit("fu", async () => {   // no password typed = the server makes a random one; it is shown once below
-      const name = val("un"), r = await api("/users", "POST", {full_name: name, email: val("ue"), password: val("up") || undefined, role: val("ur")});
+      const name = val("un"), r = await api("/users", "POST", {full_name: name, email: val("ue"), phone: val("uph"), password: val("up") || undefined, role: val("ur")});
       if (r.temporary_password) S.tmp = {name, id: r.login_id, pw: r.temporary_password};
     });
     if ($("#pf")) $("#pf").onchange = ev => { S.pf = ev.target.value; S.plim = 30; render(); };
@@ -163,7 +163,7 @@ views.people = async () => {
   const canBulk = x => x.id !== self;
   const rows = found.slice(0, lim).map(x => `<tr><td>${canBulk(x) ? bulkBox("ppl", x.id, x.full_name) + " " : ""}${esc(x.full_name)}</td><td>${esc(x.login_id || "")}</td><td>${esc(x.email)}</td><td>${esc(t(x.role))}${x.permissions !== null ? " " + tag(t("Limited"), "warn") : x.is_super ? " " + tag(t("Superadmin"), "ok") : x.role === "admin" ? " " + tag(t("Full"), "ok") : ""}</td><td>${x.is_active ? "✓" : "✗"}<span class="sr-only">${esc(t(x.is_active ? "active" : "inactive"))}</span></td><td><button class="btn sm" data-do="euEdit" data-id="${x.id}">${t("edit")}</button></td></tr>`).join("");
   const listbar = `<form id="pqf" class="listbar" role="search"><label>${esc(t("role"))}<select id="pf"><option value="">${esc(t("all"))}</option>${roles.map(r => `<option value="${r[0]}" ${r[0] === roleF ? "selected" : ""}>${esc(r[1])}</option>`).join("")}</select></label><label>${esc(t("search"))}<input id="pq" type="search" value="${esc(S.pq || "")}" placeholder="${esc(t("people_search_hint"))}"></label><button class="btn">${t("search")}</button></form>`;
-  const add = addPanel("person", "Add person", form("fu", field("un", "name") + field("ue", "email", "email") + field("up", "password", "password") + field("ur", "role", "", roles)));
+  const add = addPanel("person", "Add person", form("fu", field("un", "name") + field("ue", "email", "email") + `<label>${esc(t("Contact number"))}<input id="uph" type="tel" inputmode="tel" autocomplete="tel" required minlength="7" maxlength="30" pattern="[+]?[0-9 ()-]{7,}" placeholder="7771234" title="${esc(t("At least 7 digits, like 7771234 or +960 7771234"))}"></label>` + field("up", "password", "password") + field("ur", "role", "", roles)));
   return `${e ? crumbFor(e.full_name, {eu: null}) : ""}<h1>${t("people")}</h1>${tmpPanel()}${helpPanel(help)}${editor}${add}<div class="panel">${listbar}${bulkBar("ppl", [["peBulkOn", "bulk_activate"], ["peBulkOff", "bulk_deactivate", true]], found.slice(0, lim).filter(canBulk).map(x => x.id))}${bulkAll("ppl", found.slice(0, lim).filter(canBulk).map(x => x.id))}${found.length ? `<table><thead><tr><th>${t("name")}</th><th>${t("Login ID")}</th><th>${t("email")}</th><th>${t("role")}</th><th>${t("is_active")}</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<p>${t(q ? "no_match" : "empty")}</p>`}${moreBtn(0, Math.min(lim, found.length), found.length, "peMore")}</div>${impPanel()}`;
 };
 DO.peMore = () => { S.plim = (S.plim || 30) + 30; };
@@ -327,7 +327,7 @@ views.settings = async () => {
     p.addEventListener("input", mark); p.addEventListener("change", mark);
   });
   const store = await storagePanel();
-  return `<h1>${t("settings")}</h1>${store.banner}${tabs({id: "settings", items: sc.groups.map(x => [x.id, t(x.title)]), current: g.id, onSelect: setSelect, label: t("settings")})}<div class="mt1 panel" id="setp"><h2>${esc(t(g.title))}</h2>${g.hint ? `<p class="hint">${esc(t(g.hint))}</p>` : ""}${g.id === "academy" ? logoPanel() : ""}${g.items.map(input).join("")}<p><button class="btn" data-do="saveSet">${t("save")}</button> <span class="tag warn" id="setDirty" hidden>${esc(t("Unsaved changes"))}</span></p><p class="hint">${esc(t("Empty fields use the default. Every change is written to the audit log."))}</p></div>${store.panel}${resetPanel()}`;
+  return `<h1>${t("settings")}</h1>${store.banner}${tabs({id: "settings", items: sc.groups.map(x => [x.id, t(x.title)]), current: g.id, onSelect: setSelect, label: t("settings")})}<div class="mt1 panel" id="setp"><h2>${esc(t(g.title))}</h2>${g.hint ? `<p class="hint">${esc(t(g.hint))}</p>` : ""}${g.id === "academy" ? logoPanel() : ""}${g.items.map(input).join("")}<p><button class="btn" data-do="saveSet">${t("save")}</button> <span class="tag warn" id="setDirty" hidden>${esc(t("Unsaved changes"))}</span></p><p class="hint">${esc(t("Empty fields use the default. Every change is written to the audit log."))}</p></div>${store.panel}${await errPanel()}${resetPanel()}`;
 };
 DO.setTab = d => { S.sg = d.g; };
 // v0.8.48: the academy logo (sign-in page, menu, application form, browser tab, receipts and every report PDF)
@@ -583,14 +583,20 @@ async function feEarnPanel() {
     <button class="btn" data-do="feApprove" data-total="${r.totals.teacher_share_mvr}" ${approved || !r.items.length ? "disabled" : ""}>${esc(t("Approve month"))}</button>
     <button class="btn" data-do="feCsv">CSV</button><button class="btn" data-do="feXlsx">Excel</button><button class="btn" data-do="fePdf">PDF</button></div>
     ${monthErr ? `<p class="msg err" role="alert">${esc(m)}: ${esc(monthErr)}</p>` : ""}
-    ${!monthErr && !r.items.length ? `<p class="hint">${esc(t("fe_empty_hint"))}</p>` : ""}
+    ${S.fe && S.fe.why && S.fe.why.length ? `<div class="msg ${r.items.length ? "ok" : "warn"}" role="status">${S.fe.why.map(x => esc(x)).join("<br>")}</div>` : ""}
+    ${!monthErr && !r.items.length && !(S.fe && S.fe.why) ? `<p class="hint">${esc(t("fe_empty_hint"))}</p>` : ""}
     ${fnTable(["Teacher", "Batch", "Collected", "Share", "Teacher share", "Academy share", "status"], rowsHtml)}
     <p>${t("Total")}: ${fnMoney(r.totals.collected_mvr)} → ${fnMoney(r.totals.teacher_share_mvr)} / ${fnMoney(r.totals.academy_share_mvr)}</p>
     <h3>${t("Owed to teachers (approved months)")}</h3>${fnTable(["Teacher", "Earned", "Paid", "Outstanding", ""], tRows)}
     <h3>${t("Payments to teachers")}</h3>${fnTable(["Date", "Teacher", "Amount", "Method", ""], pRows)}</div>`;
 }
 DO.feShow = () => { S.fe = {month: val("fe_month") || feMonth()}; };
-DO.feCalc = async () => { S.fe = {month: val("fe_month") || feMonth()}; await api("/earnings/calculate", "POST", {month: S.fe.month}); flash(t("saved"), true); };
+DO.feCalc = async () => {   // v0.8.49: say what was found (an empty month is explained, not silently blank)
+  S.fe = {month: val("fe_month") || feMonth()};
+  const r = await api("/earnings/calculate", "POST", {month: S.fe.month});
+  S.fe.why = r.why || [];
+  flash(r.count ? t("saved") : t("Nothing to share for this month"), !!r.count);
+};
 DO.feApprove = async d => { const m = val("fe_month") || feMonth(); if (!await ui.confirm(t("Approve and lock") + " " + m + "?", {okText: t("Approve month"), details: [t("Total") + ": MVR " + d.total, t("fe_approve_hint")]})) return false; await api("/earnings/approve", "POST", {month: m, expected_teacher_total: d.total}); S.fe = {month: m}; flash(t("saved"), true); };
 // Session 3: one form instead of three prompts; the method is a list, not typed text
 DO.fePay = async d => {
@@ -681,6 +687,14 @@ async function storagePanel(bannerOnly) {
 DO.stCheck = async () => { S.stMissing = await api("/admin/storage/missing"); };
 
 // ---------- v0.8.41: clear portal data (full admins only). Preview first, then the admin's password and the words DELETE ALL DATA ----------
+// v0.8.49: the last unexpected server errors, so a "Something went wrong" can be traced (full admins)
+async function errPanel() {
+  if (S.user.role !== "admin" || S.user.permissions) return "";
+  const list = await api("/admin/server-errors").catch(() => []);
+  const row = e => `<details class="sub"><summary><b>${esc(e.ref)}</b> · ${ltr(String(e.at).slice(0, 16))} UTC · ${esc(e.method || "")} ${esc(e.path || "")} · ${esc(e.error_type || "")}</summary>`
+    + `<p>${esc(e.message || "")}</p><p class="hint">${esc(e.user_name || "")}</p><pre class="hint" style="white-space:pre-wrap;font-size:.75rem">${esc(e.trace || "")}</pre></details>`;
+  return `<details class="panel mt1" id="errp"><summary><b>${esc(t("Server errors"))}</b> <span class="hint">· ${list.length}</span></summary><p class="hint">${esc(t("When a screen says 'Something went wrong on the server', the reason is kept here with its reference. Send it to whoever looks after the portal."))}</p>${list.length ? list.slice(0, 30).map(row).join("") : `<p>${esc(t("None. Good."))}</p>`}</details>`;
+}
 function resetPanel() {
   if (S.user.role !== "admin" || S.user.permissions) return "";
   if (!S.user.is_super) return `<div class="panel mt1" id="resetp"><h2>${esc(t("rd_title"))}</h2><p class="hint">${esc(t("Only the superadmin can clear the portal's data."))}</p></div>`;   // v0.8.48

@@ -585,3 +585,10 @@
 - branding.py (new): logo upload/remove/public; storage area `branding`; hidden setting `_logo`; receipts.draw_logo; index.html markHtml()/applyLogo().
 - Tests: test_session48.py, e2e_v0848.py; 533 unit tests pass.
 - Next: nothing agreed; possible follow-up is automatic WhatsApp via the Business API (needs a provider account).
+
+## Done: v0.8.49 (see CHANGES-v0.8.49.md)
+- excelio.clean()/csv_safe and payreports.csv_safe drop control characters (they crashed template/Excel downloads).
+- app.record_error(): table server_errors, ref in the 500 message (reason shown to admins), GET /api/admin/server-errors (full admins), Settings panel. Reset keeps it.
+- earnings: /api/earnings/calculate returns `why` (explanations); UI shows it.
+- POST /api/users needs a valid phone (TESTS: PORTAL_PHONE_OPTIONAL=1 in tests/__init__.py switches it off; test_session49 runs with it on).
+- Live failures could not be reproduced on PostgreSQL 16; ask the owner for the error reference (Settings → Server errors) if anything still fails.

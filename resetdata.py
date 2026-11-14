@@ -23,7 +23,7 @@ Also usable from the command line (dry run by default, like the migrate scripts)
 import re
 
 PHRASE = "DELETE ALL DATA"
-KEEP = ("users", "settings", "audit_log", "audit_unlock", "schema_meta", "counters")   # users: admins stay, see wipe()
+KEEP = ("users", "settings", "audit_log", "audit_unlock", "schema_meta", "counters", "server_errors")   # v0.8.49: server_errors kept (support information, like the log)   # users: admins stay, see wipe()
 _TABLE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+)", re.I)
 
 # words for the preview; a table not listed here is shown by its own name

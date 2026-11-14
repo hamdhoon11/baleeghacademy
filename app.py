@@ -33,6 +33,7 @@ def create_app(config=None):
         LEARNING_MAX_MB=int(os.environ.get("LEARNING_MAX_MB", "20")),    # max size of submissions and materials
         MAX_CONTENT_LENGTH=25 * 1024 * 1024,
         SKIP_FORCED_CHANGE=os.environ.get("PORTAL_SKIP_FORCED_CHANGE") == "1",   # TESTS ONLY: never set this on a real server
+        PHONE_OPTIONAL=os.environ.get("PORTAL_PHONE_OPTIONAL") == "1",           # TESTS ONLY (v0.8.49): Add person without a contact number
         ALLOW_EMAIL_LOGIN=os.environ.get("ALLOW_EMAIL_LOGIN", "1") != "0",   # Session 11: set to 0 once everyone has confirmed they can sign in by ID
     )
     if config:
@@ -408,6 +409,13 @@ def create_app(config=None):
         email = d["email"].strip().lower()
         if not EMAIL.match(email): return err("Enter a valid email")
         if d["role"] not in ("admin", "teacher", "student"): return err("Invalid role")
+        # v0.8.49: a contact number is required for everyone added in People (WhatsApp reminders and messages need it)
+        phone = str(d.get("phone") or "").strip()
+        if phone or not app.config.get("PHONE_OPTIONAL"):
+            if not phone: return err("Enter a contact number")
+            if len(phone) > 30 or not re.fullmatch(r"\+?[\d\s\-()]{7,}", phone) or len(re.sub(r"\D", "", phone)) < 7:
+                return err("Enter a valid contact number (at least 7 digits), like 7771234 or +960 7771234")
+        d["phone"] = phone or None
         if d["role"] == "admin" and g.user["permissions"] is not None:
             return err("Only a full admin can create another admin", 403)
         generated = not d.get("password")   # no password typed = make a random one and show it once
@@ -1343,11 +1351,43 @@ def create_app(config=None):
         msgs = {404: "Not found", 405: "Method not allowed", 400: "Bad request"}
         return api_error(msgs.get(e.code) or e.description or "Request failed", e.code or 500)
 
+    def record_error(e):
+        """v0.8.49: write the error down on a connection of its own (the request's may be in a failed transaction). Returns its reference."""
+        import traceback
+        ref = secrets.token_hex(3).upper()
+        try:
+            tb = traceback.extract_tb(e.__traceback__)
+            here = [f for f in tb if BASE in (f.filename or "") and "site-packages" not in f.filename] or tb
+            lines = "\n".join(f"{os.path.basename(f.filename)}:{f.lineno} in {f.name}: {(f.line or '').strip()[:200]}" for f in here[-8:])
+            u = g.get("user") or {}
+            c = connect()
+            try:
+                c.execute("INSERT INTO server_errors(ref,at,method,path,user_id,error_type,message,trace) VALUES(?,?,?,?,?,?,?,?)",
+                          (ref, dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), request.method, request.path[:200], u.get("id"),
+                           type(e).__name__, str(e)[:1000], lines[:4000]))
+                c.execute("DELETE FROM server_errors WHERE id NOT IN (SELECT id FROM server_errors ORDER BY id DESC LIMIT 500)")
+                c.commit()
+            finally: c.close()
+        except Exception:
+            app.logger.exception("Could not record the server error")
+        return ref
+
     @app.errorhandler(Exception)
     def _server_error(e):
         if not request.path.startswith("/api/"): raise e
         app.logger.exception("Unhandled error on %s", request.path)
-        return api_error("Something went wrong on the server. Please try again.", 500)
+        ref = record_error(e)
+        u = g.get("user") or {}
+        # admins see the reason (it names a code line, never data from other people); everyone gets the reference to pass on
+        why = f" ({type(e).__name__}: {str(e)[:160]})" if u.get("role") == "admin" else ""
+        r = jsonify(error=f"Something went wrong on the server. Please try again. If it happens again, send this reference to support: {ref}{why}", ref=ref)
+        return r, 500
+
+    @app.get("/api/admin/server-errors")
+    @auth("admin")
+    def server_errors_list():
+        if g.user["permissions"] is not None: return err("Only a full admin can see server errors", 403)
+        return jsonify(rows("SELECT e.*, u.full_name AS user_name FROM server_errors e LEFT JOIN users u ON u.id=e.user_id ORDER BY e.id DESC LIMIT 100"))
 
     return app
 

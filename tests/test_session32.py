@@ -34,7 +34,7 @@ OPEN = {
 # admin-only routes with no permission area: each checks inside the route, and test_03 / test_04 prove it.
 NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "/api/admin/todo"), ("GET", "/api/users"), ("POST", "/api/whatsapp/prepare"), ("POST", "/api/whatsapp/sent"),
            # v0.8.47: full admins only, checked inside presence.py (there is no area a limited admin could be given)
-           ("GET", "/api/admin/presence"), ("POST", "/api/admin/accounts/<int:uid>/signout"), ("POST", "/api/admin/accounts/<int:uid>/pause"),
+           ("GET", "/api/admin/presence"), ("GET", "/api/admin/server-errors"), ("POST", "/api/admin/accounts/<int:uid>/signout"), ("POST", "/api/admin/accounts/<int:uid>/pause"),
            ("POST", "/api/admin/accounts/<int:uid>/suspend"), ("POST", "/api/admin/accounts/<int:uid>/restore"),
            ("GET", "/api/admin/presence/summary"), ("GET", "/api/admin/accounts/<int:uid>/history"), ("POST", "/api/admin/accounts/bulk"),
            ("POST", "/api/admin/accounts/signout-all")}
