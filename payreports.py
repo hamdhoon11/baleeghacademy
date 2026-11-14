@@ -30,7 +30,9 @@ XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def csv_safe(v):
-    """A text cell starting with = + - @ gets a leading apostrophe (spreadsheet formula injection)."""
+    """A text cell starting with = + - @ gets a leading apostrophe (spreadsheet formula injection).
+    v0.8.49: control characters an .xlsx cannot hold are dropped (they made the whole download fail)."""
+    if isinstance(v, str): v = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", v)
     return "'" + v if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r") else ("" if v is None else v)
 
 

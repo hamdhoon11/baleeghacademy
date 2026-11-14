@@ -23,8 +23,17 @@ MAX_ROWS, MAX_BYTES = 2000, 2 * 1024 * 1024
 HEAD_FILL, REQ_FILL = "0B4F5C", "B8432F"
 
 
+_ILLEGAL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")   # control characters Excel files cannot hold (openpyxl refuses them and the download failed)
+
+
+def clean(v):
+    """v0.8.49: drop characters an .xlsx cannot hold (a name pasted with a hidden control character used to stop the whole download)."""
+    return _ILLEGAL.sub("", v) if isinstance(v, str) else v
+
+
 def csv_safe(v):
     """Text that a spreadsheet would run as a formula (= + - @, tab, return at the start) gets an apostrophe in front (same rule as payreports)."""
+    v = clean(v)
     return "'" + v if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r") else ("" if v is None else v)
 
 
@@ -103,11 +112,11 @@ def template(title, columns, lists=None, rows=None, note=None):
     wb = Workbook(); ws = wb.active; ws.title = "Data"
     lists = {k: v for k, v in (lists or {}).items() if v is not None}
     for i, c in enumerate(columns, 1):
-        cell = ws.cell(row=1, column=i, value=c["key"])
+        cell = ws.cell(row=1, column=i, value=clean(c["key"]))
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor=REQ_FILL if c.get("required") else HEAD_FILL)
         cell.alignment = Alignment(vertical="center")
-        if c.get("help"): cell.comment = Comment(("Required. " if c.get("required") else "") + c["help"] + (f"\nExample: {c['example']}" if c.get("example") not in (None, "") else ""), "Baleegh Academy")
+        if c.get("help"): cell.comment = Comment(clean(("Required. " if c.get("required") else "") + c["help"] + (f"\nExample: {c['example']}" if c.get("example") not in (None, "") else "")), "Baleegh Academy")
         ws.column_dimensions[L(i)].width = c.get("width") or max(14, min(40, len(c["key"]) + 4))
     ws.freeze_panes = "A2"
     for r in rows or []:
@@ -120,8 +129,8 @@ def template(title, columns, lists=None, rows=None, note=None):
     if lists:
         ls = wb.create_sheet("Lists")
         for j, (name, vals) in enumerate(lists.items(), 1):
-            ls.cell(row=1, column=j, value=name).font = Font(bold=True)
-            for k, v in enumerate(vals, 2): ls.cell(row=k, column=j, value=v)
+            ls.cell(row=1, column=j, value=clean(name)).font = Font(bold=True)
+            for k, v in enumerate(vals, 2): ls.cell(row=k, column=j, value=csv_safe(v))
             ls.column_dimensions[L(j)].width = max(16, min(44, max([len(str(name))] + [len(str(v)) for v in vals]) + 2))
     for i, c in enumerate(columns, 1):
         src = None
@@ -135,15 +144,15 @@ def template(title, columns, lists=None, rows=None, note=None):
             ws.add_data_validation(dv); dv.add(f"{L(i)}2:{L(i)}1001")
     # Instructions
     ins = wb.create_sheet("Instructions", 1)   # Data, Instructions, Lists
-    ins.append([title]); ins["A1"].font = Font(bold=True, size=14)
+    ins.append([clean(title)]); ins["A1"].font = Font(bold=True, size=14)
     ins.append(["Fill in the Data sheet: one row per record, from row 2. Red column names are required; the others may be left empty."])
     ins.append(["Do not rename the column names in row 1. Save as Excel (.xlsx) and upload it in the portal. Press Check file first: nothing is saved until you press Import."])
-    if note: ins.append([note])
+    if note: ins.append([clean(note)])
     ins.append([])
     ins.append(["Column", "Required", "What to write", "Example"])
     for cell in ins[ins.max_row]: cell.font = Font(bold=True)
     for c in columns:
-        ins.append([c["key"], "yes" if c.get("required") else "", (c.get("help") or "") + (f" Choose from: {', '.join(c['choices'])}." if c.get("choices") else ""), str(c.get("example") if c.get("example") is not None else "")])
+        ins.append([c["key"], "yes" if c.get("required") else "", clean(c.get("help") or "") + (f" Choose from: {', '.join(c['choices'])}." if c.get("choices") else ""), clean(str(c.get("example") if c.get("example") is not None else ""))])
     for col, w in zip("ABCD", (24, 10, 90, 26)): ins.column_dimensions[col].width = w
     for r in ins.iter_rows(min_row=1):
         for cell in r: cell.alignment = Alignment(wrap_text=True, vertical="top")
