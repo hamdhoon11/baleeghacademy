@@ -108,6 +108,18 @@ def register(app, c, today):
     @app.get("/api/batches/<int:bid>/gradebook.xlsx")
     @auth("admin", "teacher", perm="classroom")
     def sh_gradebook(bid):
+        return gradebook_out(bid, "xlsx")
+
+    @app.get("/api/batches/<int:bid>/gradebook.pdf")
+    @auth("admin", "teacher", perm="classroom")
+    def sh_gradebook_pdf(bid):   # v0.8.48
+        return gradebook_out(bid, "pdf")
+
+    def batch_title(bid):
+        b = one("SELECT b.code, c.name, u.full_name AS teacher FROM batches b JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=b.teacher_id WHERE b.id=?", (bid,)) or {}
+        return f"{b.get('name', '')} {b.get('code', '')}".strip(), b.get("teacher") or ""
+
+    def gradebook_out(bid, ext):
         code, gb = X.call("GET", f"/api/batches/{bid}/gradebook")   # the same access rule as the Gradebook screen
         if code != 200: return err(gb.get("error") or "Not allowed", code)
         items = rows("SELECT id,title,kind,max_points,due_date FROM assignments WHERE batch_id=? ORDER BY COALESCE(due_date,'9999-12-31'), id", (bid,))
@@ -117,12 +129,27 @@ def register(app, c, today):
         head = ["student_code", "student"] + [f"{a['title']} (/{a['max_points']})" for a in items] + ["average_%", "attendance_%"]
         table = [[codes.get(s["student_id"]) or "", s["full_name"]] + [marks.get((a["id"], s["student_id"]), "") for a in items] + [s["avg_pct"] if s["avg_pct"] is not None else "",
                                                                                                                                        s["attendance_pct"] if s["attendance_pct"] is not None else ""] for s in gb]
-        logged("export_gradebook_xlsx", f"batch {bid}: {len(table)} students, {len(items)} items")
+        logged(f"export_gradebook_{ext}", f"batch {bid}: {len(table)} students, {len(items)} items")
+        if ext == "pdf":
+            name, teacher = batch_title(bid)
+            short = [f"{a['title'][:18]} (/{a['max_points']})" for a in items]
+            return app.extensions["pdf"]("Gradebook: " + name, [("stats", [("Students", len(table)), ("Assignments and tests", len(items))]),
+                                         ("table", ["Student", "ID"] + short + ["Average %", "Attendance %"], [[r[1], r[0]] + r[2:] for r in table],
+                                          {"widths": [3, 1.8] + [1.2] * len(items) + [1, 1.1]})],
+                                         f"gradebook-{batch_name(bid)}", subtitle=f"Teacher: {teacher}" if teacher else "")
         return X.send_table("xlsx", f"gradebook-{batch_name(bid)}", head, table, "Gradebook", text_cols=("student_code",))
 
     @app.get("/api/batches/<int:bid>/attendance.xlsx")
     @auth("admin", "teacher", perm="classroom")
     def sh_attendance(bid):
+        return attendance_out(bid, "xlsx")
+
+    @app.get("/api/batches/<int:bid>/attendance.pdf")
+    @auth("admin", "teacher", perm="classroom")
+    def sh_attendance_pdf(bid):   # v0.8.48
+        return attendance_out(bid, "pdf")
+
+    def attendance_out(bid, ext):
         code, sm = X.call("GET", f"/api/batches/{bid}/attendance/summary")
         if code != 200: return err(sm.get("error") or "Not allowed", code)
         month = request.args.get("month") or today().isoformat()[:7]
@@ -137,6 +164,13 @@ def register(app, c, today):
         for st in sm["students"]:
             cells = [short.get(mk.get((s["id"], st["id"])), "") for s in ses]
             table.append([codes.get(st["id"]) or "", st["full_name"]] + cells + [cells.count("P"), cells.count("L"), cells.count("A"), cells.count("E")])
+        if ext == "pdf":
+            logged("export_attendance_pdf", f"batch {bid} {month}: {len(sm['students'])} students, {len(ses)} classes")
+            name, teacher = batch_title(bid)
+            return app.extensions["pdf"](f"Attendance: {name}, {month}", [("stats", [("Students", len(table)), ("Classes held", len(ses))]),
+                                         ("note", "P present · L late · A absent · E excused"),
+                                         ("table", ["Student", "ID"] + head[2:], [[r[1], r[0]] + r[2:] for r in table], {"widths": [3, 1.8] + [.7] * len(ses) + [.8] * 4})],
+                                         f"attendance-{batch_name(bid)}-{month}", subtitle=(f"Teacher: {teacher} · " if teacher else "") + f"Month {month}")
         table.append([]); table.append(["", "P present · L late · A absent · E excused"])
         logged("export_attendance_xlsx", f"batch {bid} {month}: {len(sm['students'])} students, {len(ses)} classes")
         return X.send_table("xlsx", f"attendance-{batch_name(bid)}-{month}", head, table, f"Attendance {month}", text_cols=("student_code",))

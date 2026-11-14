@@ -313,4 +313,32 @@ def register(app, c, today):
                        teacher_earnings=int(ap["t"]), academy_revenue=int(ap["a"]), teacher_paid=ex["paid_in"](d1, d2),   # Session 31: approved months only (a month needs approval first)
                        earnings_note="Teacher earnings and academy share come from approved months inside the dates; registration fees are not part of them.")
 
+    @app.get("/api/finance/report.pdf")
+    @auth("admin", perm=AREA)
+    def fin_pdf():   # v0.8.48: the Finance screen as a PDF: money in and out for the dates, revenue by month/type/course/batch, expenses by category
+        import reportpdf as R
+        rv = fin_revenue()
+        if isinstance(rv, tuple): return rv   # a bad filter: the same message as the screen
+        r, d = rv.get_json(), fin_dashboard().get_json()
+        d1, d2 = d["date_from"], d["date_to"]
+        w, args = [], []
+        if d1: w.append("x.expense_date>=?"); args.append(d1)
+        if d2: w.append("x.expense_date<=?"); args.append(d2)
+        cats = rows("SELECT COALESCE(k.name,'(no category)') AS name, COUNT(*) n, SUM(x.amount_mvr) s FROM expenses x LEFT JOIN expense_categories k ON k.id=x.category_id"
+                    + (" WHERE " + " AND ".join(w) if w else "") + " GROUP BY k.name ORDER BY s DESC", tuple(args))
+        ms = d["months"]
+        blocks = [("stats", [("Revenue (MVR)", d["revenue"]), ("Expenses (MVR)", d["expenses"]), ("Net (MVR)", d["net"]), ("Fees still to pay (MVR)", d["outstanding_fees"]),
+                             ("Teacher earnings (MVR)", d["teacher_earnings"]), ("Paid to teachers (MVR)", d["teacher_paid"])]),
+                  ("columns", "Revenue and expenses, last 12 months (MVR)", [x["month"] for x in ms],
+                   [("Revenue", [x["revenue"] for x in ms], R.BLUE), ("Expenses", [x["expenses"] for x in ms], R.ORANGE)], {"stacked": False}),
+                  ("heading", "Revenue by month"), ("table", ["Month", "Payments", "Collected"], [[x["month"], x["payments"], x["collected"]] for x in r["by_month"]], {"widths": [2, 1, 1.4]}),
+                  ("heading", "Revenue by type"), ("table", ["Revenue type", "Payments", "Collected"], [[x["revenue_type_name"] or "-", x["payments"], x["collected"]] for x in r["by_type"]], {"widths": [3, 1, 1.4]}),
+                  ("heading", "Revenue by course"), ("table", ["Course", "Type", "Payments", "Collected"],
+                   [[x["course_name"] or "Other (no course)", "Tuition class" if x["kind"] == "tuition" else "Course" if x["kind"] else "", x["payments"], x["collected"]] for x in r["by_course"]], {"widths": [3, 1.4, 1, 1.4]}),
+                  ("heading", "Revenue by batch"), ("table", ["Course", "Batch", "Payments", "Collected"],
+                   [[x["course_name"] or "Other (no course)", x["batch_code"] or "No batch", x["payments"], x["collected"]] for x in r["by_batch"]], {"widths": [3, 1.4, 1, 1.4]}),
+                  ("heading", "Expenses by category"), ("table", ["Category", "Expenses", "Amount"], [[x["name"], x["n"], int(x["s"] or 0)] for x in cats], {"widths": [3, 1, 1.4]})]
+        audit("export_finance_pdf", "report", None, f"{d1} to {d2}"); db().commit()
+        return app.extensions["pdf"]("Finance report", blocks, f"finance-{d1 or 'start'}-{d2 or 'today'}", subtitle=f"{d1 or 'the start'} to {d2 or 'today'} · amounts in MVR")
+
     app.extensions["finance"] = {"collected": collected, "outstanding": outstanding, "expenses_total": expenses_total}   # Session 25: the admin dashboard reuses these

@@ -153,7 +153,10 @@ def not_null_columns(conn, table):
 # v0.8.47: online status and account control (presence.py). All nullable or defaulted: existing accounts stay exactly as they are.
 V0847_USER_COLUMNS = (("last_seen_at", "TEXT"), ("last_login_at", "TEXT"), ("signed_out_at", "TEXT"), ("last_ip", "TEXT"), ("last_agent", "TEXT"),
                       ("token_version", "INTEGER NOT NULL DEFAULT 0"), ("suspended_at", "TEXT"), ("suspend_reason", "TEXT"),
-                      ("paused_until", "TEXT"), ("pause_reason", "TEXT"), ("account_changed_by", "INTEGER"), ("account_message", "TEXT"))
+                      ("paused_until", "TEXT"), ("pause_reason", "TEXT"), ("account_changed_by", "INTEGER"), ("account_message", "TEXT"),
+                      # v0.8.48: the superadmin (only they clear the portal's data and sign out, pause or suspend accounts). 0 for everyone at first;
+                      # while nobody has it, the earliest active full admin counts as the superadmin (app.is_super), so no account is ever locked out.
+                      ("is_super", "INTEGER NOT NULL DEFAULT 0"))
 
 
 def upgrade_v0845(conn):

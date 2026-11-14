@@ -100,3 +100,18 @@ def register(app, c):
     @app.get("/api/enrollment-events.xlsx")
     @auth("admin", perm="enrollments")
     def ev_xlsx(): return ev_export("xlsx")   # v0.8.38
+
+    @app.get("/api/enrollment-events.pdf")
+    @auth("admin", perm="enrollments")
+    def ev_pdf():   # v0.8.48
+        r, e = query()
+        if e: return e
+        audit("export_enrollment_events_pdf", "report", None, f"{len(r)} rows"); db().commit()
+        a = request.args
+        sub = " · ".join(x for x in (f"from {a['from']}" if a.get("from") else "", f"to {a['to']}" if a.get("to") else "", a.get("kind") or "") if x) or "All dates"
+        blocks = [("stats", [("Transfers", sum(1 for x in r if x["kind"] == "transfer")), ("Withdrawals", sum(1 for x in r if x["kind"] == "withdrawal"))]),
+                  ("table", ["Date", "Type", "Student", "ID", "From", "To", "Reason", "Recorded by"],
+                   [[x["effective_date"] or "", x["kind"], x["student_name"], x["student_code"] or "", f"{x['from_course'] or ''} {x['from_batch_code'] or ''}".strip(),
+                     f"{x['to_course'] or ''} {x['to_batch_code'] or ''}".strip(), x["reason"] or "", x["by_name"] or ""] for x in r],
+                   {"widths": [1.2, 1.1, 2.4, 1.6, 2.4, 2.4, 3, 1.8]})]
+        return app.extensions["pdf"]("Transfers and withdrawals", blocks, "transfers-withdrawals", subtitle=sub)

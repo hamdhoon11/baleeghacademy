@@ -87,7 +87,7 @@ class Permissions(unittest.TestCase):
 
     def test_06_admin_limited_still_works_and_other_roles_cannot_enter_admin_areas(self):
         aid = self.mk("a1@pm.test", "admin"); self.limit(aid, ["people"])
-        self.assertEqual(self.login("a1@pm.test")["user"]["tabs"], ["dashboard", "people"])
+        self.assertEqual(self.login("a1@pm.test")["user"]["tabs"], ["dashboard", "people", "online"])   # v0.8.48: every admin sees Who's online
         h = self.H("a1@pm.test")
         self.assertEqual(self.J("get", "/api/users/1", h).status_code, 200)
         self.assertEqual(self.J("get", "/api/settings", h).status_code, 403)

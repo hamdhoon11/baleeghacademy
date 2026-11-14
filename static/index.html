@@ -38,6 +38,7 @@ nav{background:linear-gradient(180deg,var(--lagoon) 0,var(--lagoon-d) 100%);colo
 .btitle,.topback{display:none}
 .mark{width:2.2rem;height:2.2rem;border-radius:10px;background:var(--sun);color:var(--lagoon-d);display:grid;place-items:center;font:700 1.35rem/1 var(--body);flex:none}
 .pri,.ovf,.sheet{display:contents}
+img.mark.logo{background:#fff;object-fit:contain;padding:2px;width:auto;min-width:2.2rem;max-width:4.5rem}
 #moreBtn,.scrim{display:none}
 .tab{display:flex;align-items:center;gap:.75rem;width:100%;background:none;border:0;color:#cfe6e8;text-align:start;padding:.5rem .75rem;border-radius:10px;cursor:pointer;min-height:44px;position:relative;text-decoration:none;font:inherit}
 @media(pointer:fine){.tab{min-height:40px}}
@@ -107,7 +108,14 @@ input:focus,select:focus,textarea:focus{border-color:var(--lagoon)}
 .btn.big{font-size:1.1rem;padding:.7rem 1.6rem}
 .banner{background:#fbefc8;color:#5c4300;border-radius:var(--r-sm);padding:.6rem .8rem;margin-bottom:.8rem;white-space:pre-wrap}
 .msg{padding:.7rem .9rem;border-radius:var(--r-sm);margin-bottom:.9rem;border-inline-start:4px solid currentColor}
-.msg.err{background:#f8e1dc;color:var(--coral)}.msg.ok{background:#dff1e3;color:#1f6b35}
+.msg.err{background:#f8e1dc;color:var(--coral)}.msg.ok{background:#dff1e3;color:#1f6b35}.msg.warn{background:#fbefc8;color:#7a5a00}.lg{display:inline-block;width:.8em;height:.8em;border-radius:2px;vertical-align:-.05em}
+.hbars{display:grid;gap:6px;margin-top:.4rem}.hb{display:grid;grid-template-columns:minmax(6rem,30%) 1fr auto;gap:.6rem;align-items:center;font-size:.9rem}
+.hbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hbt{display:flex;gap:2px;height:14px;background:var(--mist);border-radius:4px}.hbt i{display:block;height:100%;border-radius:4px;min-width:3px}
+.hbv{font-variant-numeric:tabular-nums;color:var(--ink2)}
+.cols{display:flex;gap:10px;align-items:stretch;height:170px;margin-top:.5rem}.col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}
+.colt{flex:1;width:min(48px,100%);display:flex;flex-direction:column;justify-content:flex-end;gap:2px;border-bottom:1px solid var(--line)}.colt i{display:block;width:100%;border-radius:4px 4px 0 0;min-height:2px}
+.col .hint{font-size:.78rem;white-space:nowrap}
+.chip{display:inline-block;padding:.1rem .55rem;border-radius:999px;background:var(--mist);color:var(--lagoon);font-size:.85rem;margin:.15rem .1rem}
 .tag{display:inline-block;padding:.05rem .65rem;border-radius:99px;background:var(--mist);font-size:.8rem;font-weight:700;color:var(--lagoon)}
 .tag.ok{background:#dff1e3;color:#1f6b35}.tag.bad{background:#f8e1dc;color:var(--coral)}.tag.warn{background:#fbefc8;color:#7a5a00}
 .cl{display:flex;justify-content:space-between;align-items:center;gap:.8rem;padding:.7rem 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
@@ -619,7 +627,7 @@ function navHtml(tabList) {
     first = false; if (g) last = g; out += one(v); }); return out; })();
   const u = S.user, initials = String(u.full_name || "?").trim().split(/\s+/).slice(0, 2).map(w => w[0]).join("").toUpperCase();
   const back = detailOpen() ? `<button type="button" class="topback" id="topBack" aria-label="${esc(t("back"))}">${icon("back")}</button>` : "";
-  return `<nav class="${grouped ? "grouped" : ""}${pref ? " reord" : ""}" aria-label="${esc(t("main_menu"))}"><div class="brand">${back}<span class="mark" aria-hidden="true">ب</span><span class="bname">${esc(t("app"))}</span><span class="btitle">${esc(t(S.view))}</span></div>`
+  return `<nav class="${grouped ? "grouped" : ""}${pref ? " reord" : ""}" aria-label="${esc(t("main_menu"))}"><div class="brand">${back}${markHtml()}<span class="bname">${esc(t("app"))}</span><span class="btitle">${esc(t(S.view))}</span></div>`
     + `<button type="button" id="bell" aria-label="${esc(t("Notifications"))}">${icon("bell")}<span class="lbl">${esc(t("Notifications"))}</span><span class="n" id="bellN" hidden></span></button>`
     + `<button type="button" class="tab qj" id="qjTop" aria-keyshortcuts="Control+K">${icon("search")}<span class="tl">${esc(t("qj_search"))}</span><kbd>Ctrl K</kbd></button>`
     + `<div class="pri">${run(bar)}</div><button type="button" class="tab" id="moreBtn" aria-expanded="false" aria-controls="sheet">${icon("more")}<span class="tl">${esc(t("menu_more"))}</span></button>`
@@ -635,9 +643,17 @@ function labelTables(root) {
     [...tb.tBodies].forEach(b => { b.setAttribute("role", "rowgroup"); [...b.rows].forEach(r => { r.setAttribute("role", "row"); [...r.cells].forEach((c, i) => { if (!c.hasAttribute("data-label")) c.setAttribute("data-label", heads[i] || ""); c.setAttribute("role", "cell"); }); }); });
   });
 }
+// v0.8.48: the academy's logo (Settings -> Academy details) in place of the built-in mark, and as the browser tab icon
+const markHtml = () => S.info && S.info.logo_url ? `<img class="mark logo" src="${esc(S.info.logo_url)}" alt="" aria-hidden="true">` : `<span class="mark" aria-hidden="true">ب</span>`;
+function applyLogo() {
+  const u = S.info && S.info.logo_url, l = document.querySelector('link[rel="icon"]');
+  if (!l) return;
+  if (!l.dataset.builtin) l.dataset.builtin = l.href;
+  l.href = u || l.dataset.builtin;
+}
 function authShell(inner) {
   const name = (S.info && S.info.academy_name) || t("app");
-  return `<div class="auth"><header class="hero"><span class="mark" aria-hidden="true">ب</span><div><h1>${esc(name)}</h1>${S.info && S.info.tagline ? `<p>${esc(S.info.tagline)}</p>` : ""}</div></header><main class="authcard" id="main"><div class="box panel">${inner}</div></main></div>`;
+  return `<div class="auth"><header class="hero">${markHtml()}<div><h1>${esc(name)}</h1>${S.info && S.info.tagline ? `<p>${esc(S.info.tagline)}</p>` : ""}</div></header><main class="authcard" id="main"><div class="box panel">${inner}</div></main></div>`;
 }
 // v0.8.35: "Forgot password?" sends a request to the academy's admins; they reply on WhatsApp with a new temporary password
 function forgotScreen() {
@@ -848,7 +864,7 @@ async function render() {
   if (S.openAdd) { const d = main.querySelector(`details.addp[data-add="${S.openAdd}"]`); S.openAdd = null; if (d) { d.open = true; d.scrollIntoView({block: "start"}); const f = d.querySelector("input, select, textarea"); if (f) f.focus(); } }
   loadBadges();
 }
-window.addEventListener("DOMContentLoaded", () => loadText().then(() => api("/public/info").then(i => { S.info = i; }).catch(() => {})).then(render));
+window.addEventListener("DOMContentLoaded", () => loadText().then(() => api("/public/info").then(i => { S.info = i; applyLogo(); }).catch(() => {})).then(render));
 </script>
 <script src="ui.js"></script>
 <script src="learning.js"></script>

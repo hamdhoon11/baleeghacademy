@@ -144,24 +144,25 @@ def register(app, c, now):
         if not enabled():
             out["skipped"] = "Notifications are turned off in Settings"
             return out
-        bal = "i.amount_due_mvr-i.waived_mvr-i.paid_mvr"
-        # 1. fees due soon (unpaid only: a student who already sent a slip is waiting for the admin, not for a reminder)
-        days = num("remind_fee_days_before")
+        # v0.8.48: fee reminders per student, with the total and the months (feereminders.py works the amounts out, in one place).
+        # Invoices with a slip waiting for the office are left out (the student has paid; the office has to check it).
+        fd = app.extensions["feedue"]
+        days, every = num("remind_fee_days_before"), num("remind_overdue_every_days")
+        people = [p for p in fd["dues"](t, days=days).values() if p["student_id"]]
+        # 1. fees due soon: once per student and due date, within `days` days of it
         if days:
-            for r in rows(f"SELECT i.id,i.student_id,i.period,i.due_date,{bal} AS bal,COALESCE(c.name, i.description) AS course FROM invoices i LEFT JOIN courses c ON c.id=i.course_id "
-                          f"WHERE i.student_id IS NOT NULL AND i.status='unpaid' AND i.due_date>=? AND i.due_date<=? AND {bal}>0", (t.isoformat(), (t + dt.timedelta(days=days)).isoformat())):
-                out["fee_due_soon"] += push([r["student_id"]], "fee_due_soon", "Fee due soon",
-                                            f"{r['course']} ({r['period']}): {r['bal']} MVR is due on {r['due_date']}.", f"fees:{r['id']}", f"due:{r['id']}")
-        # 2. overdue fees: first the day after the due date, then every N days (one dedupe bucket per N days, so a missed day still sends once)
-        every = num("remind_overdue_every_days")
-        over = rows(f"SELECT i.id,i.student_id,i.period,i.due_date,{bal} AS bal,COALESCE(c.name, i.description) AS course FROM invoices i LEFT JOIN courses c ON c.id=i.course_id "
-                    f"WHERE i.student_id IS NOT NULL AND i.status='unpaid' AND i.due_date<? AND {bal}>0", (t.isoformat(),))
+            for p in people:
+                b = p["due_soon"]
+                if b: out["fee_due_soon"] += push([p["student_id"]], "fee_due_soon", "Fee due soon", fd["notice"](b, "due_soon"), f"fees:{b['invoice_ids'][0]}", f"due:{p['student_id']}:{b['first_due']}")
+        # 2. overdue: the day after the due date, then every N days (one dedupe bucket per N days, so a missed day still sends once);
+        #    a month that becomes overdue starts a new notice at once (the count is in the key)
+        over = [p for p in people if p["overdue"]]
         if every:
-            for r in over:
-                late = (t - dt.date.fromisoformat(r["due_date"])).days
-                out["fee_overdue"] += push([r["student_id"]], "fee_overdue", "Fee overdue",
-                                           f"{r['course']} ({r['period']}): {r['bal']} MVR was due on {r['due_date']} ({late} day{'s' if late != 1 else ''} ago).",
-                                           f"fees:{r['id']}", f"overdue:{r['id']}:{(late - 1) // every}")
+            for p in over:
+                b = p["overdue"]
+                out["fee_overdue"] += push([p["student_id"]], "fee_overdue", "Fee overdue", fd["notice"](b, "overdue"), f"fees:{b['invoice_ids'][0]}",
+                                           f"overdue:s{p['student_id']}:{b['count']}:{(max(b['days_overdue'], 1) - 1) // every}")
+        n_over = sum(p["overdue"]["count"] for p in fd["dues"](t, days=0).values() if p["overdue"])
         # 3. assignments due soon, for students who have not handed in
         days = num("remind_assignment_days_before")
         if days:
@@ -173,8 +174,10 @@ def register(app, c, now):
         # 4. one daily line for admins who handle fees
         fee_admins = admins_with("fees")
         slips = one("SELECT COUNT(*) n FROM payment_slips WHERE status='pending'")["n"]
-        if over:
-            out["admin_digest"] += push(fee_admins, "admin_overdue", "Overdue invoices", f"{len(over)} invoice{'s are' if len(over) != 1 else ' is'} overdue.", "fees", f"digest-overdue:{t.isoformat()}")
+        if n_over:
+            wa = sum(1 for p in fd["dues"](t, days=days).values() if p["overdue"] or p["due_soon"])
+            out["admin_digest"] += push(fee_admins, "admin_overdue", "Overdue invoices", f"{n_over} invoice{'s are' if n_over != 1 else ' is'} overdue. "
+                                        f"{wa} {'person' if wa == 1 else 'people'} to remind on WhatsApp (Fees, Reminders).", "fees", f"digest-overdue:{t.isoformat()}")
         if slips:
             out["admin_digest"] += push(fee_admins, "admin_slips", "Payment slips waiting", f"{slips} slip{'s are' if slips != 1 else ' is'} waiting to be checked.", "fees", f"digest-slips:{t.isoformat()}")
         # 5. housekeeping: read ones after 90 days, everything after 180

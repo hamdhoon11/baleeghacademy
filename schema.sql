@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS users (
   paused_until TEXT,           -- set and in the future = cannot sign in until then; lifts by itself
   pause_reason TEXT,
   account_changed_by INTEGER,  -- the full admin who last suspended, paused or restored
-  account_message TEXT         -- optional message shown to a paused or suspended person when they try to sign in
+  account_message TEXT,        -- optional message shown to a paused or suspended person when they try to sign in
+  is_super INTEGER NOT NULL DEFAULT 0   -- v0.8.48: superadmin (see app.is_super); only a full admin can hold it
 );
 CREATE TABLE IF NOT EXISTS students (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

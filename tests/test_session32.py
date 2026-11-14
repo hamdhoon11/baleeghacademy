@@ -16,6 +16,7 @@ OPEN = {
  ("POST", "/api/auth/change-password"): ALL, ("POST", "/api/auth/logout"): ALL, ("GET", "/api/auth/me"): ALL, ("GET", "/api/batches"): ALL,
  ("POST", "/api/batches/<int:bid>/assignments"): AT, ("GET", "/api/batches/<int:bid>/attendance"): AT, ("POST", "/api/batches/<int:bid>/attendance"): AT,
  ("GET", "/api/batches/<int:bid>/attendance/summary"): AT, ("GET", "/api/batches/<int:bid>/gradebook"): AT, ("GET", "/api/batches/<int:bid>/gradebook.xlsx"): AT, ("GET", "/api/batches/<int:bid>/attendance.xlsx"): AT,
+ ("GET", "/api/batches/<int:bid>/gradebook.pdf"): AT, ("GET", "/api/batches/<int:bid>/attendance.pdf"): AT,   # v0.8.48
  ("POST", "/api/import/grades"): AT, ("GET", "/api/import/grades/template.xlsx"): AT, ("POST", "/api/batches/<int:bid>/materials"): AT,
  ("PUT", "/api/batches/<int:bid>/meet-link"): AT, ("POST", "/api/batches/<int:bid>/recordings"): AT, ("POST", "/api/batches/<int:bid>/sessions"): AT,
  ("GET", "/api/batches/<int:bid>/students"): AT, ("GET", "/api/courses"): ALL, ("GET", "/api/enrollments"): ALL, ("GET", "/api/invoices/<int:iid>"): AS,
@@ -42,7 +43,8 @@ AREA = [("/api/applications", "admissions"), ("/api/announcements", "classroom")
         ("/api/enrollments/<int:eid>/void-open-invoices", "fees"), ("/api/enrollment", "enrollments"), ("/api/import/enrolments", "enrollments"), ("/api/import/courses", "courses"), ("/api/import/batches", "batches"), ("/api/import/expenses", "finance"), ("/api/import", "people"),
         ("/api/settings", "settings"), ("/api/admin/storage", "settings"), ("/api/admin/reset-data", "settings"), ("/api/password-help", "people"), ("/api/notifications", "settings"), ("/api/student-information", "student_information"), ("/api/teacher-information", "teacher_information"),
         ("/api/substitutions", "batches"), ("/api/users", "people"), ("/api/courses", "courses"), ("/api/batches", "batches")]
-PUBLIC = {"/", "/<path:filename>", "/api/auth/login", "/api/auth/forgot", "/api/cron/generate-invoices", "/api/cron/reminders", "/api/health", "/api/public/apply",
+PUBLIC = {"/api/public/logo",   # v0.8.48: the logo shows on the sign-in page, before anyone signs in
+          "/", "/<path:filename>", "/api/auth/login", "/api/auth/forgot", "/api/cron/generate-invoices", "/api/cron/reminders", "/api/health", "/api/public/apply",
           "/api/public/apply/status", "/api/public/batches", "/api/public/courses", "/api/public/info"}
 PARAM = {}
 

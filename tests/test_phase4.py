@@ -757,7 +757,7 @@ class P4(unittest.TestCase):
         self.assertNotIn("reminder_template_dv", en)
         js = "".join(open(os.path.join(ROOT, "static", f), encoding="utf-8").read() for f in ("fees.js", "admin.js"))   # v0.8.33: the fee cards of the Dashboard live in admin.js (Session 8)
         used = set(re.findall(r"""\bt\(\s*["']([a-z0-9_]+)["']\s*\)""", js))
-        for pre, opts in (("fx_st_", ("unpaid", "slip_submitted", "paid", "void", "waived", "overdue", "partial")), ("fx_m_", ("bank_transfer", "cash", "cheque", "other")), ("fx_tab_", ("slips", "invoices", "record", "discounts", "overdue", "report", "payrep"))):
+        for pre, opts in (("fx_st_", ("unpaid", "slip_submitted", "paid", "void", "waived", "overdue", "partial")), ("fx_m_", ("bank_transfer", "cash", "cheque", "other")), ("fx_tab_", ("slips", "invoices", "record", "discounts", "overdue", "reminders", "report", "payrep"))):
             used |= {pre + o for o in opts}
         used |= {"fees"}
         missing = sorted(k for k in used if k not in en)

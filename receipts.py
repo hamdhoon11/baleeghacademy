@@ -32,6 +32,21 @@ def text(c, x, y, s, font="Helvetica", size=10, right=False, maxlen=None):
     (c.drawRightString if right else c.drawString)(x, y, s)
 
 
+def draw_logo(c, r, w, top, band):
+    """v0.8.48: the academy's logo on a white tile at the right of the header band (only when one is set, so other PDFs stay byte-identical)."""
+    data = r.get("logo")
+    if not data: return
+    try:
+        from reportlab.lib.utils import ImageReader
+        img = ImageReader(io.BytesIO(data)); iw, ih = img.getSize()
+        hh = band - 18; ww = min(hh * iw / ih, 110); hh = ww * ih / iw
+        x, y = w - 36 - ww, top - band / 2 - hh / 2
+        c.setFillColorRGB(1, 1, 1); c.roundRect(x - 4, y - 4, ww + 8, hh + 8, 4, stroke=0, fill=1)
+        c.drawImage(img, x, y, ww, hh, mask="auto")
+    except Exception:
+        pass   # a picture that cannot be drawn never stops a receipt
+
+
 def latin(s):
     return "".join(ch if ord(ch) < 256 else "?" for ch in str(s or ""))
 
@@ -43,7 +58,7 @@ def build(r):
     c = canvas.Canvas(buf, pagesize=A5, invariant=1, pageCompression=0)
     c.setTitle(f"Receipt {latin(r['receipt_no'])}"); c.setAuthor(latin(r["academy"]))
     m = 36
-    c.setFillColorRGB(0.043, 0.31, 0.36); c.rect(0, h - 70, w, 70, stroke=0, fill=1)
+    c.setFillColorRGB(0.043, 0.31, 0.36); c.rect(0, h - 70, w, 70, stroke=0, fill=1); draw_logo(c, r, w, h, 70)
     c.setFillColorRGB(1, 1, 1); text(c, m, h - 36, r["academy"], "Helvetica-Bold", 18)
     c.setFont("Helvetica", 10); c.drawString(m, h - 54, "Payment receipt")
     c.setFillColorRGB(0.06, 0.15, 0.17)
@@ -79,7 +94,7 @@ def build_invoice(r):
     c = canvas.Canvas(buf, pagesize=A5, invariant=1, pageCompression=0)
     c.setTitle(f"Invoice {latin(r['invoice_no'])}"); c.setAuthor(latin(r["academy"]))
     m = 36
-    c.setFillColorRGB(0.043, 0.31, 0.36); c.rect(0, h - 70, w, 70, stroke=0, fill=1)
+    c.setFillColorRGB(0.043, 0.31, 0.36); c.rect(0, h - 70, w, 70, stroke=0, fill=1); draw_logo(c, r, w, h, 70)
     c.setFillColorRGB(1, 1, 1); text(c, m, h - 36, r["academy"], "Helvetica-Bold", 18)
     c.setFont("Helvetica", 10); c.drawString(m, h - 54, "Invoice")
     c.setFillColorRGB(0.06, 0.15, 0.17)
@@ -118,7 +133,7 @@ def build_statement(r):
     m, page = 40, [1]
 
     def header():
-        c.setFillColorRGB(0.043, 0.31, 0.36); c.rect(0, h - 64, w, 64, stroke=0, fill=1)
+        c.setFillColorRGB(0.043, 0.31, 0.36); c.rect(0, h - 64, w, 64, stroke=0, fill=1); draw_logo(c, r, w, h, 64)
         c.setFillColorRGB(1, 1, 1); text(c, m, h - 34, r["academy"], "Helvetica-Bold", 18)
         text(c, m, h - 52, "Fee statement", "Helvetica", 10); text(c, w - m, h - 52, f"Page {page[0]}", "Helvetica", 9, right=True)
         c.setFillColorRGB(0.06, 0.15, 0.17)

@@ -1,5 +1,5 @@
 """Optional browser test, v0.8.47: Who's online. A student signs in in a second browser; the full admin sees them online, signs them out,
-pauses, restores and suspends the account; the student sees the right message each time. A limited admin has no such tab.
+pauses, restores and suspends the account; the student sees the right message each time. A limited admin sees the list without buttons (v0.8.48).
 Phone (390 px) and computer widths. Run: python tests/e2e_presence.py (needs playwright + chromium)"""
 import os, sys, time, subprocess, tempfile, json, sqlite3, urllib.request
 from playwright.sync_api import sync_playwright
@@ -79,9 +79,9 @@ try:
         # ---- a limited admin has no tab, and the address does not open it ----
         l = br.new_context(viewport={"width": 1280, "height": 900}).new_page(); l.on("pageerror", lambda e: errors.append(str(e)))
         e2e_shim.login(l, BASE, "lim@p.test", "Password123", db=DB)
-        check(l.locator("nav [data-v=online]").count() == 0, "limited admin: no Who's online in the menu")
-        l.goto(BASE + "/#online"); l.wait_for_timeout(800)
-        check(l.locator("main h1:has-text(\"Who's online\")").count() == 0, "limited admin: #online does not open it")
+        # v0.8.48: every admin may look; only the superadmin gets the buttons
+        l.goto(BASE + "/#online"); l.wait_for_selector("main h1:has-text(\"Who's online\")")
+        check(l.locator("[data-do=onKick],[data-do=onPause],[data-do=onSuspend],[data-do=onKickAll]").count() == 0, "limited admin: sees the list, no action buttons")
         # ---- extras: dashboard card, bulk pause with a message, history, sign out everyone (computer width) ----
         sql("UPDATE users SET suspended_at=NULL, suspend_reason=NULL, paused_until=NULL, account_message=NULL")
         for _ in range(3):

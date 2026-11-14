@@ -257,6 +257,26 @@ def register(app, c, today):
     @auth("admin", perm="finance")
     def earn_xlsx(): return export("xlsx")
 
+    @app.get("/api/earnings/report.pdf")
+    @auth("admin", perm="finance")
+    def earn_pdf():   # v0.8.48
+        import reportpdf as R
+        try: r = report_rows(request.args)
+        except ValueError as x: return err(str(x))
+        audit("export_teacher_earnings", "teacher_earnings", None, f"pdf, {len(r)} row(s)"); db().commit()
+        tot = {k: sum(x[k] for x in r) for k in ("collected_mvr", "teacher_share_mvr", "academy_share_mvr")}
+        per = {}
+        for x in r: per[x["teacher"]] = per.get(x["teacher"], 0) + x["teacher_share_mvr"]
+        a = request.args
+        sub = " · ".join(f"{k.replace('_', ' ')}: {a[k]}" for k in a if a.get(k)) or "All months"
+        blocks = [("stats", [("Collected (MVR)", tot["collected_mvr"]), ("Teachers' share (MVR)", tot["teacher_share_mvr"]), ("Academy's share (MVR)", tot["academy_share_mvr"]), ("Rows", len(r))])]
+        if len(per) > 1: blocks.append(("bars", "Teachers' share by teacher (MVR)", list(per), [("Teacher's share", list(per.values()), R.BLUE)]))
+        blocks.append(("table", ["Month", "Teacher", "Course", "Batch", "Collected", "Share %", "Teacher's share", "Academy's share", "Status"],
+                       [[x["period"], x["teacher"], x["course"], x["batch"], x["collected_mvr"], x["share_percent"], x["teacher_share_mvr"], x["academy_share_mvr"], x["status"]] for x in r],
+                       {"widths": [1.2, 2.4, 2.6, 1.2, 1.3, 1, 1.4, 1.4, 1.2], "right": {4, 5, 6, 7},
+                        "total": ["Total", "", "", "", tot["collected_mvr"], "", tot["teacher_share_mvr"], tot["academy_share_mvr"], ""]}))
+        return app.extensions["pdf"]("Teacher earnings report", blocks, "teacher-earnings", subtitle=sub + " · amounts in MVR")
+
     @app.get("/api/my/earnings")
     @auth("teacher")
     def earn_mine():

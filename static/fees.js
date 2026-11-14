@@ -23,7 +23,11 @@ views.home = async () => {
   if (S.user.role !== "student" || !S.user.tabs.includes("fees")) return h;
   let s; try { s = await api("/my/fees/summary"); } catch (x) { return h; }
   if (!s.open_count) return h;
-  const n = `<div class="msg ${s.overdue_count ? "err" : "ok"}" role="status"><b>${t("fx_due_notice")}</b> ${mvr(s.balance_due)} · ${t("fx_due_on")} ${ltr(s.next_due)}${s.overdue_count ? " · " + t("fx_st_overdue") : ""} <button class="btn sm alt" data-do="fxGo">${t("fx_view_fees")}</button></div>`;
+  // v0.8.48: overdue (total and months) in red; what falls due in the next few days in yellow, until the due date; otherwise the old line
+  const rm = s.reminder || {}, go_ = `<button class="btn sm alt" data-do="fxGo">${t("fx_view_fees")}</button>`;
+  const ban = (cls, title, b) => `<div class="msg ${cls}" role="status" data-fee-reminder="${cls === "err" ? "overdue" : "due_soon"}"><b>${esc(t(title))}</b> ${esc(b.text)} ${go_}</div>`;
+  const n = rm.overdue || rm.due_soon ? (rm.overdue ? ban("err", "Fees overdue:", rm.overdue) : "") + (rm.due_soon ? ban("warn", "Payment reminder:", rm.due_soon) : "")
+    : `<div class="msg ${s.overdue_count ? "err" : "ok"}" role="status"><b>${t("fx_due_notice")}</b> ${mvr(s.balance_due)} · ${t("fx_due_on")} ${ltr(s.next_due)}${s.overdue_count ? " · " + t("fx_st_overdue") : ""} ${go_}</div>`;
   const i = h.indexOf("</h1>");
   return i < 0 ? n + h : h.slice(0, i + 5) + n + h.slice(i + 5);
 };
@@ -220,14 +224,48 @@ DO.fxNext = async () => {
   const who = i.links.student ? "student" : Object.keys(i.links)[0];
   return DO.fxRemind({id: i.id, ch: "whatsapp", to: who, url: i.links[who].whatsapp});
 };
+// v0.8.48: open WhatsApp with the person's message (inside the click, for pop-up blockers), then record it on each of their invoices
+const fxRemFind = d => (S.fxRem || []).find(x => x.key === d.k && x.kind === d.kind);
+DO.fxRem = async d => {
+  const x = fxRemFind(d); if (!x) return;
+  const l = x.links[d.to]; if (l) window.open(l.whatsapp, "_blank", "noopener");
+  await api("/fees/reminders/sent", "POST", {key: x.key, kind: x.kind, to: d.to, channel: "whatsapp"}); flash(t("fx_reminder_logged"), true);
+};
+DO.fxRemNext = async d => {
+  const x = (S.fxRem || []).find(y => y.kind === d.kind && !y.reminded_today && Object.keys(y.links).length);
+  if (!x) return;
+  return DO.fxRem({k: x.key, kind: x.kind, to: x.links.student ? "student" : Object.keys(x.links)[0]});
+};
+DO.fxRemMsg = async d => { const x = fxRemFind(d); if (x) await ui.show(x.name, `<p style="white-space:pre-wrap">${esc(x.message)}</p>`); return false; };
 DO.fxEmail = async d => { await api(`/invoices/${d.id}/reminders/email`, "POST", {}); flash(t("fx_email_sent"), true); };
 DO.fxPrCsv = async () => { const q = fxPrQuery(); await download("/fees/payment-report.csv?" + q, `payments-${fxPrMonth()}.csv`); return false; };
 DO.fxPrXlsx = async () => { const q = fxPrQuery(); await download("/fees/payment-report.xlsx?" + q, `payments-${fxPrMonth()}.xlsx`); return false; };
 DO.fxPrHist = d => { S.fxf = {...(S.fxf || {}), hist: +d.id}; };
 DO.fxPrBack = () => { S.fxf = {...(S.fxf || {}), hist: null}; };
 DO.fxXlsx = async () => { const m = val("fxr_m") || fxMonth(); await download("/fees/report.xlsx?month=" + m, `fees-${m}.xlsx`); return false; };   // v0.8.38
+DO.fxPdf = async () => { const m = val("fxr_m") || fxMonth(); await fetchFile("/fees/report.pdf?month=" + m, {name: `fees-${m}.pdf`}); return false; };   // v0.8.48
+DO.fxPrPdf = async () => { await fetchFile("/fees/payment-report.pdf?" + fxPrQuery(), {name: `payments-${fxPrMonth()}.pdf`}); return false; };
+DO.fxRemPdf = async () => { await fetchFile("/fees/reminders.pdf", {name: "fees-due.pdf"}); return false; };
 DO.fxCsv = async () => { const m = val("fxr_m") || fxMonth(); await download("/fees/report.csv?month=" + m, `fees-${m}.csv`); return false; };
 
+// v0.8.48: small bar charts drawn with plain HTML (no chart library). Each bar has a tooltip and the numbers are in the table next to it.
+const FX_C = {paid: "#2a78d6", owe: "#eb6834"};
+const fxLegend = () => `<p class="hint m0"><span class="lg" style="background:${FX_C.paid}"></span> ${esc(t("fx_collected"))} &nbsp; <span class="lg" style="background:${FX_C.owe}"></span> ${esc(t("fx_outstanding"))}</p>`;
+const fxTip = (name, a, b) => `${name}: ${t("fx_collected")} MVR ${a.toLocaleString("en")} · ${t("fx_outstanding")} MVR ${b.toLocaleString("en")}`;
+function fxHBars(list) {   // [label, collected, still to pay]
+  if (!list.length) return `<p>${t("empty")}</p>`;
+  const max = Math.max(1, ...list.map(([, a, b]) => a + b));
+  return `<div class="hbars" role="img" aria-label="${esc(t("By batch"))}">${list.map(([l, a, b]) => `<div class="hb" title="${esc(fxTip(l, a, b))}"><span class="hbl">${esc(l)}</span><span class="hbt">`
+    + `${a ? `<i style="width:${(100 * a / max).toFixed(2)}%;background:${FX_C.paid}"></i>` : ""}${b ? `<i style="width:${(100 * b / max).toFixed(2)}%;background:${FX_C.owe}"></i>` : ""}</span>`
+    + `<span class="hbv"><bdi dir="ltr">${(a + b).toLocaleString("en")}</bdi></span></div>`).join("")}</div>`;
+}
+function fxCols(list) {   // [month, collected, still to pay]
+  const max = Math.max(1, ...list.map(([, a, b]) => a + b));
+  const mon = p => { const [y, m] = p.split("-"); return new Date(Date.UTC(+y, +m - 1, 1)).toLocaleString("en", {month: "short", timeZone: "UTC"}) + " " + y.slice(2); };
+  return `<div class="cols" role="img" aria-label="${esc(t("Last 6 months"))}">${list.map(([p, a, b]) => `<div class="col" title="${esc(fxTip(mon(p), a, b))}"><span class="colt">`
+    + `${b ? `<i style="height:${(100 * b / max).toFixed(2)}%;background:${FX_C.owe}"></i>` : ""}${a ? `<i style="height:${(100 * a / max).toFixed(2)}%;background:${FX_C.paid}"></i>` : ""}</span>`
+    + `<span class="hint">${esc(mon(p))}</span></div>`).join("")}</div>`;
+}
 const FX_OPEN = i => ["unpaid", "slip_submitted"].includes(i.status);
 const invRow = i => `<div class="cl ${i.status === "void" ? "off" : ""}"><div>${FX_OPEN(i) ? bulkBox("inv", i.id, i.number + " " + i.student_name) + " " : ""}<b>${esc(i.student_name)}</b> ${fxBadge(i)}${i.walk_in ? " " + tag(t("fx_not_in_portal")) : ""}<br><span class="hint">${ltr(i.number)} · ${i.course_name ? esc(i.course_name) + " " + esc(i.batch_code || "") : esc(i.description)} · ${esc(i.revenue_type_name || "")} · ${t("fx_due_on")} ${ltr(i.due_date)}</span><br>${mvr(i.amount_due_mvr)} · ${t("fx_balance")}: ${mvr(i.balance)}${i.status_reason ? `<br><span class="hint">${esc(i.status_reason)}</span>` : ""}</div>
   <div class="seg"><button class="btn sm" data-do="fxInvPdf" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_invoice_pdf")}</button>${i.status !== "void" ? `<button class="btn sm alt" data-do="fxEdit" data-id="${i.id}">${t("edit")}</button>` : ""}${["unpaid", "slip_submitted"].includes(i.status) && i.balance > 0 ? `<button class="btn sm" data-do="fxPaid" data-id="${i.id}" data-no="${esc(i.number)}" data-name="${esc(i.student_name)}" data-bal="${i.balance}">${t("fx_mark_paid")}</button>` : ""}${["unpaid", "slip_submitted"].includes(i.status) ? `<button class="btn sm" data-do="fxDisc" data-id="${i.id}" data-no="${esc(i.number)}">${t("fx_discount")}</button><button class="btn sm" data-do="fxWaive" data-id="${i.id}">${t("fx_waive")}</button><button class="btn sm" data-do="fxVoid" data-id="${i.id}">${t("fx_void")}</button>` : ""}${["void", "waived"].includes(i.status) ? `<button class="btn sm" data-do="fxReopen" data-id="${i.id}">${t("fx_reopen")}</button>` : ""}</div></div>`;
@@ -325,6 +363,29 @@ const FX = {
       ${i.last_reminder ? `<div class="msg ${i.reminded_today ? "err" : "ok"}">${t("fx_last_reminder")}: ${esc(i.last_reminder.channel)} · ${ltr(i.last_reminder.sent_at.slice(0, 10))} · ${esc(i.last_reminder.by_name || "")}${i.reminded_today ? " · " + t("fx_reminded_today") : ""}</div>` : ""}
       <div class="seg"><button class="btn sm" data-do="fxPaid" data-id="${i.id}" data-no="${esc(i.number)}" data-name="${esc(i.student_name)}" data-bal="${i.balance}">${t("fx_mark_paid")}</button>${Object.entries(i.links).map(([who, k]) => btn(i, who, "whatsapp", k.whatsapp) + btn(i, who, "viber", k.viber)).join("") || `<span class="hint">${t("fx_no_phone")}</span>`}${r.email_enabled ? `<button class="btn sm" data-do="fxEmail" data-id="${i.id}">${t("fx_email")}</button>` : ""}</div></div>`).join("") : `<p>${t("fx_no_overdue")}</p>`}</div>`;
   },
+  // v0.8.48: one reminder per person with the total and the months; overdue, and due in the next few days (WhatsApp opens with the message written)
+  async reminders() {
+    const r = await api("/fees/reminders");
+    S.fxRem = r.overdue.concat(r.due_soon);
+    const wa = (x, who) => `<button class="btn sm" data-do="fxRem" data-k="${esc(x.key)}" data-kind="${x.kind}" data-to="${who}">${t("fx_whatsapp")}${who === "guardian" ? " · " + t("fx_guardian") : ""}</button>`;
+    const card = x => `<div class="sub"><div class="cl"><div><b>${esc(x.name)}</b> ${x.walk_in ? tag(t("fx_not_in_portal")) : `<span class="hint">${esc(x.student_code || "")}</span>`}<br>`
+      + `${x.kind === "overdue" ? tag(t("fx_st_overdue"), "bad") + ` <span class="hint">${esc(t("oldest {n} days late").replace("{n}", x.days_overdue))}</span>` : tag(x.days_left ? t("due in {n} days").replace("{n}", x.days_left) : t("due today"), "warn") + ` <span class="hint">${t("fx_due_on")} ${ltr(x.first_due)}</span>`}</div><b>${mvr(x.total.toLocaleString("en"))}</b></div>`
+      + `<p class="m0">${x.months.map(m => `<span class="chip">${esc(m)}</span>`).join(" ")}</p>`
+      + `<div class="hint">${x.items.map(i => `${esc(i.month)} · ${esc(i.what)}: ${mvr(i.balance)}`).join("<br>")}</div>`
+      + (x.slips_waiting ? `<div class="hint">${esc(t("{n} slip(s) waiting to be checked are not counted").replace("{n}", x.slips_waiting))}</div>` : "")
+      + (x.last_reminder ? `<div class="msg ${x.reminded_today ? "err" : "ok"} mt1">${t("fx_last_reminder")}: ${esc(x.last_reminder.channel)} · ${ltr(String(x.last_reminder.sent_at).slice(0, 10))} · ${esc(x.last_reminder.by_name || "")}${x.reminded_today ? " · " + t("fx_reminded_today") : ""}</div>` : "")
+      + `<div class="seg">${Object.keys(x.links).map(who => wa(x, who)).join("") || `<span class="hint">${t("fx_no_phone")}</span>`}<button class="btn sm alt" data-do="fxRemMsg" data-k="${esc(x.key)}" data-kind="${x.kind}">${esc(t("See message"))}</button></div></div>`;
+    const sec = (kind, title, hint, list, tot) => {
+      const left = list.filter(x => !x.reminded_today && Object.keys(x.links).length).length;
+      return `<div class="panel"><h2>${esc(title)} <span class="hint">· ${tot.people} · ${mvr(tot.amount.toLocaleString("en"))}</span></h2><p class="hint">${esc(hint)}</p>`
+        + (list.length ? `<p class="rowflex">${left ? `<button class="btn" data-do="fxRemNext" data-kind="${kind}">${t("fx_remind_next")}</button>` : ""}<span class="hint">${left ? t("fx_remind_left").replace("{n}", left) : t("fx_remind_done")}</span></p>` + list.map(card).join("") : `<p>${esc(t(kind === "overdue" ? "Nobody has overdue fees." : "Nothing falls due in these days."))}</p>`)
+        + `</div>`;
+    };
+    const slips = r.slips_only.length ? `<div class="panel"><h2>${esc(t("Slips waiting"))}</h2><p class="hint">${esc(t("These people sent a slip; check it in Payment slips. They are not reminded."))}</p>${r.slips_only.map(x => `<div class="cl"><span>${esc(x.name)}</span><span class="hint">${x.slips_waiting}</span></div>`).join("")}</div>` : "";
+    return `<p class="hint">${esc(t("rem_hint").replace("{n}", r.window_days))}</p><p><button type="button" class="btn sm alt" data-do="fxRemPdf">${t("Download PDF")}</button></p>`
+      + sec("overdue", t("Overdue"), t("rem_overdue_hint"), r.overdue, r.totals.overdue)
+      + sec("due_soon", t("Due in the next {n} days").replace("{n}", r.window_days), t("rem_soon_hint"), r.due_soon, r.totals.due_soon) + slips;
+  },
   async payrep() {
     const f = S.fxf || {};
     if (f.hist) {
@@ -341,7 +402,7 @@ const FX = {
       <label>${t("Course")}${sel("fxp_c", f.prc, courses.map(c => [c.id, c.name]))}</label><label>${t("Batch")}${sel("fxp_b", f.prb, batches.map(b => [b.id, (b.course_name || "") + " " + b.code]))}</label>
       <label>${t("Type")}${sel("fxp_k", f.prk, [["course", t("Course")], ["tuition", t("Tuition class")]])}</label>
       <label>${t("Status")}${sel("fxp_s", f.prs, [["paid", t("Paid")], ["partial", t("Partially Paid")], ["unpaid", t("Unpaid")], ["waived", t("Waived")], ["none", t("No invoice")]])}</label>
-      <button class="btn">${t("fx_show")}</button><button type="button" class="btn alt" data-do="fxPrCsv">${t("fx_csv")}</button><button type="button" class="btn alt" data-do="fxPrXlsx">${t("Download Excel")}</button></form></div>
+      <button class="btn">${t("fx_show")}</button><button type="button" class="btn alt" data-do="fxPrCsv">${t("fx_csv")}</button><button type="button" class="btn alt" data-do="fxPrXlsx">${t("Download Excel")}</button><button type="button" class="btn alt" data-do="fxPrPdf">${t("Download PDF")}</button></form></div>
       <div class="stats">${[[t("Students"), T_.students, 0], [t("Due"), T_.due, 1], [t("fx_collected"), T_.paid, 1], [t("fx_outstanding"), T_.balance, 1]].map(([k, v, m]) => `<div class="stat"><b>${m ? mvr(v) : v}</b>${k}</div>`).join("")}</div>
       <div class="panel">${r.rows.length ? `<table><thead><tr><th>${t("Student")}</th><th>${t("Course")}</th><th>${t("Batch")}</th><th>${t("Fee")}</th><th>${t("Status")}</th><th>${t("Paid")}</th><th>${t("fx_balance")}</th><th>${t("Payment dates")}</th><th></th></tr></thead><tbody>${r.rows.map(x => `<tr><td>${esc(x.student_name)} <span class="hint">${esc(x.student_code || "")}</span></td><td>${esc(x.course_name)}</td><td>${esc(x.batch_code)}</td><td>${mvr(x.monthly_fee_mvr)}</td><td>${fxPrTag(x)}</td><td>${mvr(x.paid_mvr)}</td><td>${mvr(x.balance_mvr)}</td><td>${x.payments.map(p => ltr(p.paid_on)).join(", ")}</td><td><button class="btn sm" data-do="fxPrHist" data-id="${x.student_id}">${t("History")}</button></td></tr>`).join("")}</tbody></table>` : `<p>${t("empty")}</p>`}</div>
       <div class="panel"><h2>${t("fx_other_invoices")}</h2><p class="hint">${t("fx_other_invoices_hint")}</p>${(r.other_rows || []).length ? `<p>${t("Due")}: ${mvr(r.other_totals.due)} · ${t("fx_collected")}: ${mvr(r.other_totals.paid)} · ${t("fx_outstanding")}: ${mvr(r.other_totals.balance)}</p>
@@ -350,15 +411,21 @@ const FX = {
   async report() {
     const m = (S.fxf || {}).rep || fxMonth();
     const r = await api("/fees/report?month=" + m), T_ = r.totals;
+    const sc = r.status_counts || {}, bat = r.by_batch || [], tr = r.trend || [];
+    // v0.8.48: batch by batch, with charts (blue = collected, orange = still to pay; the same colours as the PDF)
+    const charts = `<div class="panel"><h2>${esc(t("By batch"))}</h2>${fxLegend()}${fxHBars(bat.map(b => [`${b.course_name} ${b.batch_code}`.trim(), b.collected, b.outstanding]))}
+      <div class="scrollx mt1"><table><thead><tr><th>${t("Course")}</th><th>${t("Batch")}</th><th>${t("Teacher")}</th><th>${t("Students")}</th><th>${t("fx_invoiced")}</th><th>${t("fx_collected")}</th><th>${t("fx_outstanding")}</th><th>%</th><th>${t("Paid")}</th><th>${t("fx_st_overdue")}</th></tr></thead><tbody>${bat.map(b => `<tr><td>${esc(b.course_name)}</td><td>${esc(b.batch_code)}</td><td>${esc(b.teacher_name || "–")}</td><td>${b.students}</td><td>${mvr(b.invoiced)}</td><td>${mvr(b.collected)}</td><td>${mvr(b.outstanding)}</td><td><bdi dir="ltr">${b.rate}%</bdi></td><td>${b.paid}/${b.invoices}</td><td>${b.overdue ? tag(String(b.overdue), "bad") : "0"}</td></tr>`).join("") || `<tr><td colspan="10">${t("empty")}</td></tr>`}</tbody></table></div></div>
+      <div class="panel"><h2>${esc(t("Last 6 months"))}</h2>${fxLegend()}${fxCols(tr.map(x => [x.month, x.collected, x.outstanding]))}</div>
+      <div class="panel"><h2>${esc(t("Invoices this month"))}</h2><p>${tag(t("Paid") + " " + (sc.paid || 0), "ok")} ${tag(t("Partially Paid") + " " + (sc.partial || 0), "warn")} ${tag(t("Unpaid") + " " + (sc.unpaid || 0), "warn")} ${tag(t("fx_st_overdue") + " " + (sc.overdue || 0), "bad")}</p></div>`;
     mount(() => { const f = $("#fxr"); if (f) f.onsubmit = e => { e.preventDefault(); fxSet("rep", val("fxr_m") || fxMonth()); render(); }; });
-    return `<div class="panel"><form id="fxr" class="row"><label>${t("fx_month")}<input id="fxr_m" type="month" value="${esc(m)}"></label><button class="btn">${t("fx_show")}</button><button type="button" class="btn alt" data-do="fxCsv">${t("fx_csv")}</button><button type="button" class="btn alt" data-do="fxXlsx">${t("Download Excel")}</button></form></div>
-      <div class="stats">${[[t("fx_invoiced"), T_.invoiced], [t("fx_collected"), T_.collected], [t("fx_outstanding"), T_.outstanding]].map(([k, v]) => `<div class="stat"><b>${mvr(v)}</b>${k}</div>`).join("")}<div class="stat"><b>${T_.overdue_count}</b>${t("fx_st_overdue")}</div></div>
+    return `<div class="panel"><form id="fxr" class="row"><label>${t("fx_month")}<input id="fxr_m" type="month" value="${esc(m)}"></label><button class="btn">${t("fx_show")}</button><button type="button" class="btn alt" data-do="fxCsv">${t("fx_csv")}</button><button type="button" class="btn alt" data-do="fxXlsx">${t("Download Excel")}</button><button type="button" class="btn alt" data-do="fxPdf">${t("Download PDF")}</button></form></div>
+      <div class="stats">${[[t("fx_invoiced"), T_.invoiced], [t("fx_collected"), T_.collected], [t("fx_outstanding"), T_.outstanding]].map(([k, v]) => `<div class="stat"><b>${mvr(v)}</b>${k}</div>`).join("")}<div class="stat"><b><bdi dir="ltr">${T_.rate || 0}%</bdi></b>${esc(t("Collection rate"))}</div><div class="stat"><b>${T_.overdue_count}</b>${t("fx_st_overdue")}</div></div>${charts}
       <div class="panel"><h2>${t("fx_by_course")}</h2>${r.by_course.map(c => `<div class="cl"><span>${esc(c.course_name)}</span><span>${mvr(c.collected)} / ${mvr(c.invoiced)}</span></div>`).join("") || `<p>${t("empty")}</p>`}</div>
       <div class="panel"><h2>${t("fx_by_type")}</h2>${(r.by_type || []).map(c => `<div class="cl"><span>${esc(c.revenue_type_name)}</span><span>${mvr(c.collected)} / ${mvr(c.invoiced)}</span></div>`).join("") || `<p>${t("empty")}</p>`}</div>
       <div class="panel"><h2>${t("fx_who_owes")}</h2>${r.owing.map(o => `<div class="cl"><div><b>${esc(o.student_name)}</b> ${o.overdue ? tag(t("fx_st_overdue"), "bad") : ""}${o.walk_in ? " " + tag(t("fx_not_in_portal")) : ""}<br><span class="hint">${ltr(o.number)} · ${o.course_name ? esc(o.course_name) + " " + esc(o.batch_code || "") : esc(o.description)} · ${esc(o.revenue_type_name || "")}</span></div>${mvr(o.balance)}</div>`).join("") || `<p>${t("fx_nobody_owes")}</p>`}</div>`;
   },
 };
-const FX_TABS = ["slips", "invoices", "manual", "record", "discounts", "overdue", "report", "payrep"];
+const FX_TABS = ["slips", "invoices", "manual", "record", "discounts", "overdue", "reminders", "report", "payrep"];
 
 async function fxAdmin() {
   if (!S.fxCaughtUp) { S.fxCaughtUp = true; try { await api("/invoices/catch-up", "POST"); } catch (x) { /* not allowed or offline: the Fees screen still opens */ } }   // bills anyone enrolled since the last run

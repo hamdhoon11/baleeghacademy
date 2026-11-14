@@ -1,4 +1,6 @@
-"""v0.8.47: who is online, sign-in history and account control. Full admins only (role admin with no permission limit = the superadmin).
+"""v0.8.47: who is online, sign-in history and account control.
+v0.8.48: every admin may SEE who is online (the list, the Dashboard card and the history); only the superadmin (app.is_super) may sign
+people out, pause, suspend (ban) or restore them. Pause-ended notices go to the superadmin(s).
 
   GET  /api/admin/presence                      everyone: online status, device, last seen, account state, warning flags; counts
   GET  /api/admin/presence/summary              counts only (Dashboard card)
@@ -105,8 +107,8 @@ def account_state(r, now):
 
 
 def register(app, c):
-    def full_admin_ids():
-        return [r["id"] for r in c.rows("SELECT id FROM users WHERE role='admin' AND is_active=1 AND permissions IS NULL")]
+    def full_admin_ids():   # v0.8.48: the people who can act on it
+        return c.super_ids()
 
     def sweep(now):
         """Pauses that have ended: clear them, log it, tell the full admins. Also trims old sign-in records. Does NOT commit."""
@@ -129,7 +131,12 @@ def register(app, c):
     app.extensions["presence"] = {"touch": touch, "sweep": sweep}
 
     def guard():
-        return None if c.is_full_admin(g.user) else c.err("Only a full admin can do this", 403)
+        """Actions: the superadmin only."""
+        return c.super_only("Only the superadmin can sign people out, pause, suspend or restore accounts")
+
+    def view_guard():
+        """Looking: any admin (the routes already require the admin role)."""
+        return None
 
     def target(uid):
         """(error message, status) or (None, row)."""
@@ -214,6 +221,7 @@ def register(app, c):
         fl = flags(now)
         out, counts = [], {"online": 0, "away": 0, "offline": 0, "suspended": 0, "paused": 0, "disabled": 0, "warnings": 0}
         by_role = {k: {"online": 0, "total": 0} for k in ("admin", "teacher", "student")}
+        sup = set(c.super_ids())
         for r in c.rows("SELECT id, full_name, login_id, role, is_active, permissions, last_seen_at, last_login_at, signed_out_at, last_ip, last_agent,"
                         " suspended_at, suspend_reason, paused_until, pause_reason, account_message FROM users ORDER BY full_name"):
             st, acc, f = status(r, now), account_state(r, now), fl.get(r["id"], {})
@@ -225,6 +233,7 @@ def register(app, c):
             if st == "online": by_role[r["role"]]["online"] += 1
             out.append({"id": r["id"], "full_name": r["full_name"], "login_id": r["login_id"], "role": r["role"],
                         "full_admin": r["role"] == "admin" and r["permissions"] is None, "is_self": r["id"] == g.user["id"],
+                        "is_super": r["id"] in sup,
                         "status": st, "last_seen_at": r["last_seen_at"], "last_login_at": r["last_login_at"], "ip": r["last_ip"],
                         "device": device(r["last_agent"]), "account": acc, "failed_24h": failed, "new_device": f.get("new_device"),
                         "paused_until": r["paused_until"] if acc == "paused" else None, "pause_reason": r["pause_reason"] if acc == "paused" else None,
@@ -237,16 +246,16 @@ def register(app, c):
     @app.get("/api/admin/presence")
     @c.auth("admin")
     def presence_list():
-        bad = guard()
+        bad = view_guard()
         if bad: return bad
         now = c.utc_stamp(); sweep(now); c.db().commit()
         out, counts, by_role = people(now)
-        return jsonify(now=now, people=out, counts=counts, by_role=by_role, online_seconds=ONLINE_SECONDS, away_seconds=AWAY_SECONDS, failed_warn=FAILED_WARN)
+        return jsonify(now=now, can_act=c.is_super(g.user), people=out, counts=counts, by_role=by_role, online_seconds=ONLINE_SECONDS, away_seconds=AWAY_SECONDS, failed_warn=FAILED_WARN)
 
     @app.get("/api/admin/presence/summary")
     @c.auth("admin")
     def presence_summary():
-        bad = guard()
+        bad = view_guard()
         if bad: return bad
         now = c.utc_stamp(); sweep(now); c.db().commit()
         _, counts, by_role = people(now)
@@ -256,7 +265,7 @@ def register(app, c):
     @app.get("/api/admin/accounts/<int:uid>/history")
     @c.auth("admin")
     def acc_history(uid):
-        bad = guard()
+        bad = view_guard()
         if bad: return bad
         t = c.one("SELECT id, full_name, login_id, role FROM users WHERE id=?", (uid,))
         if not t: return c.err("User not found", 404)

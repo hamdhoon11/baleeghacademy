@@ -577,3 +577,11 @@
 - Tests: test_session38.py, e2e_excel.py; test_session32 map updated.
 - Next: nothing agreed yet; ask the owner.
 
+
+## Done: v0.8.48 (see CHANGES-v0.8.48.md)
+- feereminders.py (new): `dues()` = the one place for overdue / due-soon totals and months per person; WhatsApp list `GET /api/fees/reminders`, `POST /api/fees/reminders/sent`, PDF; `/my/fees/summary.reminder` (Home banners); notify.py's daily fee notices now one per student (dedupe `due:<sid>:<due date>`, `overdue:s<sid>:<count>:<bucket>`). Default `remind_fee_days_before` 5. Settings `wa_overdue_template`, `wa_due_soon_template`.
+- reportpdf.py (new) + `app.extensions["pdf"]`: .pdf routes on fees report, payment report, reminders, finance, earnings, enrollment events, audit, gradebook, attendance. fees.report() gives by_batch, status_counts, trend, totals.rate; fees.js draws HTML bar charts (fxHBars, fxCols).
+- Superadmin: users.is_super; app is_super()/super_ids()/super_only() on ns; earliest active full admin counts while none is flagged. presence actions and reset-data need it; presence views open to every admin (FULL_ONLY empty).
+- branding.py (new): logo upload/remove/public; storage area `branding`; hidden setting `_logo`; receipts.draw_logo; index.html markHtml()/applyLogo().
+- Tests: test_session48.py, e2e_v0848.py; 533 unit tests pass.
+- Next: nothing agreed; possible follow-up is automatic WhatsApp via the Business API (needs a provider account).
