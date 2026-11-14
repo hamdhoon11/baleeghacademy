@@ -72,6 +72,38 @@ def _table(head, rows_, opts, width):
     return t
 
 
+# v0.8.53: the fee status grid. status -> (background, text colour, mark, label); the same colours as on screen, always with a mark
+GRID = {"paid": ("#dff1e3", "#1f6b35", "OK", "Paid"), "waived": ("#eef1f1", "#4a6468", "-", "Waived"), "slip": ("#e2eefb", "#1d4f91", "slip", "Slip sent"),
+        "partial": ("#fbefc8", "#7a5a00", "1/2", "Part paid"), "unpaid": ("#fdecea", "#b8432f", "o", "Not paid"), "overdue": ("#d64532", "#ffffff", "!", "Overdue")}
+
+
+def _grid(title, months, people, totals, width):
+    """people: [(name, code, {month: cell})]; cell = {status, paid, balance}. totals: {month: {collected, outstanding}}."""
+    head = [para("Student", 7.5, True, color=colors.white)] + [para(m, 7.5, True, True, colors.white) for m in months]
+    data, st = [head], []
+    for r, (name, code, cells) in enumerate(people, 1):
+        row = [para(name + (f"\n{code}" if code else ""), 7.5)]
+        for c_, m in enumerate(months, 1):
+            x = cells.get(m)
+            if not x: row.append(para("·", 7.5, right=True, color=INK2)); continue
+            bg, fg, mark, _ = GRID[x["status"]]
+            amt = x["paid"] if x["status"] == "paid" else x["balance"] if x["status"] in ("unpaid", "overdue", "partial") else ""
+            row.append(para(f"{mark} {amt:,}" if amt != "" else mark, 7.5, x["status"] == "overdue", True, colors.HexColor(fg)))
+            st.append(("BACKGROUND", (c_, r), (c_, r), colors.HexColor(bg)))
+        data.append(row)
+    data.append([para("Collected", 7.5, True)] + [para(f"{totals[m]['collected']:,}", 7.5, True, True) for m in months])
+    data.append([para("To pay", 7.5, True)] + [para(f"{totals[m]['outstanding']:,}", 7.5, True, True, colors.HexColor("#9b2c1c") if totals[m]["outstanding"] else INK) for m in months])
+    first = min(width * .3, 150)
+    t = Table(data, colWidths=[first] + [(width - first) / max(1, len(months))] * len(months), repeatRows=1)
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), LAGOON), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("GRID", (0, 0), (-1, -1), 1.5, colors.white),
+                           ("LINEABOVE", (0, -2), (-1, -2), 0.8, INK), ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)] + st))
+    return [para(title, 10.5, True, color=LAGOON), Spacer(1, 3), t]
+
+
+def grid_legend():
+    return "  ·  ".join(f"{mark} = {label}" for _, _, mark, label in GRID.values()) + "  ·  · = no fee that month. Amounts in MVR: paid, or still to pay."
+
+
 def _stats(items, width):
     n = max(1, min(6, len(items)))
     cells = [[para(fmt(v), 13, True, color=LAGOON) for _, v in items[i:i + n]] for i in range(0, len(items), n)]
@@ -180,6 +212,9 @@ def build(title, blocks, academy="Baleegh Academy", subtitle="", logo=None, land
                 if len(b[2]) > MAX_ROWS: story += [para(f"Only the first {MAX_ROWS:,} of {len(b[2]):,} rows are shown. Download Excel for all of them.", 8, color=INK2)]
             else: story += [para("Nothing to show.", 8.5, color=INK2), Spacer(1, 6)]
         elif k == "bars" and b[2]: story += [KeepTogether([_bars(b[1], b[2], b[3], b[4] if len(b) > 4 else {}, width)]), Spacer(1, 8)]
+        elif k == "grid":
+            g = _grid(b[1], b[2], b[3], b[4], width); g[0].keepWithNext = True
+            story += g + [Spacer(1, 10)]
         elif k == "columns" and b[2]: story += [KeepTogether([_columns(b[1], b[2], b[3], b[4] if len(b) > 4 else {}, width)]), Spacer(1, 8)]
 
     def foot(c, d_):

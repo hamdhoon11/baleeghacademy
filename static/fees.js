@@ -265,6 +265,10 @@ function fxGrid(g) {
 DO.fxRecPick = d => {
   if (!$(`#fxp_i option[value="${+d.id}"]`)) { S.fxRecPick = +d.id; S.fxRec = {...(S.fxRec || {}), period: "", q: ""}; return; }
   S.fxRecPick = +d.id; const fi = $("#fxp_i"); if (fi) { fi.value = d.id; const x = (S.fxRecInv || []).find(i => i.id === +d.id); if (x && $("#fxp_a")) $("#fxp_a").value = x.balance; $("#fxp_h").scrollIntoView({behavior: "smooth", block: "start"}); $("#fxp_a") && $("#fxp_a").focus({preventScroll: true}); } return false; };
+DO.fxGridPdf = async () => {   // v0.8.54: the grid as shown (same batch, months and name)
+  const f = S.fxRec || {}, q = new URLSearchParams(Object.entries({end: f.period, months: f.period ? 1 : (f.span || 3), batch_id: f.batch === "none" ? "" : f.batch, q: f.q}).filter(([, v]) => v)).toString();
+  await fetchFile("/fees/status-grid.pdf" + (q ? "?" + q : ""), {name: "fee-status.pdf"}); return false;
+};
 DO.fxRecClear = () => { S.fxRec = {batch: "", q: "", period: "", span: (S.fxRec || {}).span || (window.innerWidth < 600 ? 3 : 6)}; };
 DO.fxEmail = async d => { await api(`/invoices/${d.id}/reminders/email`, "POST", {}); flash(t("fx_email_sent"), true); };
 DO.fxPrCsv = async () => { const q = fxPrQuery(); await download("/fees/payment-report.csv?" + q, `payments-${fxPrMonth()}.csv`); return false; };
@@ -399,7 +403,7 @@ const FX = {
       + [...g.people.values()].sort((a, b) => a.name.localeCompare(b.name)).map(pe => `<div class="cl"><span>${esc(pe.name)}</span><span class="seg">${pe.items.sort((a, b) => a.period.localeCompare(b.period)).map(i => `<button type="button" class="btn sm ${i.status === "slip_submitted" ? "alt" : ""}" data-do="fxRecPick" data-id="${i.id}" title="${esc(i.number)}">${esc(fxMon(i.period))} · ${mvr(i.balance)}${i.status === "slip_submitted" ? " · " + esc(t("Slip sent")) : ""}</button>`).join("")}</span></div>`).join("")
       + `</details>`).join("");
     return `<div class="panel"><h2>${t("fx_tab_record")}</h2>${filt}
-      <h3>${esc(t("Fee status by batch"))}</h3>${fxGrid(grid)}${open ? `<h3>${esc(t("Other invoices"))}</h3>${open}` : ""}${!inv.length ? `<p class="msg ok">${t("fx_nothing_open")}</p>` : ""}
+      <h3>${esc(t("Fee status by batch"))}</h3><p><button type="button" class="btn sm alt" data-do="fxGridPdf">${esc(t("Download PDF"))}</button></p>${fxGrid(grid)}${open ? `<h3>${esc(t("Other invoices"))}</h3>${open}` : ""}${!inv.length ? `<p class="msg ok">${t("fx_nothing_open")}</p>` : ""}
       <h3 id="fxp_h">${esc(t("Record a payment"))}</h3>${shown.length ? `<form id="fxp" class="row">${field("fxp_i", t("fx_invoice"), "", shown.map(i => [i.id, `${fxMon(i.period)} · ${i.student_name} · ${i.course_name ? i.course_name + " " + (i.batch_code || "") : (i.description || "")} · MVR ${i.balance}`]))}
       <label>${t("fx_amount_received")}<input id="fxp_a" type="number" min="1" step="1" inputmode="numeric" required></label>${field("fxp_m", t("fx_method"), "", ["cash", "bank_transfer", "other"].map(m => [m, t("fx_m_" + m)]))}
       <label>${t("date")}<input id="fxp_d" type="date" max="${mvToday()}" value="${mvToday()}"></label><label>${t("fx_reference")}<input id="fxp_r"></label><label>${t("fx_note")}<input id="fxp_n"></label><label>${t("fx_attach_slip")}<input id="fxp_f" type="file" accept="${FX_SLIP_ACCEPT}"><span class="hint">${t("fx_attach_slip_hint")}</span></label><label class="inl"><input id="fxp_t" type="checkbox" checked> ${t("fx_tell_student")}</label><button class="btn alt">${t("fx_record")}</button></form>` : `<p>${t("empty")}</p>`}</div>

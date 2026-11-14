@@ -1048,6 +1048,30 @@ def register(app, c):
             batches.append(b)
         return jsonify(months=months, batches=batches)
 
+    @app.get("/api/fees/status-grid.pdf")
+    @auth("admin", perm="fees")
+    def fee_grid_pdf():   # v0.8.54: the same grid, as a PDF (same filters)
+        import reportpdf as R
+        r = fee_grid()
+        if isinstance(r, tuple): return r
+        j = r.get_json()
+        lab = app.extensions["feedue"]["month_label"]
+        months = j["months"]
+        blocks = [("note", R.grid_legend())]
+        tot_due = sum(b["months"][m]["due"] for b in j["batches"] for m in months)
+        tot_col = sum(b["months"][m]["collected"] for b in j["batches"] for m in months)
+        blocks.insert(0, ("stats", [("Batches", len(j["batches"])), ("Students", sum(len(b["students"]) for b in j["batches"])),
+                                    ("Due (MVR)", tot_due), ("Collected (MVR)", tot_col), ("Still to pay (MVR)", sum(b["months"][m]["outstanding"] for b in j["batches"] for m in months))]))
+        for b in j["batches"]:
+            people = [(p["name"], p["student_code"], {lab(m): c for m, c in p["cells"].items()}) for p in b["students"]]
+            blocks.append(("grid", b["name"], [lab(m) for m in months], people, {lab(m): v for m, v in b["months"].items()}))
+        if not j["batches"]: blocks.append(("note", "No fees for these months."))
+        a_ = request.args
+        sub = f"{lab(months[0])} to {lab(months[-1])}" if len(months) > 1 else lab(months[0])
+        if a_.get("q"): sub += f" · student: {a_['q']}"
+        audit_c("export_fee_grid_pdf", "report", None, sub); db().commit()
+        return app.extensions["pdf"]("Fee status by batch", blocks, f"fee-status-{months[-1]}", subtitle=sub)
+
     @app.get("/api/payments")
     @auth("admin", perm="fees")
     def pay_list():
