@@ -38,6 +38,10 @@ def create_app(config=None):
     )
     if config:
         app.config.update(config)
+    # Security review 2026-11: the sign-in tokens are signed with SECRET_KEY. With the built-in default anyone could make an admin token,
+    # so a hosted server (Vercel or a hosted database) refuses to start without a real key of at least 32 characters.
+    if (ON_VERCEL or dbx.is_postgres(app.config["DATABASE_URL"])) and (app.config["SECRET_KEY"] == "dev-only-change-me" or len(app.config["SECRET_KEY"]) < 32):
+        raise RuntimeError("SECRET_KEY is missing or too short. Set a random value of 32+ characters (python -c \"import secrets; print(secrets.token_urlsafe(48))\").")
     app.config["USE_POSTGRES"] = dbx.is_postgres(app.config["DATABASE_URL"])
     if not app.config["USE_POSTGRES"]:
         os.makedirs(os.path.dirname(app.config["DATABASE_PATH"]), exist_ok=True)
@@ -256,6 +260,10 @@ def create_app(config=None):
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "same-origin"
+        # Security review 2026-11: no plugins, no <base> tricks, no framing; forms only post here. Browsers keep to HTTPS for a year.
+        resp.headers.setdefault("Content-Security-Policy", "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+        if request.is_secure or ON_VERCEL or request.headers.get("X-Forwarded-Proto") == "https":
+            resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return resp
 
     @app.route("/api/<path:_>", methods=["OPTIONS"])
@@ -333,10 +341,12 @@ def create_app(config=None):
         new = str(d.get("new_password", ""))
         if len(new) < setting_int("min_password_length"):
             return err(f"New password must be at least {setting_int('min_password_length')} characters")
-        db().execute("UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?",
+        # Security review 2026-11: a new password signs out every other device (a stolen token stops working); this device gets a new token
+        db().execute("UPDATE users SET password_hash=?, must_change_password=0, token_version=COALESCE(token_version,0)+1 WHERE id=?",
                      (generate_password_hash(new), g.user["id"]))
         audit("change_password", "user", g.user["id"]); db().commit()
-        return jsonify(ok=True)
+        fresh = one("SELECT id,role,token_version FROM users WHERE id=?", (g.user["id"],))
+        return jsonify(ok=True, token=make_token(fresh))
 
     # ---------- users ----------
     STUDENT_FIELDS = ("date_of_birth", "grade", "island", "guardian_name", "guardian_relationship", "guardian_phone")
@@ -515,7 +525,7 @@ def create_app(config=None):
             changed.append("permissions")
         if d.get("password"):
             if len(d["password"]) < setting_int("min_password_length"): return err(f"Password must be at least {setting_int('min_password_length')} characters")
-            sets += ["password_hash=?", "must_change_password=1"]; args.append(generate_password_hash(d["password"])); changed.append("password")
+            sets += ["password_hash=?", "must_change_password=1", "token_version=COALESCE(token_version,0)+1"]; args.append(generate_password_hash(d["password"])); changed.append("password")
         if "must_change_password" in d and not d.get("password"):
             sets.append("must_change_password=?"); args.append(1 if d["must_change_password"] else 0); changed.append("must_change_password")
         prof = {}
@@ -557,7 +567,7 @@ def create_app(config=None):
         if u["role"] == "admin" and g.user["permissions"] is not None: return err("Only a full admin can reset an admin's password", 403)
         if uid in super_ids() and not is_super(g.user): return err("Only the superadmin can reset the superadmin's password", 403)
         pw = temp_password()
-        db().execute("UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?", (generate_password_hash(pw), uid))
+        db().execute("UPDATE users SET password_hash=?, must_change_password=1, token_version=COALESCE(token_version,0)+1 WHERE id=?", (generate_password_hash(pw), uid))   # old sessions end
         ph = app.extensions.get("passhelp")
         if ph: ph["close_for"](uid)   # v0.8.35: a "Forgot password" request from this person is now handled
         audit("reset_password", "user", uid, u["login_id"] or ""); db().commit()
@@ -936,7 +946,7 @@ def create_app(config=None):
         d = request.get_json(silent=True) or {}
         e = one("SELECT * FROM enrollments WHERE id=?", (eid,))
         if not e: return err("Enrollment not found", 404)
-        try: eff = transfers.clean_date(d.get("effective_date"), utc_stamp()[:10])
+        try: eff = transfers.clean_date(d.get("effective_date"), ((app.config.get("NOW") or (lambda: dt.datetime.now(MVT)))()).astimezone(MVT).strftime("%Y-%m-%d"))   # today in Maldives, not UTC
         except ValueError as x: return err(str(x))
         if d.get("transfer_to_batch_id"):  # move student to another batch
             nb = one("SELECT b.id,b.capacity,c.is_active FROM batches b JOIN courses c ON c.id=b.course_id WHERE b.id=?", (d["transfer_to_batch_id"],))
@@ -973,6 +983,7 @@ def create_app(config=None):
     store = storage.make(app.config, UPLOADS, conn=db)   # on Vercel without a bucket the files go into the database (v0.8.34)
     app.extensions["store"] = store
     apply_hits = {}
+    status_hits = {}
     MAGIC = {".pdf": b"%PDF", ".jpg": b"\xff\xd8\xff", ".jpeg": b"\xff\xd8\xff", ".png": b"\x89PNG"}
     MAX_FILE = common.MAX_FILE
 
@@ -1075,6 +1086,11 @@ def create_app(config=None):
 
     @app.post("/api/public/apply/status")
     def apply_status():  # reference + phone must match; reveals status only
+        ip = request.remote_addr or "?"; now = time.time()
+        status_hits[ip] = [x for x in status_hits.get(ip, []) if now - x < 3600]
+        if len(status_hits[ip]) >= app.config.get("STATUS_LIMIT", 30):
+            return err("Too many lookups from this connection. Try again later.", 429)
+        status_hits[ip].append(now)
         d = request.get_json(silent=True) or {}
         a = one("SELECT status,reject_reason,phone FROM applications WHERE ref=?", (str(d.get("ref", "")).strip().upper(),))
         if not a or re.sub(r"\D", "", a["phone"]) != re.sub(r"\D", "", str(d.get("phone", ""))):
