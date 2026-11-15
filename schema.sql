@@ -572,6 +572,15 @@ CREATE TABLE IF NOT EXISTS login_events (
 CREATE INDEX IF NOT EXISTS idx_login_events_user ON login_events(user_id, at);
 CREATE INDEX IF NOT EXISTS idx_login_events_at ON login_events(at);
 
+-- v0.8.57: attempt counters (sign-in, applications, Forgot password, slip uploads), shared by every server instance. See ratelimit.py.
+CREATE TABLE IF NOT EXISTS rate_hits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bucket TEXT NOT NULL,
+  k TEXT NOT NULL,
+  at BIGINT NOT NULL           -- seconds since 1970
+);
+CREATE INDEX IF NOT EXISTS idx_rate_hits ON rate_hits(bucket, k, at);
+
 -- v0.8.49: unexpected server errors ("Something went wrong on the server"), so the cause can be found without the hosting logs.
 -- Kept 90 days / last 500. Never holds passwords or request bodies: only where, who, the error's type and message and the code lines.
 CREATE TABLE IF NOT EXISTS server_errors (

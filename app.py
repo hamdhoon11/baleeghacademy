@@ -8,6 +8,7 @@ import settings_schema as SS
 import idcodes
 import common, dbx, storage, transfers
 import presence
+import ratelimit
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 ON_VERCEL = bool(os.environ.get("VERCEL"))
@@ -47,7 +48,8 @@ def create_app(config=None):
         os.makedirs(os.path.dirname(app.config["DATABASE_PATH"]), exist_ok=True)
     id_tables = dbx.id_tables_of(dbx.read_schema(BASE))
     DUMMY_HASH = generate_password_hash("not-a-real-password")
-    fails = {}  # ip -> [timestamps]; simple in-memory login rate limit
+    if app.config["ON_VERCEL"]:   # v0.8.57: the visitor's real address (Vercel sets the header itself), see ratelimit.py
+        app.wsgi_app = ratelimit.client_ip_middleware(app.wsgi_app)
 
     # ---------- db ----------
     def connect():
@@ -287,22 +289,21 @@ def create_app(config=None):
     @app.post("/api/auth/login")
     def login():
         ip = request.remote_addr or "?"
-        now = time.time()
+        now = ratelimit.now_s(app)
         d = request.get_json(silent=True) or {}
         who = str(d.get("login") or d.get("login_id") or d.get("email") or "").strip()
-        key = "acct:" + who.lower()   # guessing one account's password is limited too, because IDs follow a pattern anyone can guess
-        for k in (ip, key):
-            fails[k] = [t for t in fails.get(k, []) if now - t < 300]
-        if len(fails[ip]) >= 8 or len(fails[key]) >= 8:
-            return err("Too many attempts. Try again in a few minutes.", 429)
         if "@" in who:
             u = one("SELECT * FROM users WHERE email=?", (who.lower(),)) if app.config["ALLOW_EMAIL_LOGIN"] else None   # old way, switch off with ALLOW_EMAIL_LOGIN=0
         else:
             u = one("SELECT * FROM users WHERE login_id=?", (norm_login(who),))
+        # v0.8.57: counted in the database, per connection AND account, so a stranger's guesses never lock the real owner out (ratelimit.py)
+        acct = f"u{u['id']}" if u else "t:" + who.lower()[:80]   # email and login ID of one person count as one account
+        if ratelimit.check_login(db(), ip, acct, now):
+            return err("Too many attempts. Try again in a few minutes.", 429)
         # the password is always checked (against a dummy hash if nobody matched) so the answer time does not reveal whether the ID exists
         ok = check_password_hash(u["password_hash"] if u else DUMMY_HASH, str(d.get("password", "")))
         if not u or not ok or not u["is_active"]:
-            fails[ip].append(now); fails[key].append(now)
+            ratelimit.login_failed(db(), ip, acct, now)
             presence.log_login(db(), u["id"] if u else None, who, False, "account disabled" if u and ok else ("wrong password" if u else "unknown ID"), utc_stamp(), request)
             audit("failed_login", "user", u["id"] if u else None, "account disabled" if u and ok else ("wrong password" if u else "unknown ID"),
                   role="anonymous", login_id=who[:60] or None); db().commit()   # what was typed as the ID is kept; the password never is
@@ -313,6 +314,7 @@ def create_app(config=None):
             audit("login_blocked", "user", u["id"], stop[0], role=u["role"], login_id=u["login_id"]); db().commit()
             return jsonify(error=stop[1], code=stop[0]), 403
         g.user = u
+        ratelimit.login_ok(db(), ip, acct)
         presence.signed_in(db(), u["id"], utc_stamp(), request)
         presence.log_login(db(), u["id"], who, True, None, utc_stamp(), request)
         audit("login", "user", u["id"]); db().commit()
@@ -982,8 +984,6 @@ def create_app(config=None):
     UPLOADS = os.path.join(os.path.dirname(app.config["DATABASE_PATH"]), "uploads")   # used only when files are kept on local disk
     store = storage.make(app.config, UPLOADS, conn=db)   # on Vercel without a bucket the files go into the database (v0.8.34)
     app.extensions["store"] = store
-    apply_hits = {}
-    status_hits = {}
     MAGIC = {".pdf": b"%PDF", ".jpg": b"\xff\xd8\xff", ".jpeg": b"\xff\xd8\xff", ".png": b"\x89PNG"}
     MAX_FILE = common.MAX_FILE
 
@@ -1037,9 +1037,8 @@ def create_app(config=None):
     @app.post("/api/public/apply")
     def apply():
         ip = request.remote_addr or "?"
-        now = time.time()
-        apply_hits[ip] = [x for x in apply_hits.get(ip, []) if now - x < 3600]
-        if len(apply_hits[ip]) >= app.config.get("APPLY_LIMIT", 5):
+        now = ratelimit.now_s(app)
+        if ratelimit.over(db(), "apply", ip, app.config.get("APPLY_LIMIT", 5), 3600, now):
             return err("Too many applications from this connection. Try again later or contact us on WhatsApp.", 429)
         if setting("applications_open") == "0":
             return err(setting("applications_closed_message") or "Applications are closed at the moment. Please contact us on WhatsApp.", 403)
@@ -1080,17 +1079,16 @@ def create_app(config=None):
                      "guardian_name,guardian_relationship,guardian_phone,guardian_id_file) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                      (ref, f["full_name"].strip(), f["date_of_birth"], int(minor), f.get("grade"), f["phone"].strip(), email, f.get("island"),
                       course["id"], batch_id, id_file, f.get("guardian_name"), f.get("guardian_relationship"), f.get("guardian_phone"), g_file))
+        ratelimit.hit(db(), "apply", ip, now)
         db().commit()
-        apply_hits[ip].append(now)
         return jsonify(ref=ref, is_minor=minor), 201
 
     @app.post("/api/public/apply/status")
     def apply_status():  # reference + phone must match; reveals status only
-        ip = request.remote_addr or "?"; now = time.time()
-        status_hits[ip] = [x for x in status_hits.get(ip, []) if now - x < 3600]
-        if len(status_hits[ip]) >= app.config.get("STATUS_LIMIT", 30):
+        ip = request.remote_addr or "?"; now = ratelimit.now_s(app)
+        if ratelimit.over(db(), "apply_status", ip, app.config.get("STATUS_LIMIT", 30), 3600, now):
             return err("Too many lookups from this connection. Try again later.", 429)
-        status_hits[ip].append(now)
+        ratelimit.hit(db(), "apply_status", ip, now); db().commit()
         d = request.get_json(silent=True) or {}
         a = one("SELECT status,reject_reason,phone FROM applications WHERE ref=?", (str(d.get("ref", "")).strip().upper(),))
         if not a or re.sub(r"\D", "", a["phone"]) != re.sub(r"\D", "", str(d.get("phone", ""))):
