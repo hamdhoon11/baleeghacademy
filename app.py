@@ -8,6 +8,7 @@ import settings_schema as SS
 import idcodes
 import common, dbx, storage, transfers
 import presence
+import ratelimit
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 ON_VERCEL = bool(os.environ.get("VERCEL"))
@@ -38,12 +39,17 @@ def create_app(config=None):
     )
     if config:
         app.config.update(config)
+    # Security review 2026-11: the sign-in tokens are signed with SECRET_KEY. With the built-in default anyone could make an admin token,
+    # so a hosted server (Vercel or a hosted database) refuses to start without a real key of at least 32 characters.
+    if (ON_VERCEL or dbx.is_postgres(app.config["DATABASE_URL"])) and (app.config["SECRET_KEY"] == "dev-only-change-me" or len(app.config["SECRET_KEY"]) < 32):
+        raise RuntimeError("SECRET_KEY is missing or too short. Set a random value of 32+ characters (python -c \"import secrets; print(secrets.token_urlsafe(48))\").")
     app.config["USE_POSTGRES"] = dbx.is_postgres(app.config["DATABASE_URL"])
     if not app.config["USE_POSTGRES"]:
         os.makedirs(os.path.dirname(app.config["DATABASE_PATH"]), exist_ok=True)
     id_tables = dbx.id_tables_of(dbx.read_schema(BASE))
     DUMMY_HASH = generate_password_hash("not-a-real-password")
-    fails = {}  # ip -> [timestamps]; simple in-memory login rate limit
+    if app.config["ON_VERCEL"]:   # v0.8.57: the visitor's real address (Vercel sets the header itself), see ratelimit.py
+        app.wsgi_app = ratelimit.client_ip_middleware(app.wsgi_app)
 
     # ---------- db ----------
     def connect():
@@ -256,6 +262,10 @@ def create_app(config=None):
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "same-origin"
+        # Security review 2026-11: no plugins, no <base> tricks, no framing; forms only post here. Browsers keep to HTTPS for a year.
+        resp.headers.setdefault("Content-Security-Policy", "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+        if request.is_secure or ON_VERCEL or request.headers.get("X-Forwarded-Proto") == "https":
+            resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return resp
 
     @app.route("/api/<path:_>", methods=["OPTIONS"])
@@ -279,22 +289,21 @@ def create_app(config=None):
     @app.post("/api/auth/login")
     def login():
         ip = request.remote_addr or "?"
-        now = time.time()
+        now = ratelimit.now_s(app)
         d = request.get_json(silent=True) or {}
         who = str(d.get("login") or d.get("login_id") or d.get("email") or "").strip()
-        key = "acct:" + who.lower()   # guessing one account's password is limited too, because IDs follow a pattern anyone can guess
-        for k in (ip, key):
-            fails[k] = [t for t in fails.get(k, []) if now - t < 300]
-        if len(fails[ip]) >= 8 or len(fails[key]) >= 8:
-            return err("Too many attempts. Try again in a few minutes.", 429)
         if "@" in who:
             u = one("SELECT * FROM users WHERE email=?", (who.lower(),)) if app.config["ALLOW_EMAIL_LOGIN"] else None   # old way, switch off with ALLOW_EMAIL_LOGIN=0
         else:
             u = one("SELECT * FROM users WHERE login_id=?", (norm_login(who),))
+        # v0.8.57: counted in the database, per connection AND account, so a stranger's guesses never lock the real owner out (ratelimit.py)
+        acct = f"u{u['id']}" if u else "t:" + who.lower()[:80]   # email and login ID of one person count as one account
+        if ratelimit.check_login(db(), ip, acct, now):
+            return err("Too many attempts. Try again in a few minutes.", 429)
         # the password is always checked (against a dummy hash if nobody matched) so the answer time does not reveal whether the ID exists
         ok = check_password_hash(u["password_hash"] if u else DUMMY_HASH, str(d.get("password", "")))
         if not u or not ok or not u["is_active"]:
-            fails[ip].append(now); fails[key].append(now)
+            ratelimit.login_failed(db(), ip, acct, now)
             presence.log_login(db(), u["id"] if u else None, who, False, "account disabled" if u and ok else ("wrong password" if u else "unknown ID"), utc_stamp(), request)
             audit("failed_login", "user", u["id"] if u else None, "account disabled" if u and ok else ("wrong password" if u else "unknown ID"),
                   role="anonymous", login_id=who[:60] or None); db().commit()   # what was typed as the ID is kept; the password never is
@@ -305,6 +314,7 @@ def create_app(config=None):
             audit("login_blocked", "user", u["id"], stop[0], role=u["role"], login_id=u["login_id"]); db().commit()
             return jsonify(error=stop[1], code=stop[0]), 403
         g.user = u
+        ratelimit.login_ok(db(), ip, acct)
         presence.signed_in(db(), u["id"], utc_stamp(), request)
         presence.log_login(db(), u["id"], who, True, None, utc_stamp(), request)
         audit("login", "user", u["id"]); db().commit()
@@ -333,10 +343,12 @@ def create_app(config=None):
         new = str(d.get("new_password", ""))
         if len(new) < setting_int("min_password_length"):
             return err(f"New password must be at least {setting_int('min_password_length')} characters")
-        db().execute("UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?",
+        # Security review 2026-11: a new password signs out every other device (a stolen token stops working); this device gets a new token
+        db().execute("UPDATE users SET password_hash=?, must_change_password=0, token_version=COALESCE(token_version,0)+1 WHERE id=?",
                      (generate_password_hash(new), g.user["id"]))
         audit("change_password", "user", g.user["id"]); db().commit()
-        return jsonify(ok=True)
+        fresh = one("SELECT id,role,token_version FROM users WHERE id=?", (g.user["id"],))
+        return jsonify(ok=True, token=make_token(fresh))
 
     # ---------- users ----------
     STUDENT_FIELDS = ("date_of_birth", "grade", "island", "guardian_name", "guardian_relationship", "guardian_phone")
@@ -515,7 +527,7 @@ def create_app(config=None):
             changed.append("permissions")
         if d.get("password"):
             if len(d["password"]) < setting_int("min_password_length"): return err(f"Password must be at least {setting_int('min_password_length')} characters")
-            sets += ["password_hash=?", "must_change_password=1"]; args.append(generate_password_hash(d["password"])); changed.append("password")
+            sets += ["password_hash=?", "must_change_password=1", "token_version=COALESCE(token_version,0)+1"]; args.append(generate_password_hash(d["password"])); changed.append("password")
         if "must_change_password" in d and not d.get("password"):
             sets.append("must_change_password=?"); args.append(1 if d["must_change_password"] else 0); changed.append("must_change_password")
         prof = {}
@@ -557,7 +569,7 @@ def create_app(config=None):
         if u["role"] == "admin" and g.user["permissions"] is not None: return err("Only a full admin can reset an admin's password", 403)
         if uid in super_ids() and not is_super(g.user): return err("Only the superadmin can reset the superadmin's password", 403)
         pw = temp_password()
-        db().execute("UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?", (generate_password_hash(pw), uid))
+        db().execute("UPDATE users SET password_hash=?, must_change_password=1, token_version=COALESCE(token_version,0)+1 WHERE id=?", (generate_password_hash(pw), uid))   # old sessions end
         ph = app.extensions.get("passhelp")
         if ph: ph["close_for"](uid)   # v0.8.35: a "Forgot password" request from this person is now handled
         audit("reset_password", "user", uid, u["login_id"] or ""); db().commit()
@@ -936,7 +948,7 @@ def create_app(config=None):
         d = request.get_json(silent=True) or {}
         e = one("SELECT * FROM enrollments WHERE id=?", (eid,))
         if not e: return err("Enrollment not found", 404)
-        try: eff = transfers.clean_date(d.get("effective_date"), utc_stamp()[:10])
+        try: eff = transfers.clean_date(d.get("effective_date"), ((app.config.get("NOW") or (lambda: dt.datetime.now(MVT)))()).astimezone(MVT).strftime("%Y-%m-%d"))   # today in Maldives, not UTC
         except ValueError as x: return err(str(x))
         if d.get("transfer_to_batch_id"):  # move student to another batch
             nb = one("SELECT b.id,b.capacity,c.is_active FROM batches b JOIN courses c ON c.id=b.course_id WHERE b.id=?", (d["transfer_to_batch_id"],))
@@ -972,7 +984,6 @@ def create_app(config=None):
     UPLOADS = os.path.join(os.path.dirname(app.config["DATABASE_PATH"]), "uploads")   # used only when files are kept on local disk
     store = storage.make(app.config, UPLOADS, conn=db)   # on Vercel without a bucket the files go into the database (v0.8.34)
     app.extensions["store"] = store
-    apply_hits = {}
     MAGIC = {".pdf": b"%PDF", ".jpg": b"\xff\xd8\xff", ".jpeg": b"\xff\xd8\xff", ".png": b"\x89PNG"}
     MAX_FILE = common.MAX_FILE
 
@@ -1026,9 +1037,8 @@ def create_app(config=None):
     @app.post("/api/public/apply")
     def apply():
         ip = request.remote_addr or "?"
-        now = time.time()
-        apply_hits[ip] = [x for x in apply_hits.get(ip, []) if now - x < 3600]
-        if len(apply_hits[ip]) >= app.config.get("APPLY_LIMIT", 5):
+        now = ratelimit.now_s(app)
+        if ratelimit.over(db(), "apply", ip, app.config.get("APPLY_LIMIT", 5), 3600, now):
             return err("Too many applications from this connection. Try again later or contact us on WhatsApp.", 429)
         if setting("applications_open") == "0":
             return err(setting("applications_closed_message") or "Applications are closed at the moment. Please contact us on WhatsApp.", 403)
@@ -1069,12 +1079,16 @@ def create_app(config=None):
                      "guardian_name,guardian_relationship,guardian_phone,guardian_id_file) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                      (ref, f["full_name"].strip(), f["date_of_birth"], int(minor), f.get("grade"), f["phone"].strip(), email, f.get("island"),
                       course["id"], batch_id, id_file, f.get("guardian_name"), f.get("guardian_relationship"), f.get("guardian_phone"), g_file))
+        ratelimit.hit(db(), "apply", ip, now)
         db().commit()
-        apply_hits[ip].append(now)
         return jsonify(ref=ref, is_minor=minor), 201
 
     @app.post("/api/public/apply/status")
     def apply_status():  # reference + phone must match; reveals status only
+        ip = request.remote_addr or "?"; now = ratelimit.now_s(app)
+        if ratelimit.over(db(), "apply_status", ip, app.config.get("STATUS_LIMIT", 30), 3600, now):
+            return err("Too many lookups from this connection. Try again later.", 429)
+        ratelimit.hit(db(), "apply_status", ip, now); db().commit()
         d = request.get_json(silent=True) or {}
         a = one("SELECT status,reject_reason,phone FROM applications WHERE ref=?", (str(d.get("ref", "")).strip().upper(),))
         if not a or re.sub(r"\D", "", a["phone"]) != re.sub(r"\D", "", str(d.get("phone", ""))):

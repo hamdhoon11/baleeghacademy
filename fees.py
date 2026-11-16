@@ -14,7 +14,7 @@ from email.message import EmailMessage
 from urllib.parse import quote
 from flask import Response, g, jsonify, request, send_from_directory
 
-import common, payments as pay, receipts
+import common, payments as pay, receipts, ratelimit
 
 MVT = dt.timezone(dt.timedelta(hours=5))
 PERIOD = re.compile(r"^(20\d\d)-(0[1-9]|1[0-2])$")
@@ -65,7 +65,6 @@ def register(app, c):
     app.config.setdefault("EMAIL_ENABLED", os.environ.get("EMAIL_ENABLED", "0").lower() in ("1", "true", "yes"))
     for k, d in (("SMTP_HOST", ""), ("SMTP_PORT", "587"), ("SMTP_USER", ""), ("SMTP_PASSWORD", ""), ("SMTP_FROM", ""), ("SMTP_STARTTLS", "1")):
         app.config.setdefault(k, os.environ.get(k, d))
-    slip_hits = {}
 
     # ---------- small helpers ----------
     def now():
@@ -805,10 +804,9 @@ def register(app, c):
     def slip_upload(iid):
         inv = get_invoice(iid)
         if not inv or inv["student_id"] != g.user["id"]: return err("Invoice not found", 404)
-        n = now().timestamp()
-        hits = slip_hits[g.user["id"]] = [x for x in slip_hits.get(g.user["id"], []) if n - x < 3600]
-        if len(hits) >= app.config["SLIP_LIMIT"]: return err("Too many uploads. Please try again in a while or contact the academy.", 429)
-        hits.append(n)
+        n, who = int(now().timestamp()), str(g.user["id"])   # v0.8.57: counted in the database (ratelimit.py)
+        if ratelimit.over(db(), "slip", who, app.config["SLIP_LIMIT"], 3600, n): return err("Too many uploads. Please try again in a while or contact the academy.", 429)
+        ratelimit.hit(db(), "slip", who, n); db().commit()
         if inv["status"] in ("paid", "void", "waived") or inv["balance"] <= 0: return err("This invoice does not need a payment", 409)
         if one("SELECT 1 x FROM payment_slips WHERE invoice_id=? AND status='pending'", (iid,)): return err("Your earlier slip for this invoice is still waiting to be checked", 409)
         f = request.form

@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from flask import g, jsonify, request
 
-import common
+import common, ratelimit
 
 ANSWER = "Thank you. If this account exists, the academy has been told and will send you a new password by WhatsApp."
 PER_IP_HOUR = 5
@@ -30,7 +30,6 @@ def wa_link(phone, text):
 
 
 def register(app, c):
-    hits = {}
 
     @app.post("/api/auth/forgot")
     def forgot():
@@ -39,11 +38,10 @@ def register(app, c):
         contact = str(d.get("contact") or "").strip()[:40] or None
         if not login: return c.err("Type your login ID or email")
         ip = request.remote_addr or "?"
-        now = time.time()
-        hits[ip] = [x for x in hits.get(ip, []) if now - x < 3600]
-        if len(hits[ip]) >= app.config.get("FORGOT_LIMIT", PER_IP_HOUR):
+        now = ratelimit.now_s(app)   # v0.8.57: counted in the database (ratelimit.py)
+        if ratelimit.over(c.db(), "forgot", ip, app.config.get("FORGOT_LIMIT", PER_IP_HOUR), 3600, now):
             return jsonify(ok=True, message=ANSWER)   # same answer: nothing to learn from the limit either
-        hits[ip].append(now)
+        ratelimit.hit(c.db(), "forgot", ip, now); c.db().commit()
         u = c.one("SELECT id, full_name, login_id, role, is_active FROM users WHERE UPPER(login_id)=UPPER(?) OR LOWER(email)=LOWER(?)", (login, login))
         uid = u["id"] if u and u["is_active"] else None
         if uid and c.one("SELECT 1 x FROM password_help WHERE user_id=? AND status='pending'", (uid,)):

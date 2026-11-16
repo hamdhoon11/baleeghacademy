@@ -99,6 +99,8 @@ class Round1(unittest.TestCase):
         self.assertTrue(r["temporary_password"]); self.assertIn("https://wa.me/9607772222?text=", r["whatsapp_link"])
         self.assertIn(r["temporary_password"], __import__("urllib.parse").parse.unquote(r["whatsapp_link"]))
         self.assertEqual([x for x in self.c.get("/api/password-help", headers=self.H).get_json() if x["user_id"] == self.s1], [])   # handled by the reset
+        self.assertEqual(self.c.get("/api/auth/me", headers=type(self).S1).status_code, 401)   # security review 2026-11: the reset ends old sessions
+        type(self).S1 = type(self).tok("s1@s35.test", r["temporary_password"])
         self.assertEqual(self.c.post(f"/api/password-help/{other[0]['id']}/dismiss", headers=self.H).status_code, 200)
         self.assertEqual(self.c.post(f"/api/password-help/{other[0]['id']}/dismiss", headers=self.H).status_code, 409)
         self.assertEqual(self.c.get("/api/password-help", headers=self.T1).status_code, 403)
