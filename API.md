@@ -3,7 +3,7 @@
 |---|---|---|---|
 | GET | /health | public | Health check |
 | GET | /public/courses | public | Open and upcoming courses for the website |
-| POST | /auth/login | public | `{login,password}` (`login` = login ID like `BAL/AL1/001`, case and spaces ignored; an email also works while `ALLOW_EMAIL_LOGIN` is on) returns `{token,user}`. Limited per address and per account (8 failures in 5 minutes gives 429). While `user.must_change_password` is 1 every route except `/auth/me` and `/auth/change-password` answers 403 `{code:"password_change_required"}` |
+| POST | /auth/login | public | `{login,password}` (`login` = login ID like `BAL/AL1/001`, case and spaces ignored; an email also works while `ALLOW_EMAIL_LOGIN` is on) returns `{token,user,remembered}`. v0.8.59: `remember: true` ("Keep me signed in on this device") makes the token last `remember_days` (Settings → Security, default 30, 0 = off) instead of `session_hours`; `remembered` says whether it did. Limited per address and per account (8 failures in 5 minutes gives 429). While `user.must_change_password` is 1 every route except `/auth/me` and `/auth/change-password` answers 403 `{code:"password_change_required"}` |
 | GET | /auth/me | any | Current user: `{id,email,full_name,role,must_change_password,permissions,tabs}`. `permissions` is `null` (everything the role has) or a list of areas; `tabs` is what the page may draw |
 | POST | /users/<id>/reset-password | admin (people) | New random temporary password, returned once as `{login_id,temporary_password}` (no-store); old password stops working; person must change it at next sign-in. Not for your own account |
 | POST | /auth/change-password | any | `{current_password,new_password}` |
@@ -415,6 +415,15 @@ Generated from the `@auth` rules and checked by `tests/test_session32.py`, which
 | POST | `/api/whatsapp/prepare` | admin | - |
 | POST | `/api/whatsapp/sent` | admin | - |
 
-Public (no sign-in, by decision): `/api/auth/login`, `/api/health`, `/api/public/apply`, `/api/public/apply/status`, `/api/public/batches`, `/api/public/courses`, `/api/public/info`, the static pages, and `/api/cron/generate-invoices` and `/api/cron/reminders` (these need `Authorization: Bearer <CRON_SECRET>`; the secret is never accepted in the URL, and without `CRON_SECRET` they are closed).
+Public (no sign-in, by decision): `/api/auth/login`, `/api/health`, `/api/public/apply`, `/api/public/apply/status`, `/api/public/batches`, `/api/public/courses`, `/api/public/info`, the static pages, `/manifest.webmanifest` and `/apple-touch-icon.png` (v0.8.59: app name and icon only), and `/api/cron/generate-invoices` and `/api/cron/reminders` (these need `Authorization: Bearer <CRON_SECRET>`; the secret is never accepted in the URL, and without `CRON_SECRET` they are closed).
 
 Changed in Session 32: `GET /api/users` needs the People area for full details; an admin with batches, enrolments, fees, classroom or settings gets names only (`id, full_name, role, is_active`); any other admin gets 403. `GET /api/enrollments` and `GET /api/batches/<id>/students` (admin) need one of the same areas. `GET /api/dashboard` leaves out the money figures unless the admin has the Fees area.
+
+## Installable app (v0.8.59)
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET | /manifest.webmanifest | public | Web app manifest: academy name, `display: standalone`, icons. The uploaded logo is the icon when it is square (within 5%) and at least 192 px; otherwise the built-in icons in `static/icons/`. `Cache-Control: no-cache` |
+| GET | /apple-touch-icon.png | public | iPhone home-screen icon: redirect to the logo when it suits, else `static/icons/apple-touch-icon.png` |
+| GET | /sw.js | public (static) | Service worker. Served with `Cache-Control: no-cache`. Never answers or stores `/api/`; page and scripts network-first, saved copy only offline |
+
+`/api/public/info` also returns `remember_days` (0 hides the option on the sign-in page) and `app_icon_url`.
