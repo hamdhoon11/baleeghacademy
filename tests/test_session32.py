@@ -30,6 +30,12 @@ OPEN = {
  ("GET", "/api/tutorial-submissions/<int:sid>/file"): ALL, ("POST", "/api/tutorials"): AT, ("GET", "/api/tutorials"): ALL, ("GET", "/api/tutorials/<int:tid>"): ALL,
  ("DELETE", "/api/tutorials/<int:tid>"): AT, ("GET", "/api/tutorials/<int:tid>/file"): ALL, ("POST", "/api/tutorials/<int:tid>/submission"): ("student",),
  ("GET", "/api/tutorials/<int:tid>/submission"): ("student",), ("GET", "/api/tutorials/<int:tid>/submissions"): AT, ("POST", "/api/tutorial-submissions/<int:sid>/grade"): AT,
+ # v0.8.58: Teachers' room (staff only; never students). Head-teacher rights are checked inside staffroom.py (tests/test_v0858.py).
+ ("GET", "/api/staff/room"): AT, ("GET", "/api/staff/messages"): AT, ("POST", "/api/staff/messages"): AT, ("PATCH", "/api/staff/messages/<int:mid>"): AT,
+ ("DELETE", "/api/staff/messages/<int:mid>"): AT, ("POST", "/api/staff/messages/<int:mid>/pin"): AT, ("GET", "/api/staff/messages/<int:mid>/file"): AT,
+ ("GET", "/api/staff/folders"): AT, ("POST", "/api/staff/folders"): AT, ("PATCH", "/api/staff/folders/<int:fid>"): AT, ("DELETE", "/api/staff/folders/<int:fid>"): AT,
+ ("GET", "/api/staff/files"): AT, ("POST", "/api/staff/files"): AT, ("PATCH", "/api/staff/files/<int:xid>"): AT, ("DELETE", "/api/staff/files/<int:xid>"): AT,
+ ("GET", "/api/staff/files/<int:xid>/file"): AT,
 }
 # admin-only routes with no permission area: each checks inside the route, and test_03 / test_04 prove it.
 NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "/api/admin/todo"), ("GET", "/api/users"), ("POST", "/api/whatsapp/prepare"), ("POST", "/api/whatsapp/sent"),
@@ -42,7 +48,7 @@ AREA = [("/api/applications", "admissions"), ("/api/announcements", "classroom")
         ("/api/invoices", "fees"), ("/api/payments", "fees"), ("/api/slips", "fees"), ("/api/revenue-types", "fees"), ("/api/students", "fees"), ("/api/earnings", "finance"), ("/api/expense", "finance"), ("/api/finance", "finance"), ("/api/recurring-expenses", "finance"),
         ("/api/enrollments/<int:eid>/void-open-invoices", "fees"), ("/api/enrollment", "enrollments"), ("/api/import/enrolments", "enrollments"), ("/api/import/courses", "courses"), ("/api/import/batches", "batches"), ("/api/import/expenses", "finance"), ("/api/import", "people"),
         ("/api/settings", "settings"), ("/api/admin/storage", "settings"), ("/api/admin/reset-data", "settings"), ("/api/password-help", "people"), ("/api/notifications", "settings"), ("/api/student-information", "student_information"), ("/api/teacher-information", "teacher_information"),
-        ("/api/substitutions", "batches"), ("/api/users", "people"), ("/api/courses", "courses"), ("/api/batches", "batches")]
+        ("/api/staff", "staff_room"), ("/api/substitutions", "batches"), ("/api/users", "people"), ("/api/courses", "courses"), ("/api/batches", "batches")]
 PUBLIC = {"/api/public/logo",   # v0.8.48: the logo shows on the sign-in page, before anyone signs in
           "/", "/<path:filename>", "/api/auth/login", "/api/auth/forgot", "/api/cron/generate-invoices", "/api/cron/reminders", "/api/health", "/api/public/apply",
           "/api/public/apply/status", "/api/public/batches", "/api/public/courses", "/api/public/info"}
@@ -126,7 +132,8 @@ class S32(unittest.TestCase):
         PARAM.update({"password-help": 1, "applications": i["application"], "assignments": i["assignment"], "batches": W["b1"], "courses": W["course"], "discounts": i["discount"], "enrollments": i["enrollment"],
             "expense-categories": i["exp_cat"], "expenses": i["expense"], "families": i["family"], "invoices": i["invoice"], "materials": i["material"], "notifications": 1, "payments": i["payment"],
             "recordings": i["recording"], "slips": i["slip"], "student-information": W["s1"][0], "submissions": i["submission"], "substitutions": 1, "teacher-information": W["t1"][0],
-            "tutorial-submissions": i["tut_sub"], "tutorials": i["tutorial"], "users": W["s1"][0], "student-history": W["s1"][0], "members": W["s1"][0], "students": W["s1"][0], "recurring-expenses": 1, "revenue-types": 1, "accounts": W["s1"][0]})
+            "tutorial-submissions": i["tut_sub"], "tutorials": i["tutorial"], "users": W["s1"][0], "student-history": W["s1"][0], "members": W["s1"][0], "students": W["s1"][0], "recurring-expenses": 1, "revenue-types": 1, "accounts": W["s1"][0],
+            "messages": 1, "folders": 1, "files": 1})   # v0.8.58: Teachers' room (an id that does not exist: refusals come first, allowed calls 404)
         cls.P = {"none": {}, "admin": W["A"], "lim": W["H_lim"], "t1": W["H_t1"], "t2": W["H_t2"], "t3": W["H_t3"], "s1": W["H_s1"], "s2": W["H_s2"], "sw": W["H_sw"]}
         cls.ROLE = {"admin": "admin", "lim": "admin", "t1": "teacher", "t2": "teacher", "t3": "teacher", "s1": "student", "s2": "student", "sw": "student"}
 

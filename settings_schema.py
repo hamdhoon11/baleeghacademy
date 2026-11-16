@@ -72,10 +72,10 @@ SETTING_KEYS = tuple(SETTINGS)
 # permissions = NULL on a user means "everything their role has" (a full admin for admins). A list means only those areas.
 # The server uses this list to decide which tabs a person sees AND to refuse every request outside it.
 AREAS = ("admissions", "courses", "batches", "classroom", "people", "enrollments", "fees", "settings", "audit", "tutorials",
-         "assignments", "progress", "materials", "create_tutorials", "submit_tutorial_work", "class_links", "recordings", "add_recordings", "student_information", "teacher_information", "edit_grades", "cancel_class", "finance")
+         "assignments", "progress", "materials", "create_tutorials", "submit_tutorial_work", "class_links", "recordings", "add_recordings", "student_information", "teacher_information", "edit_grades", "cancel_class", "finance", "staff_room")
 ROLE_AREAS = {
-    "admin": ("admissions", "courses", "batches", "classroom", "people", "enrollments", "fees", "settings", "audit", "tutorials", "create_tutorials", "class_links", "add_recordings", "student_information", "teacher_information", "finance"),
-    "teacher": ("classroom", "tutorials", "create_tutorials", "class_links", "add_recordings", "edit_grades", "cancel_class"),
+    "admin": ("admissions", "courses", "batches", "classroom", "people", "enrollments", "fees", "settings", "audit", "tutorials", "create_tutorials", "class_links", "add_recordings", "student_information", "teacher_information", "finance", "staff_room"),
+    "teacher": ("classroom", "tutorials", "create_tutorials", "class_links", "add_recordings", "edit_grades", "cancel_class", "staff_room"),
     "student": ("assignments", "progress", "materials", "recordings", "fees", "tutorials", "submit_tutorial_work"),
 }
 # "tutorials" lets a person open the Tutorials tab and read. "create_tutorials" (teachers, admins) lets them post tutorials and see the
@@ -91,11 +91,13 @@ ROLE_AREAS = {
 # "cancel_class" (teachers) lets a teacher mark a class of their batch as cancelled. Opt-in in the same way; reinstating a class needs only "classroom".
 # "finance" (admins) opens the Finance tab: expenses, categories and receipts (Session 23; later revenue and the financial dashboard).
 # It is part of a full admin's "everything" (otherwise nobody could ever grant it); a limited admin has it only when ticked.
+# "staff_room" (teachers, admins; v0.8.58) opens the Teachers' room: the staff chat and the teachers' guide. Part of "everything" for both roles.
+# Who moderates it is not an area: an admin marks a teacher as head teacher there (teachers.is_head).
 OPT_IN = {"teacher": ("edit_grades", "cancel_class")}
 # Tabs in the order they are shown. Home, Dashboard and my_information (Session 16, read-only, own data only) need no permission.
 ROLE_TABS = {
-    "admin": ("dashboard", "admissions", "courses", "batches", "timetable", "classroom", "tutorials", "people", "student_information", "teacher_information", "enrollments", "online", "fees", "finance", "settings", "audit"),
-    "teacher": ("home", "timetable", "classroom", "tutorials", "my_files", "my_earnings", "my_information"),
+    "admin": ("dashboard", "admissions", "courses", "batches", "timetable", "classroom", "tutorials", "staff_room", "people", "student_information", "teacher_information", "enrollments", "online", "fees", "finance", "settings", "audit"),
+    "teacher": ("home", "timetable", "classroom", "tutorials", "staff_room", "my_files", "my_earnings", "my_information"),
     "student": ("home", "timetable", "assignments", "progress", "materials", "recordings", "fees", "tutorials", "my_files", "my_information"),
 }
 TAB_AREA = {a: a for a in AREAS}   # every tab that is not home/dashboard is guarded by the area of the same name

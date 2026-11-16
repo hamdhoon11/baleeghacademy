@@ -313,6 +313,8 @@ def init_schema(conn, base):
     if "booked_month" not in conn.columns("teacher_earnings"): conn.execute("ALTER TABLE teacher_earnings ADD COLUMN booked_month TEXT")
     if "teacher_id" not in conn.columns("expenses"): conn.execute("ALTER TABLE expenses ADD COLUMN teacher_id INTEGER REFERENCES users(id)")
     if "expense_id" not in conn.columns("teacher_payments"): conn.execute("ALTER TABLE teacher_payments ADD COLUMN expense_id INTEGER")
+    if "end_time" not in conn.columns("batches"): conn.execute("ALTER TABLE batches ADD COLUMN end_time TEXT")   # v0.8.58: class end time (NULL = course minutes)
+    if "is_head" not in conn.columns("teachers"): conn.execute("ALTER TABLE teachers ADD COLUMN is_head INTEGER NOT NULL DEFAULT 0")   # v0.8.58: head teacher
     conn.execute("DROP INDEX IF EXISTS ux_earn_batch_period")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_earn_batch_period_seq ON teacher_earnings(batch_id, period, seq)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_batch ON audit_log(batch_id)")

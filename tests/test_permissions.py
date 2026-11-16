@@ -37,9 +37,9 @@ class Permissions(unittest.TestCase):
     # ---- the server decides the tabs ----
     def test_01_default_tabs_per_role(self):
         self.assertEqual(self.login("admin@pm.test", "AdminPass123")["user"]["tabs"],
-                         ["dashboard", "admissions", "courses", "batches", "timetable", "classroom", "tutorials", "people", "student_information", "teacher_information", "enrollments", "online", "fees", "finance", "settings", "audit"])
+                         ["dashboard", "admissions", "courses", "batches", "timetable", "classroom", "tutorials", "staff_room", "people", "student_information", "teacher_information", "enrollments", "online", "fees", "finance", "settings", "audit"])
         self.mk("t0@pm.test", "teacher"); self.mk("s0@pm.test", "student")
-        self.assertEqual(self.login("t0@pm.test")["user"]["tabs"], ["home", "timetable", "classroom", "tutorials", "my_files", "my_earnings", "my_information"])
+        self.assertEqual(self.login("t0@pm.test")["user"]["tabs"], ["home", "timetable", "classroom", "tutorials", "staff_room", "my_files", "my_earnings", "my_information"])
         self.assertEqual(self.login("s0@pm.test")["user"]["tabs"], ["home", "timetable", "assignments", "progress", "materials", "recordings", "fees", "tutorials", "my_files", "my_information"])
         self.assertIsNone(self.login("s0@pm.test")["user"]["permissions"])   # None = everything the role has
 
@@ -124,7 +124,7 @@ class Permissions(unittest.TestCase):
         # role change: permissions + role together is refused; the role change alone resets to "everything the new role has"
         self.assertEqual(self.J("patch", f"/api/users/{uid}", json={"role": "teacher", "permissions": ["classroom"]}).status_code, 400)
         self.assertEqual(self.J("patch", f"/api/users/{uid}", json={"role": "teacher"}).status_code, 200)
-        self.assertEqual(self.login("s8@pm.test")["user"]["tabs"], ["home", "timetable", "classroom", "tutorials", "my_files", "my_earnings", "my_information"])
+        self.assertEqual(self.login("s8@pm.test")["user"]["tabs"], ["home", "timetable", "classroom", "tutorials", "staff_room", "my_files", "my_earnings", "my_information"])
 
     def test_10_change_takes_effect_on_the_next_request(self):
         sid = self.mk("s10@pm.test", "student"); h = self.H("s10@pm.test")   # one token, used before and after
@@ -142,7 +142,7 @@ class Permissions(unittest.TestCase):
         import json, re, settings_schema as SS
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         en = json.load(open(os.path.join(root, "static/i18n/en.json"), encoding="utf-8"))
-        js = "".join(open(os.path.join(root, "static", f), encoding="utf-8").read() for f in ("index.html", "learning.js", "fees.js", "admin.js"))
+        js = "".join(open(os.path.join(root, "static", f), encoding="utf-8").read() for f in ("index.html", "learning.js", "fees.js", "admin.js", "staffroom.js"))
         adm = open(os.path.join(root, "static/admin.js"), encoding="utf-8").read()
         for role, tabs in SS.ROLE_TABS.items():
             for tab in tabs:

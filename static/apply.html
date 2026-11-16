@@ -134,7 +134,7 @@ async function init() {
 function fillBatches() {
   const cid = +$("#course").value;
   $("#batch").innerHTML = `<option value="">${t("any")}</option>` + batches.filter(b => b.course_id === cid).map(b =>
-    `<option value="${b.id}">${esc(b.code)} ${esc(b.start_time || "")} (${b.spots > 0 ? b.spots + " " + t("spots") : t("full")})</option>`).join("");
+    `<option value="${b.id}">${esc(b.code)} ${esc(b.start_time || "")}${b.start_time && b.end_time ? "–" + esc(b.end_time) : ""} (${b.spots > 0 ? b.spots + " " + t("spots") : t("full")})</option>`).join("");
 }
 $("#course").onchange = fillBatches;
 $("#dob").onchange = () => {
