@@ -1058,5 +1058,13 @@
   "sr_make_head_q": "Make this teacher a head teacher?",
   "Teachers' room messages": "Teachers' room messages",
   "Teachers' guide folders": "Teachers' guide folders",
-  "Teachers' guide files": "Teachers' guide files"
+  "Teachers' guide files": "Teachers' guide files",
+  "keep_signed_in": "Keep me signed in on this device",
+  "keep_signed_in_hint": "Only on your own phone or computer, not a shared one.",
+  "install_app": "Install app",
+  "app_installed": "The app is installed. Open it from your home screen.",
+  "install_ios_1": "Tap the Share button (the square with an arrow) at the bottom or top of Safari.",
+  "install_ios_2": "Scroll down and tap \"Add to Home Screen\".",
+  "install_ios_3": "Tap \"Add\". The portal now opens from its icon, like an app.",
+  "install_ios_safari": "On iPhone and iPad this works in Safari."
 }

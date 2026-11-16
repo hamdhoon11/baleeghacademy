@@ -34,6 +34,9 @@ GROUPS = [
     ("security", "Security", "Changes apply to new sign-ins and new passwords.", [
         S("min_password_length", "number", "8", "Minimum password length", min=6, max=64),
         S("session_hours", "number", "8", "Stay signed in for (hours)", "People are asked to sign in again after this long.", min=1, max=72),
+        # v0.8.59: "Keep me signed in on this device" at sign-in (for the installed app). 0 hides the option.
+        S("remember_days", "number", "30", "Keep me signed in on this device (days)",
+          "Used when someone ticks \"Keep me signed in\" at sign-in. Changing a password or Sign out still ends it. 0 turns the option off.", min=0, max=90),
     ]),
     ("fees", "Fees and bank details", "Students see the bank details when paying.", [
         S("bank_name", "text", "", "Bank name"),

@@ -6,6 +6,13 @@
 <meta name="theme-color" content="#0b4f5c">
 <meta name="color-scheme" content="light">
 <title>Baleegh Academy Portal</title>
+<!-- v0.8.59: installable app (manifest, home-screen icon, full screen on iPhone) -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Baleegh">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b4f5c'/%3E%3Ctext x='32' y='46' font-size='38' font-family='sans-serif' font-weight='700' text-anchor='middle' fill='%23d9a21b'%3E%D8%A8%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -150,6 +157,10 @@ fieldset.days{border:1px solid #b9cfcf;border-radius:var(--r-sm);display:flex;fl
 fieldset.days label{flex:0 0 auto;flex-direction:row;align-items:center;gap:.3rem;padding:.2rem .5rem;color:var(--ink);font-weight:400;font-size:.95rem}
 .stack{display:flex;flex-direction:column;gap:.9rem}.stack>label{flex:none}
 label.chk{flex-direction:row;align-items:center;gap:.55rem;font-weight:400;font-size:.9rem;min-height:32px}
+/* v0.8.59: installable app */
+.keephint{margin:-.5rem 0 0;font-size:.8rem}.installbox{margin-top:1rem}.installbox .btn{gap:.5rem}.installbox svg{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+ol.steps{margin:0 0 .8rem;padding-inline-start:1.3rem;line-height:1.6}
+.foot #instNav{width:2.6rem;flex:none;padding:0;justify-content:center}.foot #instNav .tl{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 
 /* ---------- sign-in and other full-page screens ---------- */
 .auth{min-height:100vh;min-height:100dvh;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
@@ -198,6 +209,7 @@ nav #bell .n{border-color:#fff}
 .me{padding:0}
 .foot #so{width:auto;flex:none;flex-direction:row;font-size:.9rem;padding:.4rem .9rem;min-height:44px;background:rgba(255,255,255,.12);color:#fff}
 .foot #so .tl{position:static;width:auto;height:auto;overflow:visible;clip:auto;display:block}
+.foot #instNav{width:44px;min-height:44px;background:rgba(255,255,255,.12);color:#fff;margin-inline-start:auto}
 .scrim{display:block;position:fixed;inset:0;background:rgba(16,38,43,.5);z-index:45;opacity:0;visibility:hidden;transition:opacity .15s,visibility 0s .15s}
 .app.menu .scrim{opacity:1;visibility:visible;transition:opacity .15s}
 main{padding:calc(var(--top) + var(--sat) + 1.1rem) 1rem calc(var(--bar) + var(--sab) + 1.8rem)}
@@ -321,7 +333,18 @@ input.bulk,input.bulk-all{width:24px;height:24px;min-height:24px;margin:0;flex:0
 const API = window.PORTAL_API || "";
 const API_TIMEOUT = 20000;   // Session 1: a request that hangs gives up after 20 s with a clear message
 let EN = {};
-let S = {token: sessionStorage.getItem("tok"), user: null, view: null, note: null, shown: null};
+// v0.8.59: where the sign-in token is kept. "Keep me signed in on this device" puts it in localStorage (survives closing the app);
+// otherwise sessionStorage (gone when the tab or app closes), as before. Only one of the two ever holds it.
+const TOK = {
+  get() { try { return sessionStorage.getItem("tok") || localStorage.getItem("tok"); } catch (_) { return null; } },
+  set(v, keep) {   // keep: true = this device, false = this tab, undefined = wherever it already is
+    try { if (keep === undefined) keep = !!localStorage.getItem("tok"); } catch (_) { keep = false; }
+    try { (keep ? localStorage : sessionStorage).setItem("tok", v); (keep ? sessionStorage : localStorage).removeItem("tok"); }
+    catch (_) { try { sessionStorage.setItem("tok", v); } catch (__) {} }
+  },
+  clear() { try { sessionStorage.removeItem("tok"); } catch (_) {} try { localStorage.removeItem("tok"); } catch (_) {} },
+};
+let S = {token: TOK.get(), user: null, view: null, note: null, shown: null};
 const t = k => EN[k] || k;
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const $ = s => document.querySelector(s);
@@ -416,7 +439,7 @@ async function fetchFile(path, opts = {}) {
 async function loadText() { try { EN = await (await fetch(API + "/i18n/en.json")).json(); } catch (_) { EN = {}; } }
 function signout() {
   if (S.token) fetch(API + "/api/auth/logout", {method: "POST", headers: {Authorization: "Bearer " + S.token}, keepalive: true}).catch(() => {});   // writes the log row only; sign-out works even if this fails
-  ["tok", "sb", "flt"].forEach(k => sessionStorage.removeItem(k));
+  TOK.clear(); ["sb", "flt"].forEach(k => { try { sessionStorage.removeItem(k); } catch (_) {} });
   S = {token: null, user: null, view: null, shown: null, info: S.info}; BADGE.n = {}; BADGE.at = 0; render();
 }
 
@@ -529,6 +552,7 @@ const IC = {
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
   more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
   out: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+  down: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',   // v0.8.59: Install app
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -654,7 +678,7 @@ function navHtml(tabList) {
     + `<button type="button" id="bell" aria-label="${esc(t("Notifications"))}">${icon("bell")}<span class="lbl">${esc(t("Notifications"))}</span><span class="n" id="bellN" hidden></span></button>`
     + `<button type="button" class="tab qj" id="qjTop" aria-keyshortcuts="Control+K">${icon("search")}<span class="tl">${esc(t("qj_search"))}</span><kbd>Ctrl K</kbd></button>`
     + `<div class="pri">${run(bar)}</div><button type="button" class="tab" id="moreBtn" aria-expanded="false" aria-controls="sheet">${icon("more")}<span class="tl">${esc(t("menu_more"))}</span></button>`
-    + `<div class="sheet" id="sheet" role="group" aria-label="${esc(t("all_sections"))}"><button type="button" class="tab qj" id="qjSheet">${icon("search")}<span class="tl">${esc(t("qj_search"))}</span></button><div class="ovf">${restHtml}</div><div class="foot"><div class="me"><span class="av" aria-hidden="true">${esc(initials)}</span><span class="who"><b>${esc(u.full_name)}</b><small>${esc(t(u.role))}</small></span></div><button type="button" class="tab" id="so" title="${esc(t("signout"))}">${icon("out")}<span class="tl">${esc(t("signout"))}</span></button></div></div></nav>`;
+    + `<div class="sheet" id="sheet" role="group" aria-label="${esc(t("all_sections"))}"><button type="button" class="tab qj" id="qjSheet">${icon("search")}<span class="tl">${esc(t("qj_search"))}</span></button><div class="ovf">${restHtml}</div><div class="foot"><div class="me"><span class="av" aria-hidden="true">${esc(initials)}</span><span class="who"><b>${esc(u.full_name)}</b><small>${esc(t(u.role))}</small></span></div>${APP.can() ? `<button type="button" class="tab" id="instNav" title="${esc(t("install_app"))}">${icon("down")}<span class="tl">${esc(t("install_app"))}</span></button>` : ""}<button type="button" class="tab" id="so" title="${esc(t("signout"))}">${icon("out")}<span class="tl">${esc(t("signout"))}</span></button></div></div></nav>`;
 }
 // Cards on a phone need each cell to know its column title, so copy the header text onto the cells (and keep screen readers happy).
 // v0.8.55: one Batch filter for every list of students. bfBar(key) draws it; bfKeep(key, studentId, batchId?) says if a row stays;
@@ -845,11 +869,12 @@ async function render() {
     $("#retry").onclick = retry || (() => render()); $("#so").onclick = signout; S.rendering = false; setTitle();
   };
   if (!S.token) {
-    root.innerHTML = authShell(`<h2>${esc(t("signin"))}</h2>${S.info && S.info.banner ? `<div class="banner" role="note">${esc(S.info.banner)}</div>` : ""}${note()}<form id="fl" class="stack"><label>${t("Login ID")}<input id="le" type="text" autocomplete="username" autocapitalize="characters" spellcheck="false" placeholder="BAL/AL1/001" required></label><label>${t("password")}<input id="lp" type="password" autocomplete="current-password" required></label><label class="chk"><input type="checkbox" id="lps"><span>${esc(t("show_password"))}</span></label><button class="btn block">${t("signin")}</button></form><p class="center"><button type="button" class="linkbtn" id="forgotBtn">${esc(t("Forgot password?"))}</button></p>`);
+    root.innerHTML = authShell(`<h2>${esc(t("signin"))}</h2>${S.info && S.info.banner ? `<div class="banner" role="note">${esc(S.info.banner)}</div>` : ""}${note()}<form id="fl" class="stack"><label>${t("Login ID")}<input id="le" type="text" autocomplete="username" autocapitalize="characters" spellcheck="false" placeholder="BAL/AL1/001" required></label><label>${t("password")}<input id="lp" type="password" autocomplete="current-password" required></label><label class="chk"><input type="checkbox" id="lps"><span>${esc(t("show_password"))}</span></label>${S.info && S.info.remember_days > 0 ? `<label class="chk"><input type="checkbox" id="lkeep"${APP.standalone() ? " checked" : ""}><span>${esc(t("keep_signed_in"))}</span></label><p class="hint keephint">${esc(t("keep_signed_in_hint"))}</p>` : ""}<button class="btn block">${t("signin")}</button></form><p class="center"><button type="button" class="linkbtn" id="forgotBtn">${esc(t("Forgot password?"))}</button></p>${APP.can() ? `<div class="installbox"><button type="button" class="btn alt block" id="instBtn">${icon("down")}<span>${esc(t("install_app"))}</span></button></div>` : ""}`);
+    if ($("#instBtn")) $("#instBtn").onclick = APP.install;
     $("#lps").onchange = e => { $("#lp").type = e.target.checked ? "text" : "password"; };
     $("#forgotBtn").onclick = forgotScreen;
     $("#fl").onsubmit = async e => { e.preventDefault(); const b = $("#fl button"); busy(b, true);
-      try { const r = await api("/auth/login", "POST", {login: val("le"), password: val("lp")}); S.token = r.token; sessionStorage.setItem("tok", r.token); S.user = r.user; S.view = null; loadFilters(); }
+      try { const keep = !!($("#lkeep") && $("#lkeep").checked); const r = await api("/auth/login", "POST", {login: val("le"), password: val("lp"), remember: keep}); S.token = r.token; TOK.set(r.token, !!r.remembered); S.user = r.user; S.view = null; loadFilters(); }
       catch (x) { busy(b, false); showErr($("#fl"), x.message); return; }
       render(); };
     S.rendering = false; setTitle(); return;
@@ -866,7 +891,7 @@ async function render() {
     $("#fcp").onsubmit = async e => { e.preventDefault(); const b = $("#fcp button:not([type=button])"); busy(b, true); try {
       if (val("cp1") !== val("cp2")) throw new Error(t("The two new passwords are not the same"));
       const r = await api("/auth/change-password", "POST", {current_password: val("cp0"), new_password: val("cp1")});
-      if (r && r.token) { S.token = r.token; sessionStorage.setItem("tok", r.token); }   // other devices are signed out; this one keeps going
+      if (r && r.token) { S.token = r.token; TOK.set(r.token); }   // other devices are signed out; this one keeps going
       S.user = null; flash(t("saved"), true);
     } catch (x) { busy(b, false); showErr($("#fcp"), x.message); return; } render(); };
     S.rendering = false; setTitle(); return;
@@ -939,6 +964,34 @@ async function render() {
   if (S.openAdd) { const d = main.querySelector(`details.addp[data-add="${S.openAdd}"]`); S.openAdd = null; if (d) { d.open = true; d.scrollIntoView({block: "start"}); const f = d.querySelector("input, select, textarea"); if (f) f.focus(); } }
   loadBadges();
 }
+// v0.8.59: installable app. The service worker (sw.js) never stores /api/ replies; see the notes at the top of that file.
+const APP = (() => {
+  let deferred = null;
+  const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const ios = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferred = e; refresh(); });
+  window.addEventListener("appinstalled", () => { deferred = null; refresh(); flash(t("app_installed"), true); });
+  function refresh() {   // shows or hides the Install buttons without redrawing the screen (a half-typed sign-in is kept)
+    const on = can(), box = $(".installbox"), nav = $("#instNav");
+    if (!on) { if (box) box.remove(); if (nav) nav.remove(); return; }
+    const fl = $("#fl"), so = $(".foot #so");
+    if (fl && !box) {
+      fl.closest(".panel").insertAdjacentHTML("beforeend", `<div class="installbox"><button type="button" class="btn alt block" id="instBtn">${icon("down")}<span>${esc(t("install_app"))}</span></button></div>`);
+      $("#instBtn").onclick = install;
+    }
+    if (so && !nav) so.insertAdjacentHTML("beforebegin", `<button type="button" class="tab" id="instNav" title="${esc(t("install_app"))}">${icon("down")}<span class="tl">${esc(t("install_app"))}</span></button>`);
+  }
+  const can = () => !standalone() && (!!deferred || ios());
+  async function install() {
+    if (deferred) { const d = deferred; deferred = null; d.prompt(); try { await d.userChoice; } catch (_) {} refresh(); return; }
+    if (ios()) ui.show(t("install_app"), `<ol class="steps"><li>${esc(t("install_ios_1"))}</li><li>${esc(t("install_ios_2"))}</li><li>${esc(t("install_ios_3"))}</li></ol><p class="hint">${esc(t("install_ios_safari"))}</p>`);
+  }
+  if ("serviceWorker" in navigator && location.protocol !== "file:" && !API)
+    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+  return {standalone, install, can};
+})();
+document.addEventListener("click", e => { if (e.target.closest && e.target.closest("#instNav")) APP.install(); });
+
 window.addEventListener("DOMContentLoaded", () => loadText().then(() => api("/public/info").then(i => { S.info = i; applyLogo(); }).catch(() => {})).then(render));
 </script>
 <script src="ui.js"></script>

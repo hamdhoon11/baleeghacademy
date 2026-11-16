@@ -4,7 +4,7 @@ browser tab icon, and at the top of receipts, invoices, statements and every rep
   POST   /api/settings/logo     admin, Settings   multipart "file": PNG or JPG, up to 1 MB (checked by its real content, not its name)
   DELETE /api/settings/logo     admin, Settings   back to the built-in mark
   GET    /api/public/logo       anyone            the image (public on purpose: the sign-in page shows it before anyone signs in)
-  /api/public/info              gives logo_url ("/api/public/logo?v=<version>") or null
+  /api/public/info              gives logo_url ("/api/public/logo?v=<version>") or null, and app_icon_url (v0.8.59)
 
 The file lives in the portal's file storage, area "branding"; the settings table keeps only {name, type, v} under the hidden key _logo
 (not in SETTING_KEYS, so the Settings form never shows or overwrites it). Clearing the portal's data keeps the logo, like the settings.
@@ -45,7 +45,16 @@ def register(app, c):
     def save(m):
         c.db().execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (KEY, json.dumps(m) if m else ""))
 
-    app.extensions["branding"] = {"logo_bytes": logo_bytes, "logo_url": logo_url}
+    def app_icon():
+        """v0.8.59: the installed app's icon. The uploaded logo when it is square (within 5%) and at least 192 px, else the built-in icons.
+        A wide or small logo would be squashed or blurry on a phone's home screen, so it is not used there."""
+        m = meta()
+        w, h = (m or {}).get("w") or 0, (m or {}).get("h") or 0
+        if m and min(w, h) >= 192 and abs(w - h) <= 0.05 * max(w, h):
+            return {"logo": True, "url": logo_url(), "w": w, "h": h, "type": m.get("type") or "image/png"}
+        return {"logo": False, "url": "/icons/icon-192.png", "w": 192, "h": 192, "type": "image/png"}
+
+    app.extensions["branding"] = {"logo_bytes": logo_bytes, "logo_url": logo_url, "app_icon": app_icon}
 
     @app.post("/api/settings/logo")
     @c.auth("admin", perm="settings")

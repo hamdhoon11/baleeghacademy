@@ -1,8 +1,8 @@
 """Baleegh Academy Portal backend. Phase 1 auth/roles/courses/batches, Phase 2 admissions (here), Phase 3 learning tools (learning.py), Phase 4 fees (fees.py, payments.py, receipts.py)."""
-import os, re, time, secrets, uuid, datetime as dt
+import os, re, json, time, secrets, uuid, datetime as dt
 from functools import wraps
 import jwt
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, Response, g, jsonify, redirect, request, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 import settings_schema as SS
 import idcodes
@@ -30,6 +30,7 @@ def create_app(config=None):
         ON_VERCEL=ON_VERCEL,
         CORS_ORIGINS=[o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()],
         TOKEN_HOURS=int(os.environ.get("TOKEN_HOURS", "8")),
+        REMEMBER_DAYS=int(os.environ.get("REMEMBER_DAYS", "30")),        # v0.8.59: "Keep me signed in on this device" (Settings -> Security overrides it)
         JOIN_EARLY_MIN=int(os.environ.get("JOIN_EARLY_MIN", "15")),      # Join class button appears this many minutes before start
         LEARNING_MAX_MB=int(os.environ.get("LEARNING_MAX_MB", "20")),    # max size of submissions and materials
         MAX_CONTENT_LENGTH=25 * 1024 * 1024,
@@ -171,10 +172,18 @@ def create_app(config=None):
         return fn(*a) if fn else None
 
     # ---------- auth ----------
-    def make_token(u):
-        exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=saved_int("session_hours", app.config["TOKEN_HOURS"]))
+    def remember_days():
+        return max(0, min(90, saved_int("remember_days", app.config["REMEMBER_DAYS"])))
+
+    def make_token(u, remember=False):
+        # v0.8.59: remember = "Keep me signed in on this device": the token lasts remember_days instead of session_hours, and carries "rm" so a
+        # password change on that device keeps it remembered. It is still ended by token_version (password change, reset, admin Sign out).
+        days = remember_days() if remember else 0
+        life = dt.timedelta(days=days) if days else dt.timedelta(hours=saved_int("session_hours", app.config["TOKEN_HOURS"]))
+        claims = {"sub": str(u["id"]), "role": u["role"], "exp": dt.datetime.now(dt.timezone.utc) + life, "tv": int(u.get("token_version") or 0)}
+        if days: claims["rm"] = 1
         # v0.8.47: "tv" = the account's token_version when signed in. A full admin raising it (Sign out, Suspend, Pause) ends every open session.
-        return jwt.encode({"sub": str(u["id"]), "role": u["role"], "exp": exp, "tv": int(u.get("token_version") or 0)}, app.config["SECRET_KEY"], "HS256")
+        return jwt.encode(claims, app.config["SECRET_KEY"], "HS256")
 
     def perm_list(u):
         """None for a full admin, else the list of allowed areas."""
@@ -220,7 +229,7 @@ def create_app(config=None):
                 stop = presence.blocked(u, utc_stamp()) or (None if int(p.get("tv", 0)) == int(u["token_version"] or 0) else presence.KICKED)
                 if stop:
                     return jsonify(error=stop[1], code=stop[0]), 401
-                g.user = u
+                g.user, g.claims = u, p
                 # "who is online": at most one small write per person every 30 seconds (a full admin's also clears ended pauses)
                 app.extensions["presence"]["touch"](db(), u, utc_stamp(), request, is_full_admin(u))
                 for col in ("token_version", "suspended_at", "paused_until", "last_seen_at", "signed_out_at", "account_message"): u.pop(col, None)
@@ -264,6 +273,8 @@ def create_app(config=None):
         resp.headers["Referrer-Policy"] = "same-origin"
         # Security review 2026-11: no plugins, no <base> tricks, no framing; forms only post here. Browsers keep to HTTPS for a year.
         resp.headers.setdefault("Content-Security-Policy", "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+        if request.path == "/sw.js":   # v0.8.59: the browser must always fetch the newest service worker, or an update could be held back
+            resp.headers["Cache-Control"] = "no-cache"; resp.headers["Service-Worker-Allowed"] = "/"
         if request.is_secure or ON_VERCEL or request.headers.get("X-Forwarded-Proto") == "https":
             resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return resp
@@ -275,6 +286,29 @@ def create_app(config=None):
     @app.get("/")
     def index():
         return send_from_directory(app.static_folder, "index.html")
+
+    # v0.8.59: installable app. The manifest is built here so it carries the academy's name and, when it suits, its logo as the app icon.
+    @app.get("/manifest.webmanifest")
+    def manifest():
+        name = (raw_setting("academy_name") or "").strip() or SS.default_of("academy_name")
+        ic = app.extensions["branding"]["app_icon"]()
+        if ic["logo"]:
+            icons = [{"src": ic["url"], "sizes": f"{ic['w']}x{ic['h']}", "type": ic["type"], "purpose": "any"}]
+        else:
+            icons = [{"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+                     {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+                     {"src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}]
+        short = name if len(name) <= 12 else (name.split()[0] if len(name.split()[0]) <= 12 else name[:12])
+        body = json.dumps({"name": name + " Portal" if "portal" not in name.lower() else name, "short_name": short, "id": "/", "start_url": "/",
+                           "scope": "/", "display": "standalone", "orientation": "any", "background_color": "#f0f6f6", "theme_color": "#0b4f5c",
+                           "description": "Classes, assignments, fees and messages.", "icons": icons})
+        return Response(body, mimetype="application/manifest+json", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/apple-touch-icon.png")
+    def apple_icon():   # iPhones look here when someone adds the portal to the Home Screen
+        ic = app.extensions["branding"]["app_icon"]()
+        if ic["logo"]: return redirect(ic["url"])
+        return send_from_directory(os.path.join(app.static_folder, "icons"), "apple-touch-icon.png", max_age=86400)
 
     @app.get("/api/health")
     def health():
@@ -317,8 +351,9 @@ def create_app(config=None):
         ratelimit.login_ok(db(), ip, acct)
         presence.signed_in(db(), u["id"], utc_stamp(), request)
         presence.log_login(db(), u["id"], who, True, None, utc_stamp(), request)
-        audit("login", "user", u["id"]); db().commit()
-        return jsonify(token=make_token(u), user=public_user(u))
+        remember = bool(d.get("remember")) and remember_days() > 0   # v0.8.59
+        audit("login", "user", u["id"], "kept signed in on this device" if remember else None); db().commit()
+        return jsonify(token=make_token(u, remember), user=public_user(u), remembered=remember)
 
     @app.post("/api/auth/logout")
     @auth()
@@ -348,7 +383,7 @@ def create_app(config=None):
                      (generate_password_hash(new), g.user["id"]))
         audit("change_password", "user", g.user["id"]); db().commit()
         fresh = one("SELECT id,role,token_version FROM users WHERE id=?", (g.user["id"],))
-        return jsonify(ok=True, token=make_token(fresh))
+        return jsonify(ok=True, token=make_token(fresh, bool(g.get("claims", {}).get("rm"))))   # v0.8.59: a remembered device stays remembered
 
     # ---------- users ----------
     STUDENT_FIELDS = ("date_of_birth", "grade", "island", "guardian_name", "guardian_relationship", "guardian_phone")
@@ -1037,7 +1072,8 @@ def create_app(config=None):
                        minor_age=int(g_("minor_age")),
                        # Session 21 (v0.8.33): the real upload limits, so the forms can check a file before sending it (on Vercel both are 4 MB)
                        upload_max_mb=MAX_FILE // (1024 * 1024), learning_max_mb=common.cap_mb(int(app.config.get("LEARNING_MAX_MB", 20))),
-                       logo_url=app.extensions["branding"]["logo_url"]())   # v0.8.48
+                       logo_url=app.extensions["branding"]["logo_url"](),   # v0.8.48
+                       remember_days=remember_days(), app_icon_url=app.extensions["branding"]["app_icon"]()["url"])   # v0.8.59
 
     @app.get("/api/public/batches")
     def public_batches():
