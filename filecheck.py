@@ -21,6 +21,8 @@ REFS = (
     ("learning", "Tutorial file", "tutorials", "file", "title", "created_at"),
     ("learning", "Tutorial answer", "tutorial_submissions", "file", "COALESCE(file_name, file)", "submitted_at"),
     ("receipts", "Expense receipt", "expenses", "receipt_file", "COALESCE(receipt_name, receipt_file)", "created_at"),
+    ("learning", "Teachers' guide file", "staff_files", "file", "title", "created_at"),
+    ("learning", "Teachers' room attachment", "staff_messages", "file", "COALESCE(file_name, file)", "created_at"),
 )
 CHECK_LIMIT = 400   # bucket checks are one request each; keep a scan inside a serverless time limit
 

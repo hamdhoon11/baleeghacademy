@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS students (
 CREATE TABLE IF NOT EXISTS teachers (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   bio TEXT,
-  teacher_code TEXT            -- BAL/T/<NNN>
+  teacher_code TEXT,           -- BAL/T/<NNN>
+  is_head INTEGER NOT NULL DEFAULT 0   -- v0.8.58: head teacher (moderates the Teachers' room)
 );
 CREATE TABLE IF NOT EXISTS courses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS batches (
   code TEXT NOT NULL,
   days TEXT,                 -- e.g. 'Sun,Tue,Thu'
   start_time TEXT,           -- 'HH:MM' 24h, Maldives time
+  end_time TEXT,             -- v0.8.58: 'HH:MM', after start_time; NULL = the course's minutes per class decide the length
   start_date TEXT,
   capacity INTEGER NOT NULL DEFAULT 20,
   teacher_id INTEGER REFERENCES users(id),
@@ -593,4 +595,43 @@ CREATE TABLE IF NOT EXISTS server_errors (
   error_type TEXT,
   message TEXT,
   trace TEXT
+);
+
+-- v0.8.58: Teachers' room (staffroom.py). Staff only: a group chat and a shared teachers' guide. Files sit in the private "learning" area.
+CREATE TABLE IF NOT EXISTS staff_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  body TEXT,
+  file TEXT,
+  file_name TEXT,
+  reply_to INTEGER,                    -- another staff_messages.id (no reference, so a removed message never blocks anything)
+  pinned_at TEXT,
+  pinned_by INTEGER REFERENCES users(id),
+  edited_at TEXT,
+  deleted_at TEXT,                     -- soft delete: text and file are cleared, the row stays so replies still make sense
+  deleted_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_staff_messages_pinned ON staff_messages(pinned_at);
+CREATE TABLE IF NOT EXISTS staff_folders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  description TEXT,
+  locked INTEGER NOT NULL DEFAULT 0,   -- 1 = only head teachers and admins add files
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS staff_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  folder_id INTEGER REFERENCES staff_folders(id),   -- NULL = not in a folder
+  title TEXT NOT NULL,
+  description TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('file','link')),
+  file TEXT,
+  file_name TEXT,
+  url TEXT,
+  uploaded_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT,
+  updated_by INTEGER REFERENCES users(id)
 );

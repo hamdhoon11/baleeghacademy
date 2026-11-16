@@ -35,7 +35,8 @@ LABELS = {"users": "Teacher and student accounts", "students": "Student profiles
           "payments": "Payments", "reminders": "Fee reminders", "expense_categories": "Expense categories", "expenses": "Expenses",
           "recurring_expenses": "Monthly expenses", "recurring_done": "Monthly expenses already entered", "notifications": "Notifications", "wa_log": "WhatsApp log",
           "teacher_earnings": "Teacher earnings", "teacher_payments": "Payments to teachers", "stored_files": "Files stored in the database",
-          "password_help": "Password requests", "rate_hits": "Attempt counters"}
+          "password_help": "Password requests", "rate_hits": "Attempt counters",
+          "staff_messages": "Teachers' room messages", "staff_folders": "Teachers' guide folders", "staff_files": "Teachers' guide files"}
 
 
 def table_refs(script):

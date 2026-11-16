@@ -297,6 +297,19 @@ label.inl{flex:0 0 auto;flex-direction:row;align-items:center;gap:.4rem}
 .bulkbar[hidden]{display:none}
 input.bulk,input.bulk-all{width:24px;height:24px;min-height:24px;margin:0;flex:0 0 auto}
 .bulk-all-l{margin-bottom:.4rem}
+/* v0.8.58: Teachers' room chat */
+.srchat{display:flex;flex-direction:column;gap:.6rem}
+.srl{list-style:none;margin:0;padding:.2rem;max-height:min(60vh,560px);overflow-y:auto;display:flex;flex-direction:column;gap:.55rem;overscroll-behavior:contain}
+.srm{display:block;max-width:min(46rem,92%);align-self:flex-start;background:var(--mist);border:1px solid var(--line);border-radius:14px;border-start-start-radius:4px;padding:.5rem .75rem}
+.srm.sr-me{align-self:flex-end;background:#e3f0ea;border-start-start-radius:14px;border-start-end-radius:4px}
+.srm.sr-pin{border-color:var(--sun)}.srm.sr-del{background:transparent;border-style:dashed}.srm.sr-hl{outline:3px solid var(--sun)}
+.srh{font-size:.88rem;margin-bottom:.15rem}.srb{white-space:pre-wrap;overflow-wrap:anywhere}
+.srq{border-inline-start:3px solid var(--lagoon-l);padding:.15rem .5rem;margin:.2rem 0 .35rem;font-size:.88rem;color:var(--ink2);background:rgba(255,255,255,.6);border-radius:4px;overflow-wrap:anywhere}
+.sra{display:flex;flex-wrap:wrap;gap:.2rem .7rem;margin-top:.25rem}
+.sra button{background:none;border:0;padding:.15rem 0;min-height:32px;color:var(--lagoon);font-size:.85rem;cursor:pointer;text-decoration:underline}
+.sra button.dg{color:var(--coral)}
+.srf textarea{width:100%;min-height:3.2rem;resize:vertical}
+.srpins ul li{padding:.4rem 0}
 </style>
 </head>
 <body>
@@ -511,6 +524,7 @@ const IC = {
   timetable: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4M7 13h3M14 13h3M7 17h3"/>',
   my_files: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M12 12v6M9 15l3 3 3-3"/>',
   my_information: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
+  staff_room: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/>',
   my_earnings: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
   more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
@@ -524,7 +538,7 @@ const IC = {
 };
 const icon = k => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${IC[k] || IC.dot}</svg>`;
 // The admin menu has 14 entries, so it is grouped. Tabs and their order still come from the server (ROLE_TABS).
-const NAV_GROUP = {dashboard: "nav_overview", admissions: "nav_overview", courses: "nav_teaching", batches: "nav_teaching", timetable: "nav_teaching", classroom: "nav_teaching", tutorials: "nav_teaching",
+const NAV_GROUP = {dashboard: "nav_overview", admissions: "nav_overview", courses: "nav_teaching", batches: "nav_teaching", timetable: "nav_teaching", classroom: "nav_teaching", tutorials: "nav_teaching", staff_room: "nav_teaching",
   people: "nav_people", student_information: "nav_people", teacher_information: "nav_people", enrollments: "nav_people", online: "nav_people", fees: "nav_money", finance: "nav_money", settings: "nav_system", audit: "nav_system"};
 const BAR_SLOTS = 4;   // tabs shown in the phone's bottom bar; the rest sit behind "More"
 // Session 9: which tabs a role wants in the phone bar. Only the bar changes; the computer sidebar and the More sheet keep the server order.
@@ -932,5 +946,6 @@ window.addEventListener("DOMContentLoaded", () => loadText().then(() => api("/pu
 <script src="fees.js"></script>
 <script src="admin.js"></script>
 <script src="notify.js"></script>
+<script src="staffroom.js"></script>
 </body>
 </html>

@@ -82,7 +82,7 @@ def register(app, c, today):
     ext_rule("/api/applications/export.{ext}", "sh_applications", applications_export, perm="admissions")
 
     COURSE_COLS = ["code", "name", "kind", "level", "monthly_fee_mvr", "registration_fee_mvr", "days_per_week", "minutes_per_class", "status", "is_active", "textbook", "description"]
-    BATCH_COLS = ["course_code", "code", "teacher", "days", "start_time", "start_date", "capacity", "status", "meet_link"]
+    BATCH_COLS = ["course_code", "code", "teacher", "days", "start_time", "end_time", "start_date", "capacity", "status", "meet_link"]
 
     def courses_export(ext):
         cs = rows("SELECT * FROM courses ORDER BY id")
@@ -95,7 +95,7 @@ def register(app, c, today):
     def batches_export(ext):
         bs = rows("SELECT b.*, c.code AS course_code, t.teacher_code, u.login_id, u.full_name AS teacher_name, (SELECT COUNT(*) FROM enrollments e WHERE e.batch_id=b.id AND e.status='active') AS enrolled "
                   "FROM batches b JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=b.teacher_id LEFT JOIN teachers t ON t.user_id=b.teacher_id ORDER BY c.code, b.code")
-        table = [[x["course_code"] or "", x["code"], x["teacher_code"] or x["login_id"] or "", x["days"] or "", x["start_time"] or "", x["start_date"] or "", x["capacity"], x["status"],
+        table = [[x["course_code"] or "", x["code"], x["teacher_code"] or x["login_id"] or "", x["days"] or "", x["start_time"] or "", x["end_time"] or "", x["start_date"] or "", x["capacity"], x["status"],
                   x["meet_link"] or "", x["teacher_name"] or "", x["enrolled"]] for x in bs]
         logged(f"export_batches_{ext}", f"{len(table)} rows")
         return X.send_table(ext, "batches", BATCH_COLS + ["teacher_name", "students_enrolled"], table, "Batches", text_cols=("course_code", "code", "teacher"))
@@ -273,9 +273,10 @@ def register(app, c, today):
         if not cc or not code: raise ValueError("course_code and code are required")
         co = one("SELECT id FROM courses WHERE UPPER(code)=UPPER(?)", (cc,))
         if not co: raise ValueError(f"No course with code {cc}. Import or add the course first")
-        d = {"course_id": co["id"], "code": code, "days": r.get("days") or None, "start_time": r.get("start_time") or None, "start_date": r.get("start_date") or None,
+        d = {"course_id": co["id"], "code": code, "days": r.get("days") or None, "start_time": r.get("start_time") or None, "end_time": r.get("end_time") or None, "start_date": r.get("start_date") or None,
              "teacher_id": teacher_id(r.get("teacher")), "status": (r.get("status") or "open").lower(), "meet_link": r.get("meet_link") or None}
-        if d["start_time"] and re.match(r"^\d:\d\d$", d["start_time"]): d["start_time"] = "0" + d["start_time"]
+        for k in ("start_time", "end_time"):
+            if d[k] and re.match(r"^\d:\d\d$", d[k]): d[k] = "0" + d[k]
         if r.get("capacity"): d["capacity"] = num(r["capacity"], "capacity")
         return ("POST", "/api/batches", d)
 
@@ -285,7 +286,8 @@ def register(app, c, today):
         return X.template("Import batches", [
             C("course_code", "The course's code (see the Lists sheet).", cs[0]["code"] if cs else "AL1", True, list_ref="Course codes", text=True),
             C("code", "Batch name or code, unique within the course.", "005", True, text=True), C("teacher", "Teacher ID, sign-in ID or email (see the Lists sheet).", "", list_ref="Teachers", text=True, free=True),
-            C("days", "Class days, comma separated.", "Sun,Tue,Thu"), C("start_time", "24-hour time.", "16:00", text=True), C("start_date", "First class date.", "2026-12-01"),
+            C("days", "Class days, comma separated.", "Sun,Tue,Thu"), C("start_time", "24-hour time.", "16:00", text=True),
+            C("end_time", "24-hour time the class ends, after start_time. Empty = the course's minutes per class.", "17:30", text=True), C("start_date", "First class date.", "2026-12-01"),
             C("capacity", "Seats. Empty = the default from Settings.", "15"), C("status", "open (default), running or closed.", "open", choices=["open", "running", "closed"]),
             C("meet_link", "Class link starting with https://", "", width=34)],
             lists={"Course codes": [x["code"] for x in cs], "Course names": [x["name"] for x in cs], "Teachers": [x["k"] for x in ts], "Teacher names": [x["full_name"] for x in ts]},

@@ -78,8 +78,12 @@ def register(app, c):
     def send_private(stored, shown):
         return common.file_headers(store.send("learning", stored, shown or stored, as_attachment=True), shown or stored, attachment=True)
 
-    BQ = ("SELECT b.id,b.code,b.days,b.start_time,b.start_date,b.status,b.meet_link,b.teacher_id,b.course_id,"
-          "c.name AS course_name,COALESCE(c.minutes_per_class,60) AS minutes,u.full_name AS teacher_name "
+    # v0.8.58: a batch with an end time lasts from start to end; otherwise the course's minutes per class (60 when empty). Plain SUBSTR/CAST: SQLite and PostgreSQL.
+    HM = lambda col: f"(CAST(SUBSTR({col},1,2) AS INTEGER)*60+CAST(SUBSTR({col},4,2) AS INTEGER))"
+    MINUTES = (f"CASE WHEN b.end_time IS NOT NULL AND b.start_time IS NOT NULL AND b.end_time > b.start_time "
+               f"THEN {HM('b.end_time')}-{HM('b.start_time')} ELSE COALESCE(c.minutes_per_class,60) END")
+    BQ = ("SELECT b.id,b.code,b.days,b.start_time,b.end_time,b.start_date,b.status,b.meet_link,b.teacher_id,b.course_id,"
+          f"c.name AS course_name,{MINUTES} AS minutes,u.full_name AS teacher_name "
           "FROM batches b JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=b.teacher_id")
 
     def teacher_batches(uid):
@@ -413,9 +417,9 @@ def register(app, c):
     def l_my_batches():
         """The batches this person works in: a student's ACTIVE enrolments, or the teacher's own batches (teacher_batches). The choices of the picker."""
         return jsonify([{"id": b["id"], "code": b["code"], "course_id": b["course_id"], "course_name": b["course_name"], "teacher_name": b["teacher_name"],
-                         "days": b["days"], "start_time": b["start_time"]} for b in my_batches(scope="class")] if g.user["role"] != "teacher" else
+                         "days": b["days"], "start_time": b["start_time"], "end_time": b["end_time"]} for b in my_batches(scope="class")] if g.user["role"] != "teacher" else
                        [{"id": b["id"], "code": b["code"], "course_id": b["course_id"], "course_name": b["course_name"], "teacher_name": b["teacher_name"],
-                         "days": b["days"], "start_time": b["start_time"],
+                         "days": b["days"], "start_time": b["start_time"], "end_time": b["end_time"],
                          **({"substitute_until": max(z for a, z in sub_windows(g.user["id"]).get(b["id"], [(0, "")]))} if b["id"] not in teacher_batches(g.user["id"]) else {})}
                         for b in my_batches(scope="class")])
 
@@ -799,7 +803,7 @@ def register(app, c):
         mins = sum(len([x for x in (b["days"] or "").split(",") if x in DAYS]) * b["minutes"] for b in bs if b["status"] != "closed" and b["start_time"])
         return n, round(mins / 60, 1)
 
-    TBQ = ("SELECT b.id,b.code,b.days,b.start_time,b.status,b.capacity,b.teacher_id,c.name AS course_name,COALESCE(c.minutes_per_class,60) AS minutes "
+    TBQ = ("SELECT b.id,b.code,b.days,b.start_time,b.end_time,b.status,b.capacity,b.teacher_id,c.name AS course_name," + MINUTES + " AS minutes "
            "FROM batches b JOIN courses c ON c.id=b.course_id")
 
     @app.get("/api/teacher-information")
@@ -846,7 +850,7 @@ def register(app, c):
             held = one(f"SELECT COUNT(*) n FROM sessions WHERE status='held' AND session_date>=? AND batch_id IN ({q})", [since, *bids])["n"]
             to_grade = pending_grading(bids)
         wk, hrs = workload_of(bs)
-        out_b = [{**{k: b[k] for k in ("id", "code", "course_name", "days", "start_time", "status", "capacity", "minutes")}, "students": counts.get(b["id"], 0)} for b in bs]
+        out_b = [{**{k: b[k] for k in ("id", "code", "course_name", "days", "start_time", "end_time", "status", "capacity", "minutes")}, "students": counts.get(b["id"], 0)} for b in bs]
         return jsonify(profile=p, batches=out_b, students=list(studs.values()),
                        workload={"active_batches": sum(1 for b in bs if b["status"] != "closed"), "students": len(studs), "weekly_classes": wk, "weekly_hours": hrs,
                                  "classes_held_30d": held, "to_grade": to_grade})
@@ -861,13 +865,13 @@ def register(app, c):
         p = one("SELECT id,login_id,email,full_name,phone,created_at FROM users WHERE id=?", (uid,))
         if role == "student":
             p.update(one("SELECT student_code,date_of_birth,grade,island,guardian_name,guardian_relationship,guardian_phone FROM students WHERE user_id=?", (uid,)) or {})
-            bs = rows("SELECT e.enrol_code,e.enrolled_at,b.id,b.code,b.days,b.start_time,c.name AS course_name,c.kind AS course_kind,u.full_name AS teacher_name FROM enrollments e "
+            bs = rows("SELECT e.enrol_code,e.enrolled_at,b.id,b.code,b.days,b.start_time,b.end_time,c.name AS course_name,c.kind AS course_kind,u.full_name AS teacher_name FROM enrollments e "
                       "JOIN batches b ON b.id=e.batch_id JOIN courses c ON c.id=b.course_id LEFT JOIN users u ON u.id=b.teacher_id WHERE e.student_id=? AND e.status='active' ORDER BY e.id", (uid,))
         else:
             p["teacher_code"] = (one("SELECT teacher_code FROM teachers WHERE user_id=?", (uid,)) or {}).get("teacher_code")
             p["bio"] = (one("SELECT bio FROM teachers WHERE user_id=?", (uid,)) or {}).get("bio")
             ids = sorted(teacher_batches(uid))
-            bs = rows("SELECT b.id,b.code,b.days,b.start_time,b.status,c.name AS course_name,c.kind AS course_kind FROM batches b JOIN courses c ON c.id=b.course_id "
+            bs = rows("SELECT b.id,b.code,b.days,b.start_time,b.end_time,b.status,c.name AS course_name,c.kind AS course_kind FROM batches b JOIN courses c ON c.id=b.course_id "
                       f"WHERE b.id IN ({marks(len(ids))}) ORDER BY b.id", ids) if ids else []
         return jsonify(role=role, profile=p, batches=bs,
                        locked=["login_id", "student_code", "teacher_code", "full_name", "email", "phone", "date_of_birth", "grade", "island", "guardian_name", "guardian_relationship", "guardian_phone", "bio"])
@@ -1271,7 +1275,7 @@ def register(app, c):
         bs = my_batches(request.args.get("batch_id", type=int))     # 403 for a batch that is not theirs
         ids = [b["id"] for b in bs]
         ros, att = roster_multi(ids), att_multi(ids)
-        batches = [{"id": b["id"], "code": b["code"], "course_name": b["course_name"], "status": b["status"], "days": b["days"], "start_time": b["start_time"],
+        batches = [{"id": b["id"], "code": b["code"], "course_name": b["course_name"], "status": b["status"], "days": b["days"], "start_time": b["start_time"], "end_time": b["end_time"],
                     "students": len(ros[b["id"]])} for b in bs]
         out = {"scope": "batch" if request.args.get("batch_id", type=int) else "all", "batches": batches,
                "courses": sorted({b["course_name"] for b in bs}), "students": len({s["id"] for b in bs for s in ros[b["id"]]})}

@@ -778,8 +778,19 @@ def create_app(config=None):
         elif "days" in d:
             d["days"] = None
         if d.get("start_time") and not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", str(d["start_time"])): return "Start time must look like 16:00"
+        if d.get("end_time") and not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", str(d["end_time"])): return "End time must look like 17:30"
+        for k in ("start_time", "end_time"):
+            if k in d and not d[k]: d[k] = None
         if d.get("meet_link") and not re.match(r"^https://\S+$", str(d["meet_link"])): return "The Meet link must start with https://"
         if "meet_link" in d and not d["meet_link"]: d["meet_link"] = None
+        return None
+
+    def batch_time_problem(d, old=None):
+        """v0.8.58: the end time must come after the start time (classes do not run past midnight). Checked with the saved values for fields not sent."""
+        st = d["start_time"] if "start_time" in d else (old or {}).get("start_time")
+        en = d["end_time"] if "end_time" in d else (old or {}).get("end_time")
+        if en and not st: return "Choose a start time before the end time"
+        if en and st and en <= st: return "The end time must be after the start time"
         return None
 
     def batch_fields_problem(d, bid=None):
@@ -808,14 +819,14 @@ def create_app(config=None):
         m = need(d, "course_id", "code")
         if m: return err(m)
         if not d.get("capacity"): d["capacity"] = setting_int("default_capacity")
-        m = batch_problem(d) or batch_fields_problem(d)
+        m = batch_problem(d) or batch_time_problem(d) or batch_fields_problem(d)
         if m: return err(m)
         co = one("SELECT is_active FROM courses WHERE id=?", (d["course_id"],))
         if not co: return err("Course not found", 404)
         if not co["is_active"]: return err("This course or tuition class is inactive. Make it active before adding a batch.", 409)
         try:
-            cur = db().execute("INSERT INTO batches(course_id,code,days,start_time,start_date,capacity,teacher_id,meet_link,status) VALUES(?,?,?,?,?,?,?,?,?)",
-                               (d["course_id"], d["code"], d.get("days"), d.get("start_time"), d.get("start_date"),
+            cur = db().execute("INSERT INTO batches(course_id,code,days,start_time,end_time,start_date,capacity,teacher_id,meet_link,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                               (d["course_id"], d["code"], d.get("days"), d.get("start_time"), d.get("end_time"), d.get("start_date"),
                                 d["capacity"], d.get("teacher_id"), d.get("meet_link"), d.get("status", "open")))
         except dbx.IntegrityError:
             return err("That batch code already exists for this course", 409)
@@ -828,11 +839,11 @@ def create_app(config=None):
     @auth("admin", perm="batches")
     def batches_update(bid):
         d = request.get_json(silent=True) or {}
-        f = [k for k in ("course_id", "code", "days", "start_time", "start_date", "capacity", "teacher_id", "meet_link", "status") if k in d]   # the Batches screen no longer sends meet_link (Session 12); the API still accepts it
+        f = [k for k in ("course_id", "code", "days", "start_time", "end_time", "start_date", "capacity", "teacher_id", "meet_link", "status") if k in d]   # the Batches screen no longer sends meet_link (Session 12); the API still accepts it
         if not f: return err("Nothing to update")
         old = one("SELECT * FROM batches WHERE id=?", (bid,))
         if not old: return err("Batch not found", 404)
-        m = batch_problem(d) or batch_fields_problem(d, bid)
+        m = batch_problem(d) or batch_time_problem(d, old) or batch_fields_problem(d, bid)
         if m: return err(m)
         if "course_id" in d:
             if not one("SELECT id FROM courses WHERE id=?", (d["course_id"],)): return err("Course not found", 404)
@@ -1030,7 +1041,7 @@ def create_app(config=None):
 
     @app.get("/api/public/batches")
     def public_batches():
-        return jsonify(rows("SELECT b.id,b.course_id,b.code,b.start_time,b.days,b.status,"
+        return jsonify(rows("SELECT b.id,b.course_id,b.code,b.start_time,b.end_time,b.days,b.status,"
                             "b.capacity-(SELECT COUNT(*) FROM enrollments e WHERE e.batch_id=b.id AND e.status='active') AS spots "
                             "FROM batches b JOIN courses c ON c.id=b.course_id WHERE b.status IN ('open','running') AND c.status='open' ORDER BY b.id"))
 
@@ -1341,6 +1352,7 @@ def create_app(config=None):
     import notify
     notify.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 28: notifications (must come first: the modules below call ns.notify)
     learning.register(app, ns)
+    import staffroom; staffroom.register(app, ns)   # v0.8.58: Teachers' room (chat and teachers' guide)
     import filecheck
     filecheck.register(app, ns)
     import resetdata   # v0.8.41: "Clear portal data" (full admins, Settings): deletes everything entered and keeps the admins
