@@ -635,3 +635,19 @@ CREATE TABLE IF NOT EXISTS staff_files (
   updated_at TEXT,
   updated_by INTEGER REFERENCES users(id)
 );
+
+-- v0.8.60: Interest list (interest.py). People who want to join a batch, noted before they apply or are enrolled. A reference only.
+CREATE TABLE IF NOT EXISTS interest_list (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL REFERENCES batches(id),   -- a batch with names on its interest list cannot be deleted (close it instead)
+  full_name TEXT NOT NULL,
+  id_card TEXT NOT NULL,               -- upper case, no spaces (A123456 or a passport number)
+  phone TEXT NOT NULL,
+  email TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting','contacted','joined','not_joining')),
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_interest_list_batch ON interest_list(batch_id);

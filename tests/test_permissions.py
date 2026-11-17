@@ -37,7 +37,7 @@ class Permissions(unittest.TestCase):
     # ---- the server decides the tabs ----
     def test_01_default_tabs_per_role(self):
         self.assertEqual(self.login("admin@pm.test", "AdminPass123")["user"]["tabs"],
-                         ["dashboard", "admissions", "courses", "batches", "timetable", "classroom", "tutorials", "staff_room", "people", "student_information", "teacher_information", "enrollments", "online", "fees", "finance", "settings", "audit"])
+                         ["dashboard", "admissions", "interest", "courses", "batches", "timetable", "classroom", "tutorials", "staff_room", "people", "student_information", "teacher_information", "enrollments", "online", "fees", "finance", "settings", "audit"])
         self.mk("t0@pm.test", "teacher"); self.mk("s0@pm.test", "student")
         self.assertEqual(self.login("t0@pm.test")["user"]["tabs"], ["home", "timetable", "classroom", "tutorials", "staff_room", "my_files", "my_earnings", "my_information"])
         self.assertEqual(self.login("s0@pm.test")["user"]["tabs"], ["home", "timetable", "assignments", "progress", "materials", "recordings", "fees", "tutorials", "my_files", "my_information"])
@@ -142,7 +142,7 @@ class Permissions(unittest.TestCase):
         import json, re, settings_schema as SS
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         en = json.load(open(os.path.join(root, "static/i18n/en.json"), encoding="utf-8"))
-        js = "".join(open(os.path.join(root, "static", f), encoding="utf-8").read() for f in ("index.html", "learning.js", "fees.js", "admin.js", "staffroom.js"))
+        js = "".join(open(os.path.join(root, "static", f), encoding="utf-8").read() for f in ("index.html", "learning.js", "fees.js", "admin.js", "staffroom.js", "interest.js"))
         adm = open(os.path.join(root, "static/admin.js"), encoding="utf-8").read()
         for role, tabs in SS.ROLE_TABS.items():
             for tab in tabs:

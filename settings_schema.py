@@ -99,11 +99,12 @@ ROLE_AREAS = {
 OPT_IN = {"teacher": ("edit_grades", "cancel_class")}
 # Tabs in the order they are shown. Home, Dashboard and my_information (Session 16, read-only, own data only) need no permission.
 ROLE_TABS = {
-    "admin": ("dashboard", "admissions", "courses", "batches", "timetable", "classroom", "tutorials", "staff_room", "people", "student_information", "teacher_information", "enrollments", "online", "fees", "finance", "settings", "audit"),
+    "admin": ("dashboard", "admissions", "interest", "courses", "batches", "timetable", "classroom", "tutorials", "staff_room", "people", "student_information", "teacher_information", "enrollments", "online", "fees", "finance", "settings", "audit"),
     "teacher": ("home", "timetable", "classroom", "tutorials", "staff_room", "my_files", "my_earnings", "my_information"),
     "student": ("home", "timetable", "assignments", "progress", "materials", "recordings", "fees", "tutorials", "my_files", "my_information"),
 }
 TAB_AREA = {a: a for a in AREAS}   # every tab that is not home/dashboard is guarded by the area of the same name
+TAB_AREA["interest"] = "admissions"   # v0.8.60: the Interest list goes with Admissions
 
 
 # v0.8.37: tabs shown when the person has ANY of these areas (a limited account without them does not get an empty page)
