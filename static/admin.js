@@ -156,7 +156,7 @@ views.people = async () => {
     : S.user.is_super && e.id !== self ? `<label class="inl full"><input type="checkbox" id="eu_super" ${e.is_super ? "checked" : ""}> ${esc(t("Superadmin (can clear the portal's data and sign out, pause or suspend accounts)"))}</label>`
     : e.is_super ? `<p class="full msg warn">${esc(t("This is the superadmin's account. Only the superadmin can change it."))}</p>` : "";
   if (e) S.euInfo = {name: e.full_name, role: e.role, login: e.login_id, enr: e.enrollments, taught: e.batches_taught};
-  const editor = e ? `<div class="panel" data-detail><h2>${esc(t("edit"))}: ${esc(e.full_name)} ${tag(t(e.role))}</h2><form class="row" id="fue">${iv("eu_n", "name", e.full_name)}${iv("eu_l", "Login ID", e.login_id, "text", 'autocomplete="off"')}${iv("eu_e", "email", e.email, "email")}${iv("eu_p", "Phone", e.phone, "tel")}${e.id === self ? "" : sel("eu_r", "role", roles, e.role)}${prof}${perms}${sup}${iv("eu_pw", "Set a new password (leave empty to keep)", "", "text", 'autocomplete="off"')}<label class="inl"><input type="checkbox" id="eu_mc" ${e.must_change_password ? "checked" : ""}> ${esc(t("Must change password at next sign-in"))}</label><label class="inl"><input type="checkbox" id="eu_a" ${e.is_active ? "checked" : ""} ${e.id === self ? "disabled" : ""}> ${esc(t("Account active"))}</label>${bar(`<button class="btn alt">${t("save")}</button>`, `<button type="button" class="btn" data-do="euClose">${t("cancel")}</button>`, e.id === self ? "" : `<button type="button" class="btn" data-do="euReset" data-id="${e.id}">${esc(t("Reset password"))}</button> <button type="button" class="btn danger" data-do="euDel" data-id="${e.id}">${t("delete")}</button>`)}</form><p class="hint">${esc(t("Enrollments"))}: ${e.enrollments} · ${esc(t("Batches taught"))}: ${e.batches_taught}. ${esc(t("People with enrollments, grades or invoices cannot be deleted or change role. Disable the account instead."))}</p></div>` : "";
+  const editor = e ? `<div class="panel" data-detail><h2>${esc(t("edit"))}: ${esc(e.full_name)} ${tag(t(e.role))}</h2><form class="row" id="fue">${iv("eu_n", "name", e.full_name)}${iv("eu_l", "Login ID", e.login_id, "text", 'autocomplete="off"')}${iv("eu_e", "email", e.email, "email")}${iv("eu_p", "Phone", e.phone, "tel")}${e.id === self ? "" : sel("eu_r", "role", roles, e.role)}${prof}${perms}${sup}${iv("eu_pw", "Set a new password (leave empty to keep)", "", "text", 'autocomplete="off"')}<label class="inl"><input type="checkbox" id="eu_mc" ${e.must_change_password ? "checked" : ""}> ${esc(t("Must change password at next sign-in"))}</label><label class="inl"><input type="checkbox" id="eu_a" ${e.is_active ? "checked" : ""} ${e.id === self ? "disabled" : ""}> ${esc(t("Account active"))}</label>${bar(`<button class="btn alt">${t("save")}</button>`, `<button type="button" class="btn" data-do="euClose">${t("cancel")}</button>`, e.id === self ? "" : `<button type="button" class="btn" data-do="euReset" data-id="${e.id}">${esc(t("Reset password"))}</button> <button type="button" class="btn danger" data-do="euDel" data-id="${e.id}">${t("delete")}</button>`)}</form><p class="hint">${esc(t("Enrollments"))}: ${e.enrollments} · ${esc(t("Batches taught"))}: ${e.batches_taught}. ${esc(t("rm_editor_hint"))}</p></div>` : "";
   // search (name, login ID, email) and paging on the client: GET /api/users has no search parameter
   const q = (S.pq || "").toLowerCase(), lim = S.plim || 30;
   const bv = bfVal("people");
@@ -195,10 +195,28 @@ function tmpPanel() {
   if (!S.tmp) return "";
   return `<div class="panel" role="alert"><h2>${esc(t("Temporary password"))}${S.tmp.name ? ": " + esc(S.tmp.name) : ""}</h2><p>${esc(t("Login ID"))}: <b>${esc(S.tmp.id || "")}</b><br>${esc(t("password"))}: <b>${esc(S.tmp.pw)}</b></p><p class="hint">${esc(t("Copy this now and give it to the person. It will not be shown again. They must choose their own password at first sign-in."))}</p><p class="rowflex">${S.tmp.wa ? `<a class="btn" href="${esc(S.tmp.wa)}" target="_blank" rel="noopener">${esc(t("send_whatsapp"))}</a>` : `<span class="hint">${esc(t("No phone number saved for this person: give the password another way."))}</span>`}<button type="button" class="btn alt" data-do="tmpClose">${esc(t("Done"))}</button></p></div>`;
 }
-DO.euDel = async d => {
-  const i = S.euInfo || {};
-  if (!await ui.confirm(t("Delete this account? This cannot be undone."), {danger: true, details: [`${i.name || ""} · ${t(i.role || "")}${i.login ? " · " + i.login : ""}`, `${t("Enrollments")}: ${i.enr ?? 0} · ${t("Batches taught")}: ${i.taught ?? 0}`, t("People with enrollments, grades or invoices cannot be deleted or change role. Disable the account instead.")]})) return false;
-  await api("/users/" + d.id, "DELETE"); closeDetail({eu: null}); flash(t("saved"), true);
+DO.euDel = async d => {   // v0.8.61: people with records can be removed too; a preview first, then the admin's password
+  const p = await api(`/users/${d.id}/removal`);   // nothing is changed
+  if (p.refused) { flash(p.refused); return false; }
+  if (p.blocked.length) { await ui.show(t("rm_title"), `<p>${esc(t(p.blocked_message))}</p>`); return false; }
+  const who = `${p.name || ""} · ${t(p.role || "")}${p.login_id ? " · " + p.login_id : ""}`, k = p.kept;
+  if (!p.has_records) {
+    if (!await ui.confirm(t("Delete this account? This cannot be undone."), {danger: true, details: [who]})) return false;
+    await api("/users/" + d.id, "DELETE"); closeDetail({eu: null}); flash(t("saved"), true); return;
+  }
+  const del = p.deleted.map(x => t(x.label) + ": " + fmtNum(x.rows));
+  const keep = [];
+  if (k.invoices || k.payments) keep.push(t("rm_kept_money").replace("{i}", fmtNum(k.invoices)).replace("{p}", fmtNum(k.payments)));
+  if (k.unpaid_invoices) keep.push(t("rm_kept_unpaid").replace("{n}", fmtNum(k.unpaid_invoices)).replace("{m}", fmtNum(k.unpaid_mvr)));
+  if (k.batches_taught) keep.push(t("rm_kept_batches").replace("{n}", fmtNum(k.batches_taught)));
+  if (k.tutorials) keep.push(t("rm_kept_tutorials").replace("{n}", fmtNum(k.tutorials)));
+  if (k.applications) keep.push(t("rm_kept_apps").replace("{n}", fmtNum(k.applications)));
+  if (!await ui.confirm(t("rm_confirm"), {danger: true, title: t("rm_title"), okText: t("rd_continue"),
+    details: [who, t("rm_deleted") + ":"].concat(del.length ? del : [t("rm_nothing_else")], [t("rm_kept") + ":"], keep.length ? keep : [t("rm_kept_none")])})) return false;
+  const v = await ui.form(t("rm_title"), [{id: "password", label: t("rd_password"), type: "password", required: true, autocomplete: "current-password"}],
+    {okText: t("rm_button"), danger: true, hint: t("rm_form_hint")});
+  if (!v) return false;
+  await api("/users/" + d.id, "DELETE", {password: v.password}); closeDetail({eu: null}); flash(t("rm_done").replace("{name}", p.name || ""), true);
 };
 
 // ---------- enrollments: drop, move, delete a mistake. Session 11: searchable pickers, list search and paging, collapsed Add panel ----------
