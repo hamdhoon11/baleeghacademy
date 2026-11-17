@@ -48,7 +48,7 @@ AREA = [("/api/applications", "admissions"), ("/api/announcements", "classroom")
         ("/api/invoices", "fees"), ("/api/payments", "fees"), ("/api/slips", "fees"), ("/api/revenue-types", "fees"), ("/api/students", "fees"), ("/api/earnings", "finance"), ("/api/expense", "finance"), ("/api/finance", "finance"), ("/api/recurring-expenses", "finance"),
         ("/api/enrollments/<int:eid>/void-open-invoices", "fees"), ("/api/enrollment", "enrollments"), ("/api/import/enrolments", "enrollments"), ("/api/import/courses", "courses"), ("/api/import/batches", "batches"), ("/api/import/expenses", "finance"), ("/api/import", "people"),
         ("/api/settings", "settings"), ("/api/admin/storage", "settings"), ("/api/admin/reset-data", "settings"), ("/api/password-help", "people"), ("/api/notifications", "settings"), ("/api/student-information", "student_information"), ("/api/teacher-information", "teacher_information"),
-        ("/api/staff", "staff_room"), ("/api/substitutions", "batches"), ("/api/users", "people"), ("/api/courses", "courses"), ("/api/batches", "batches")]
+        ("/api/staff", "staff_room"), ("/api/interest", "admissions"), ("/api/substitutions", "batches"), ("/api/users", "people"), ("/api/courses", "courses"), ("/api/batches", "batches")]
 PUBLIC = {"/api/public/logo",   # v0.8.48: the logo shows on the sign-in page, before anyone signs in
           "/manifest.webmanifest", "/apple-touch-icon.png",   # v0.8.59: installable app; phones read these before anyone signs in (name and icon only)
           "/", "/<path:filename>", "/api/auth/login", "/api/auth/forgot", "/api/cron/generate-invoices", "/api/cron/reminders", "/api/health", "/api/public/apply",
@@ -134,7 +134,7 @@ class S32(unittest.TestCase):
             "expense-categories": i["exp_cat"], "expenses": i["expense"], "families": i["family"], "invoices": i["invoice"], "materials": i["material"], "notifications": 1, "payments": i["payment"],
             "recordings": i["recording"], "slips": i["slip"], "student-information": W["s1"][0], "submissions": i["submission"], "substitutions": 1, "teacher-information": W["t1"][0],
             "tutorial-submissions": i["tut_sub"], "tutorials": i["tutorial"], "users": W["s1"][0], "student-history": W["s1"][0], "members": W["s1"][0], "students": W["s1"][0], "recurring-expenses": 1, "revenue-types": 1, "accounts": W["s1"][0],
-            "messages": 1, "folders": 1, "files": 1})   # v0.8.58: Teachers' room (an id that does not exist: refusals come first, allowed calls 404)
+            "messages": 1, "folders": 1, "files": 1, "interest": 1})   # v0.8.58: Teachers' room (an id that does not exist: refusals come first, allowed calls 404)
         cls.P = {"none": {}, "admin": W["A"], "lim": W["H_lim"], "t1": W["H_t1"], "t2": W["H_t2"], "t3": W["H_t3"], "s1": W["H_s1"], "s2": W["H_s2"], "sw": W["H_sw"]}
         cls.ROLE = {"admin": "admin", "lim": "admin", "t1": "teacher", "t2": "teacher", "t3": "teacher", "s1": "student", "s2": "student", "sw": "student"}
 

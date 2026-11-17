@@ -903,7 +903,7 @@ def create_app(config=None):
             audit("delete_batch", "batch", bid, b["code"], batch_id=bid); db().commit()
         except dbx.IntegrityError:
             db().rollback()
-            return err("This batch has students, classes, assignments or applications. Set its status to Closed instead.", 409)
+            return err("This batch has students, classes, assignments, applications or an interest list. Set its status to Closed instead.", 409)
         return jsonify(ok=True)
 
     @app.get("/api/batches/<int:bid>/students")
@@ -1389,6 +1389,7 @@ def create_app(config=None):
     notify.register(app, ns, lambda: app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT))   # Session 28: notifications (must come first: the modules below call ns.notify)
     learning.register(app, ns)
     import staffroom; staffroom.register(app, ns)   # v0.8.58: Teachers' room (chat and teachers' guide)
+    import interest; interest.register(app, ns)   # v0.8.60: Interest list (people who want to join a batch)
     import filecheck
     filecheck.register(app, ns)
     import resetdata   # v0.8.41: "Clear portal data" (full admins, Settings): deletes everything entered and keeps the admins
