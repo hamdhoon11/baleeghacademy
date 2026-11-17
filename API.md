@@ -6,6 +6,7 @@
 | POST | /auth/login | public | `{login,password}` (`login` = login ID like `BAL/AL1/001`, case and spaces ignored; an email also works while `ALLOW_EMAIL_LOGIN` is on) returns `{token,user,remembered}`. v0.8.59: `remember: true` ("Keep me signed in on this device") makes the token last `remember_days` (Settings → Security, default 30, 0 = off) instead of `session_hours`; `remembered` says whether it did. Limited per address and per account (8 failures in 5 minutes gives 429). While `user.must_change_password` is 1 every route except `/auth/me` and `/auth/change-password` answers 403 `{code:"password_change_required"}` |
 | GET | /auth/me | any | Current user: `{id,email,full_name,role,must_change_password,permissions,tabs}`. `permissions` is `null` (everything the role has) or a list of areas; `tabs` is what the page may draw |
 | POST | /users/<id>/reset-password | admin (people) | New random temporary password, returned once as `{login_id,temporary_password}` (no-store); old password stops working; person must change it at next sign-in. Not for your own account |
+| DELETE | /users/<id> | admin (people) | v0.8.61: removes the person and their class records; invoices and payments are kept under their name. `{password}` (your own) required when they have records (400 `password_needed` without it). Preview first with `GET /users/<id>/removal`. A teacher with pay records: 409 |
 | POST | /auth/change-password | any | `{current_password,new_password}` |
 | GET, POST | /users | admin | List (`?role=`), create admin/teacher/student. Create needs `full_name,email,role`; leave `password` out and the server makes a random one and returns `{id,login_id,temporary_password}` once. Create accepts optional `permissions` (full admin only) and, for a student, optional `course_id`: the permanent student ID (BAL/<course code>/NNN) is issued at once from that course |
 | PATCH | /users/:id | admin | Name, phone, active flag, password reset, `permissions` (`"all"` or a list of areas for that role; full admin only) |
@@ -412,6 +413,7 @@ Generated from the `@auth` rules and checked by `tests/test_session32.py`, which
 | GET | `/api/users/<int:uid>` | admin | people |
 | PATCH | `/api/users/<int:uid>` | admin | people |
 | POST | `/api/users/<int:uid>/reset-password` | admin | people |
+| GET | `/api/users/<int:uid>/removal` | admin | people |
 | POST | `/api/whatsapp/prepare` | admin | - |
 | POST | `/api/whatsapp/sent` | admin | - |
 

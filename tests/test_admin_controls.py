@@ -47,7 +47,7 @@ class AdminControls(unittest.TestCase):
         bid = self.J("get", "/api/batches").get_json()[0]["id"]
         self.assertEqual(self.J("post", "/api/enrollments", json={"student_id": sid, "batch_id": bid}).status_code, 201)
         self.assertEqual(self.J("patch", f"/api/users/{sid}", json={"role": "teacher"}).status_code, 409)
-        self.assertEqual(self.J("delete", f"/api/users/{sid}").status_code, 409)   # has records -> disable instead
+        self.assertEqual(self.J("delete", f"/api/users/{sid}").status_code, 400)   # v0.8.61: has records -> the admin's password is needed (see test_v0861)
 
     def test_03_delete_clean_user_and_self_protection(self):
         uid = self.mk("gone@t.test")

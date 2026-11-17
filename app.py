@@ -8,6 +8,7 @@ import settings_schema as SS
 import idcodes
 import common, dbx, storage, transfers
 import presence
+import removeperson   # v0.8.61: remove a person with records (money records kept)
 import ratelimit
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -615,28 +616,60 @@ def create_app(config=None):
         resp.headers["Cache-Control"] = "no-store"
         return resp
 
-    @app.delete("/api/users/<int:uid>")
-    @auth("admin", perm="people")
-    def users_delete(uid):
-        """Delete an account made by mistake. Anyone with enrollments, grades, invoices or other records must be disabled instead."""
-        u = one("SELECT * FROM users WHERE id=?", (uid,))
-        if not u: return err("User not found", 404)
+    def removal_problem(u, uid):
+        """Why this account cannot be removed by the signed-in admin (None = it can)."""
         if uid == g.user["id"]: return err("You cannot delete your own account")
         if u["role"] == "admin" and g.user["permissions"] is not None: return err("Only a full admin can delete an admin", 403)
         if is_full_admin(u) and not other_full_admins(uid): return err("This is the only full admin and cannot be deleted", 409)
         if uid in super_ids():
             if not is_super(g.user): return err("Only the superadmin can delete the superadmin's account", 403)
             if not [i for i in super_ids() if i != uid]: return err("There must always be one superadmin. Make someone else superadmin first.", 409)
+        return None
+
+    @app.get("/api/users/<int:uid>/removal")
+    @auth("admin", perm="people")
+    def users_removal_preview(uid):
+        """v0.8.61: what removing this person would delete and keep. Changes nothing."""
+        u = one("SELECT * FROM users WHERE id=?", (uid,))
+        if not u: return err("User not found", 404)
+        p = removeperson.plan(db(), uid)
+        bad = removal_problem(u, uid)
+        p["refused"] = (bad[0] if isinstance(bad, tuple) else bad).get_json()["error"] if bad else ""
+        p["name"], p["role"], p["login_id"] = u["full_name"], u["role"], u["login_id"]
+        return jsonify(p)
+
+    @app.delete("/api/users/<int:uid>")
+    @auth("admin", perm="people")
+    def users_delete(uid):
+        """v0.8.61: remove a person, records and all (money records are kept under their name; see removeperson.py).
+        Someone with records needs {"password": the admin's own password}. A teacher with pay records is refused (disable instead)."""
+        u = one("SELECT * FROM users WHERE id=?", (uid,))
+        if not u: return err("User not found", 404)
+        bad = removal_problem(u, uid)
+        if bad: return bad
+        p = removeperson.plan(db(), uid)
+        if p["blocked"]: return err(p["blocked_message"], 409)
+        if p["has_records"]:
+            d = request.get_json(silent=True) or {}
+            pw = str(d.get("password") or "")
+            if not pw: return jsonify(error="This person has records. Enter your password to remove them.", code="password_needed"), 400
+            if not check_password_hash(one("SELECT password_hash FROM users WHERE id=?", (g.user["id"],))["password_hash"], pw):
+                audit("delete_user_refused", "user", uid, f"wrong password; {u['role']} {u['login_id'] or u['email']}"); db().commit()
+                return err("Your password is wrong", 403)
+        refs = removeperson.file_refs(db(), uid)
         try:
-            db().execute("DELETE FROM students WHERE user_id=?", (uid,))
-            db().execute("DELETE FROM teachers WHERE user_id=?", (uid,))
-            db().execute("DELETE FROM users WHERE id=?", (uid,))
-            audit("delete_user", "user", uid, f"{u['role']} {u['email']}")
+            done = removeperson.remove(db(), uid, g.user["id"])
+            if store.kind == "db": removeperson.remove_files(store, refs)   # same transaction
+            k = p["kept"]
+            audit("delete_user", "user", uid, (f"{u['role']} {u['full_name']} ({u['login_id'] or u['email']}); deleted: "
+                  + (", ".join(f"{t} {n}" for t, n in sorted(done.items())) or "nothing else")
+                  + f"; kept: {k['invoices']} invoice(s), {k['payments']} payment(s)")[:280])
             db().commit()
         except dbx.IntegrityError:
             db().rollback()
-            return err("This person already has records (enrollments, grades, invoices or decisions). Disable the account instead.", 409)
-        return jsonify(ok=True)
+            return err("This person could not be removed because a record still points to them. Disable the account instead, and report this.", 409)
+        files_ok, files_bad = (len(refs), 0) if store.kind == "db" else removeperson.remove_files(store, refs)
+        return jsonify(ok=True, deleted=done, kept=p["kept"], files_removed=files_ok, files_left=files_bad)
 
     # ---------- courses ----------
     COURSE_FIELDS = ("name", "level", "description", "textbook", "monthly_fee_mvr", "registration_fee_mvr", "days_per_week", "minutes_per_class", "status", "kind", "code", "is_active")
