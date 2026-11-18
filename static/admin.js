@@ -213,8 +213,8 @@ DO.euDel = async d => {   // v0.8.61: people with records can be removed too; a 
   if (k.applications) keep.push(t("rm_kept_apps").replace("{n}", fmtNum(k.applications)));
   if (!await ui.confirm(t("rm_confirm"), {danger: true, title: t("rm_title"), okText: t("rd_continue"),
     details: [who, t("rm_deleted") + ":"].concat(del.length ? del : [t("rm_nothing_else")], [t("rm_kept") + ":"], keep.length ? keep : [t("rm_kept_none")])})) return false;
-  const v = await ui.form(t("rm_title"), [{id: "password", label: t("rd_password"), type: "password", required: true, autocomplete: "current-password"}],
-    {okText: t("rm_button"), danger: true, hint: t("rm_form_hint")});
+  const v = await ui.form(t("rm_title"), [{id: "password", label: t("rm_own_password").replace("{you}", p.you || ""), type: "password", required: true, autocomplete: "current-password"}],
+    {okText: t("rm_button"), danger: true, hint: t("rm_form_hint").replace("{name}", p.name || "")});   // v0.8.62: the admin's own password, said plainly
   if (!v) return false;
   await api("/users/" + d.id, "DELETE", {password: v.password}); closeDetail({eu: null}); flash(t("rm_done").replace("{name}", p.name || ""), true);
 };
