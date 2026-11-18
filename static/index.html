@@ -551,6 +551,7 @@ const IC = {
   my_information: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
   interest: '<path d="M9 5h11M9 12h11M9 19h11"/><circle cx="4.5" cy="5" r="1.5"/><circle cx="4.5" cy="12" r="1.5"/><circle cx="4.5" cy="19" r="1.5"/>',
   staff_room: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/>',
+  posts: '<path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15 9a3 3 0 0 1 0 6M18 6a7 7 0 0 1 0 12"/>',   // v0.8.63: Notice board
   my_earnings: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
   more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
@@ -565,7 +566,7 @@ const IC = {
 };
 const icon = k => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${IC[k] || IC.dot}</svg>`;
 // The admin menu has 14 entries, so it is grouped. Tabs and their order still come from the server (ROLE_TABS).
-const NAV_GROUP = {dashboard: "nav_overview", admissions: "nav_overview", interest: "nav_overview", courses: "nav_teaching", batches: "nav_teaching", timetable: "nav_teaching", classroom: "nav_teaching", tutorials: "nav_teaching", staff_room: "nav_teaching",
+const NAV_GROUP = {dashboard: "nav_overview", posts: "nav_overview", admissions: "nav_overview", interest: "nav_overview", courses: "nav_teaching", batches: "nav_teaching", timetable: "nav_teaching", classroom: "nav_teaching", tutorials: "nav_teaching", staff_room: "nav_teaching",
   people: "nav_people", student_information: "nav_people", teacher_information: "nav_people", enrollments: "nav_people", online: "nav_people", fees: "nav_money", finance: "nav_money", settings: "nav_system", audit: "nav_system"};
 const BAR_SLOTS = 4;   // tabs shown in the phone's bottom bar; the rest sit behind "More"
 // Session 9: which tabs a role wants in the phone bar. Only the bar changes; the computer sidebar and the More sheet keep the server order.
@@ -1003,6 +1004,7 @@ window.addEventListener("DOMContentLoaded", () => loadText().then(() => api("/pu
 <script src="admin.js"></script>
 <script src="notify.js"></script>
 <script src="staffroom.js"></script>
+<script src="posts.js"></script>
 <script src="interest.js"></script>
 </body>
 </html>

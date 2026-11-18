@@ -7,7 +7,9 @@
     "#nov{position:fixed;inset:0;background:rgba(16,38,43,.45);z-index:50;display:flex;justify-content:flex-end}" +
     "#npanel{background:#fff;color:var(--ink);width:min(26rem,100%);height:100%;overflow-y:auto;padding:1rem;box-shadow:-4px 0 16px rgba(0,0,0,.2)}[dir=rtl] #npanel{box-shadow:4px 0 16px rgba(0,0,0,.2)}" +
     "#npanel .it{display:block;width:100%;text-align:start;background:none;border:0;border-bottom:1px solid var(--line);padding:.7rem .3rem;cursor:pointer;color:inherit;font:inherit}" +
-    "#npanel .it.un{background:var(--mist);font-weight:600}#npanel .it small{display:block;color:#51696e;font-weight:400}#npanel .row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.5rem 0}" +
+    "#npanel .it.un{background:var(--mist);font-weight:600}#npanel .nst{display:inline-block;font-size:.72rem;font-weight:600;border-radius:8px;padding:0 .4rem;margin-inline-end:.25rem}" +
+    "#npanel .nst.nw{background:var(--coral);color:#fff}#npanel .nst.rd{background:#e3ece9;color:#2f5d50}#npanel .nst.wt{background:#fff3cd;color:#6b5000}#npanel .td-done{opacity:.8}" +
+    "#npanel .tdh{font-size:.95rem;margin:.9rem 0 .2rem}#npanel .lv-bad{border-inline-start:4px solid var(--coral)}#npanel .ntabs .btn{flex:1}#npanel .ntabs .btn[aria-selected=false]{background:transparent;color:var(--ink);border:1px solid var(--line);box-shadow:none}#npanel .it small{display:block;color:#51696e;font-weight:400}#npanel .row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.5rem 0}" +
     "#npanel label{display:block;margin:.5rem 0}#npanel input,#npanel select,#npanel textarea{width:100%;box-sizing:border-box;padding:.5rem}";
   document.head.appendChild(css);
 
@@ -51,6 +53,7 @@
     const extra = {};
     if (tab === "assignments" && id) extra.aid = id;
     if (tab === "people" && id) extra.eu = id;   // v0.8.35: password help request: open that person
+    if (tab === "posts" && id) extra.post = id;   // v0.8.63: the Notice board opens at that post
     if (tab === "fees" && id) { S.fxhl = id; if (S.user.role === "admin") S.fxt = "slips"; }
     if (tab === "classroom" && id) {
       if (S.user.role === "teacher" && (S.mine || []).some(b => b.id === id)) { S.sb = id; sessionStorage.setItem("sb", id); }
@@ -61,36 +64,70 @@
   }
 
   async function inbox(before) {
-    const j = await api("/notifications?limit=20" + (before ? "&before=" + before : ""));
-    return j;
+    return api("/notifications?limit=20" + (before ? "&before=" + before : "") + (onlyNew ? "&unread=1" : ""));
   }
+  // v0.8.63: each line says in words whether it is new or already read (not only bold), so it is clear what still needs reading
   function itemsHtml(items) {
-    return items.map(i => `<button class="it ${i.read_at ? "" : "un"}" data-id="${i.id}" data-link="${esc(i.link || "")}" data-kind="${esc(i.kind || "")}">${esc(i.title)}${i.body ? `<small>${esc(i.body)}</small>` : ""}<small>${esc(when(i.created_at))}</small></button>`).join("");
+    return items.map(i => `<button class="it ${i.read_at ? "" : "un"}" data-id="${i.id}" data-link="${esc(i.link || "")}" data-kind="${esc(i.kind || "")}">`
+      + `<span class="nst ${i.read_at ? "rd" : "nw"}">${esc(t(i.read_at ? "n_read" : "n_new"))}</span> ${esc(i.title)}${i.body ? `<small>${esc(i.body)}</small>` : ""}<small>${esc(when(i.created_at))}</small></button>`).join("");
   }
+  let mode = "inbox", onlyNew = false;
+  // v0.8.63: the person's own to-do list: still to do, waiting for someone else, and done
+  function todoHtml(j) {
+    const label = x => {
+      let s = t(x.key);
+      s = s.includes("{n}") ? s.replace("{n}", x.n ?? "") : x.n != null && !x.title ? x.n + " " + s : s;   // admin items ("applications waiting for review") carry their count apart
+      const sub = x.sub && /^td_fee/.test(x.key) ? t("td_due").replace("{d}", x.sub) : x.sub;
+      return x.title ? `<b dir="auto">${esc(x.title)}</b> <small>${esc(s)}${sub ? " · " + esc(sub) : ""}</small>` : `${esc(s)}${x.sub ? ` <small>${esc(x.sub)}</small>` : ""}`;
+    };
+    const part = (st, h) => { const xs = j.items.filter(x => x.status === st); return xs.length ? `<h3 class="tdh">${esc(t(h))} (${xs.length})</h3>` + xs.map((x, k) =>
+      `<button class="it td-${st} lv-${esc(x.level)}" data-ti="${j.items.indexOf(x)}"><span class="nst ${st === "done" ? "rd" : st === "todo" ? "nw" : "wt"}">${st === "done" ? "✓ " : ""}${esc(t("td_st_" + st))}</span> ${label(x)}</button>`).join("") : ""; };
+    return part("todo", "td_h_todo") + part("waiting", "td_h_waiting") + part("done", "td_h_done") || `<p class="hint">${esc(t("nothing_to_do"))}</p>`;
+  }
+  const tabsHtml = (unread, todo) => `<div class="row ntabs" role="tablist" aria-label="${esc(t("Notifications"))}">`
+    + `<button role="tab" id="ntab_in" aria-selected="${mode === "inbox"}" class="btn ${mode === "inbox" ? "" : "alt"}">${esc(t("Notifications"))}${unread ? ` (${unread})` : ""}</button>`
+    + `<button role="tab" id="ntab_td" aria-selected="${mode === "todo"}" class="btn ${mode === "todo" ? "" : "alt"}">${esc(t("td_tab"))}${todo ? ` (${todo})` : ""}</button></div>`;
   async function panel() {
     const p = open(`<h2 id="nTitle">${esc(t("Notifications"))}</h2><p class="hint">${esc(t("Loading..."))}</p>`);
-    let j; try { j = await inbox(); } catch (x) { p.innerHTML = `<h2 id="nTitle">${esc(t("Notifications"))}</h2><div class="msg err" role="alert">${esc(x.message)}</div><button class="btn alt" id="nx">${esc(t("Close"))}</button>`; $("#nx").onclick = () => close(); focusIn(); return; }
+    let j, td;
+    try { [j, td] = await Promise.all([inbox(), api("/my/todo").catch(() => ({items: [], todo: 0}))]); }
+    catch (x) { p.innerHTML = `<h2 id="nTitle">${esc(t("Notifications"))}</h2><div class="msg err" role="alert">${esc(x.message)}</div><button class="btn alt" id="nx">${esc(t("Close"))}</button>`; $("#nx").onclick = () => close(); focusIn(); return; }
     if (!$("#npanel")) return;   // closed while loading
     const admin = S.user && S.user.role === "admin";
-    p.innerHTML = `<div class="row"><h2 id="nTitle" style="margin:0;flex:1">${esc(t("Notifications"))}</h2><button class="btn alt" id="nx">${esc(t("Close"))}</button></div>` +
-      `<div class="row"><button class="btn alt" id="nra">${esc(t("Mark all as read"))}</button>${admin ? `<button class="btn alt" id="nan">${esc(t("Send announcement"))}</button><button class="btn alt" id="nrm">${esc(t("Reminders"))}</button><button class="btn alt" id="nwa">${esc(t("WhatsApp"))}</button>` : ""}</div>` +
-      `<div id="nl">${j.items.length ? itemsHtml(j.items) : `<p class="hint">${esc(t("Nothing here yet."))}</p>`}</div>` +
-      (j.items.length === 20 ? `<p><button class="btn alt" id="nmore">${esc(t("Older"))}</button></p>` : "");
+    const head = `<div class="row"><h2 id="nTitle" style="margin:0;flex:1">${esc(t("Notifications"))}</h2><button class="btn alt" id="nx">${esc(t("Close"))}</button></div>` + tabsHtml(j.unread, td.todo);
+    if (mode === "todo") {
+      p.innerHTML = head + `<p class="hint">${esc(t("td_hint"))}</p><div id="ntd">${todoHtml(td)}</div>`;
+      document.querySelectorAll("#ntd .it").forEach(b => b.onclick = () => {
+        const x = td.items[+b.dataset.ti]; close(false);
+        const extra = {...(x.patch || {})};
+        if (extra.sb && S.user.role === "teacher") { S.sb = extra.sb; sessionStorage.setItem("sb", extra.sb); delete extra.sb; }
+        if (x.view && (S.user.tabs || []).includes(x.view)) openTab(x.view, extra);
+      });
+    } else {
+      p.innerHTML = head +
+        `<div class="row"><button class="btn alt" id="nra">${esc(t("Mark all as read"))}</button><label class="inl" style="margin:0"><input type="checkbox" id="nonly" style="width:auto"${onlyNew ? " checked" : ""}> ${esc(t("n_only_new"))}</label></div>` +
+        (admin ? `<div class="row"><button class="btn alt" id="nan">${esc(t("Send announcement"))}</button><button class="btn alt" id="nrm">${esc(t("Reminders"))}</button><button class="btn alt" id="nwa">${esc(t("WhatsApp"))}</button></div>` : "") +
+        `<div id="nl">${j.items.length ? itemsHtml(j.items) : `<p class="hint">${esc(t(onlyNew ? "no_unread" : "Nothing here yet."))}</p>`}</div>` +
+        (j.items.length === 20 ? `<p><button class="btn alt" id="nmore">${esc(t("Older"))}</button></p>` : "");
+      $("#nra").onclick = async () => { await api("/notifications/read-all", "POST"); panel(); };
+      $("#nonly").onchange = e => { onlyNew = e.target.checked; panel(); };
+      if (admin) { $("#nan").onclick = announceForm; $("#nrm").onclick = remindersPanel; $("#nwa").onclick = waForm; }
+      const wire = () => document.querySelectorAll("#nl .it").forEach(b => b.onclick = async () => {
+        try { await api("/notifications/" + b.dataset.id + "/read", "POST"); } catch (x) { /* already gone */ }
+        const l = b.dataset.link; close(false);
+        if (l) openLink(l, b.dataset.kind); else { const bell = $("#bell"); if (bell) bell.focus(); }
+      });
+      wire();
+      if ($("#nmore")) $("#nmore").onclick = async () => {
+        const last = document.querySelectorAll("#nl .it"); const id = last[last.length - 1].dataset.id;
+        const m = await inbox(id); $("#nl").insertAdjacentHTML("beforeend", itemsHtml(m.items)); wire();
+        if (m.items.length < 20) $("#nmore").remove();
+      };
+    }
     $("#nx").onclick = () => close();
+    $("#ntab_in").onclick = () => { mode = "inbox"; panel(); };
+    $("#ntab_td").onclick = () => { mode = "todo"; panel(); };
     focusIn();
-    $("#nra").onclick = async () => { await api("/notifications/read-all", "POST"); panel(); };
-    if (admin) { $("#nan").onclick = announceForm; $("#nrm").onclick = remindersPanel; $("#nwa").onclick = waForm; }
-    const wire = () => document.querySelectorAll("#nl .it").forEach(b => b.onclick = async () => {
-      try { await api("/notifications/" + b.dataset.id + "/read", "POST"); } catch (x) { /* already gone */ }
-      const l = b.dataset.link; close(false);
-      if (l) openLink(l, b.dataset.kind); else { const bell = $("#bell"); if (bell) bell.focus(); }
-    });
-    wire();
-    if ($("#nmore")) $("#nmore").onclick = async () => {
-      const last = document.querySelectorAll("#nl .it"); const id = last[last.length - 1].dataset.id;
-      const m = await inbox(id); $("#nl").insertAdjacentHTML("beforeend", itemsHtml(m.items)); wire();
-      if (m.items.length < 20) $("#nmore").remove();
-    };
   }
 
   async function announceForm() {
@@ -174,6 +211,7 @@
     };
   }
 
+  window.bellRefresh = refreshCount;   // v0.8.63: the Notice board calls this after marking posts read
   window.initBell = function () {
     const b = $("#bell"); if (!b) return;
     b.onclick = panel; refreshCount();

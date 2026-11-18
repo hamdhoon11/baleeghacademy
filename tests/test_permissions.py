@@ -37,19 +37,19 @@ class Permissions(unittest.TestCase):
     # ---- the server decides the tabs ----
     def test_01_default_tabs_per_role(self):
         self.assertEqual(self.login("admin@pm.test", "AdminPass123")["user"]["tabs"],
-                         ["dashboard", "admissions", "interest", "courses", "batches", "timetable", "classroom", "tutorials", "staff_room", "people", "student_information", "teacher_information", "enrollments", "online", "fees", "finance", "settings", "audit"])
+                         ["dashboard", "posts", "admissions", "interest", "courses", "batches", "timetable", "classroom", "tutorials", "staff_room", "people", "student_information", "teacher_information", "enrollments", "online", "fees", "finance", "settings", "audit"])
         self.mk("t0@pm.test", "teacher"); self.mk("s0@pm.test", "student")
-        self.assertEqual(self.login("t0@pm.test")["user"]["tabs"], ["home", "timetable", "classroom", "tutorials", "staff_room", "my_files", "my_earnings", "my_information"])
-        self.assertEqual(self.login("s0@pm.test")["user"]["tabs"], ["home", "timetable", "assignments", "progress", "materials", "recordings", "fees", "tutorials", "my_files", "my_information"])
+        self.assertEqual(self.login("t0@pm.test")["user"]["tabs"], ["home", "posts", "timetable", "classroom", "tutorials", "staff_room", "my_files", "my_earnings", "my_information"])
+        self.assertEqual(self.login("s0@pm.test")["user"]["tabs"], ["home", "posts", "timetable", "assignments", "progress", "materials", "recordings", "fees", "tutorials", "my_files", "my_information"])
         self.assertIsNone(self.login("s0@pm.test")["user"]["permissions"])   # None = everything the role has
 
     def test_02_student_limited_tabs_and_me(self):
         sid = self.mk("s1@pm.test", "student")
         self.limit(sid, ["assignments", "tutorials"])
         u = self.login("s1@pm.test")["user"]
-        self.assertEqual(u["tabs"], ["home", "timetable", "assignments", "tutorials", "my_files", "my_information"]); self.assertEqual(u["permissions"], ["assignments", "tutorials"])
+        self.assertEqual(u["tabs"], ["home", "posts", "timetable", "assignments", "tutorials", "my_files", "my_information"]); self.assertEqual(u["permissions"], ["assignments", "tutorials"])
         me = self.J("get", "/api/auth/me", self.H("s1@pm.test")).get_json()["user"]
-        self.assertEqual(me["tabs"], ["home", "timetable", "assignments", "tutorials", "my_files", "my_information"])
+        self.assertEqual(me["tabs"], ["home", "posts", "timetable", "assignments", "tutorials", "my_files", "my_information"])
 
     # ---- the server refuses what is not allowed ----
     def test_03_student_requests_refused_outside_areas(self):
@@ -76,7 +76,7 @@ class Permissions(unittest.TestCase):
 
     def test_05_teacher_limited(self):
         tid = self.mk("t1@pm.test", "teacher"); self.limit(tid, ["tutorials"])
-        self.assertEqual(self.login("t1@pm.test")["user"]["tabs"], ["home", "timetable", "tutorials", "my_files", "my_earnings", "my_information"])
+        self.assertEqual(self.login("t1@pm.test")["user"]["tabs"], ["home", "posts", "timetable", "tutorials", "my_files", "my_earnings", "my_information"])
         h = self.H("t1@pm.test")
         bid = self.J("get", "/api/batches").get_json()[0]["id"]
         for m, url in (("get", f"/api/batches/{bid}/attendance"), ("get", "/api/assignments"), ("get", "/api/materials"), ("get", f"/api/batches/{bid}/gradebook")):
@@ -87,7 +87,7 @@ class Permissions(unittest.TestCase):
 
     def test_06_admin_limited_still_works_and_other_roles_cannot_enter_admin_areas(self):
         aid = self.mk("a1@pm.test", "admin"); self.limit(aid, ["people"])
-        self.assertEqual(self.login("a1@pm.test")["user"]["tabs"], ["dashboard", "people", "online"])   # v0.8.48: every admin sees Who's online
+        self.assertEqual(self.login("a1@pm.test")["user"]["tabs"], ["dashboard", "posts", "people", "online"])   # v0.8.48: every admin sees Who's online
         h = self.H("a1@pm.test")
         self.assertEqual(self.J("get", "/api/users/1", h).status_code, 200)
         self.assertEqual(self.J("get", "/api/settings", h).status_code, 403)
@@ -103,7 +103,7 @@ class Permissions(unittest.TestCase):
         self.assertEqual(self.J("patch", f"/api/users/{tid}", json={"permissions": ["fees"]}).status_code, 400)
         self.assertEqual(self.J("patch", f"/api/users/{sid}", json={"permissions": ["nonsense"]}).status_code, 400)
         self.assertEqual(self.J("patch", f"/api/users/{sid}", json={"permissions": "everything"}).status_code, 400)
-        self.limit(sid, []); self.assertEqual(self.login("s5@pm.test")["user"]["tabs"], ["home", "timetable", "my_information"])   # nothing ticked: Home and the timetable (v0.8.37) only
+        self.limit(sid, []); self.assertEqual(self.login("s5@pm.test")["user"]["tabs"], ["home", "posts", "timetable", "my_information"])   # nothing ticked: Home and the timetable (v0.8.37) only
         self.limit(sid, "all"); self.assertIsNone(self.login("s5@pm.test")["user"]["permissions"])
         self.assertEqual(self.J("get", f"/api/users/{sid}").get_json()["areas"], ["assignments", "progress", "materials", "recordings", "fees", "tutorials", "submit_tutorial_work"])
 
@@ -119,12 +119,12 @@ class Permissions(unittest.TestCase):
     def test_09_create_with_permissions_and_role_change_resets(self):
         r = self.J("post", "/api/users", json={"email": "s8@pm.test", "password": "Password123", "full_name": "S8", "role": "student", "permissions": ["materials", "tutorials"]})
         self.assertEqual(r.status_code, 201, r.get_json()); uid = r.get_json()["id"]
-        self.assertEqual(self.login("s8@pm.test")["user"]["tabs"], ["home", "timetable", "materials", "tutorials", "my_files", "my_information"])
+        self.assertEqual(self.login("s8@pm.test")["user"]["tabs"], ["home", "posts", "timetable", "materials", "tutorials", "my_files", "my_information"])
         self.assertEqual(self.J("post", "/api/users", json={"email": "s9@pm.test", "password": "Password123", "full_name": "S9", "role": "teacher", "permissions": ["fees"]}).status_code, 400)
         # role change: permissions + role together is refused; the role change alone resets to "everything the new role has"
         self.assertEqual(self.J("patch", f"/api/users/{uid}", json={"role": "teacher", "permissions": ["classroom"]}).status_code, 400)
         self.assertEqual(self.J("patch", f"/api/users/{uid}", json={"role": "teacher"}).status_code, 200)
-        self.assertEqual(self.login("s8@pm.test")["user"]["tabs"], ["home", "timetable", "classroom", "tutorials", "staff_room", "my_files", "my_earnings", "my_information"])
+        self.assertEqual(self.login("s8@pm.test")["user"]["tabs"], ["home", "posts", "timetable", "classroom", "tutorials", "staff_room", "my_files", "my_earnings", "my_information"])
 
     def test_10_change_takes_effect_on_the_next_request(self):
         sid = self.mk("s10@pm.test", "student"); h = self.H("s10@pm.test")   # one token, used before and after
@@ -142,7 +142,7 @@ class Permissions(unittest.TestCase):
         import json, re, settings_schema as SS
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         en = json.load(open(os.path.join(root, "static/i18n/en.json"), encoding="utf-8"))
-        js = "".join(open(os.path.join(root, "static", f), encoding="utf-8").read() for f in ("index.html", "learning.js", "fees.js", "admin.js", "staffroom.js", "interest.js"))
+        js = "".join(open(os.path.join(root, "static", f), encoding="utf-8").read() for f in ("index.html", "learning.js", "fees.js", "admin.js", "staffroom.js", "interest.js", "posts.js"))
         adm = open(os.path.join(root, "static/admin.js"), encoding="utf-8").read()
         for role, tabs in SS.ROLE_TABS.items():
             for tab in tabs:
