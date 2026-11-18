@@ -89,6 +89,20 @@ class RemovePerson(unittest.TestCase):
         self.assertIn("enrollments 1", log)
         self.assertEqual(self.J("get", "/api/batches").status_code, 200)
 
+    def test_02b_their_password_is_explained(self):
+        """v0.8.62: typing the removed person's password (instead of your own) says so plainly and removes nothing."""
+        sid, e, bid = self.enrolled()
+        p = self.J("get", f"/api/users/{sid}/removal").get_json()
+        lid = self.sql("SELECT login_id FROM users WHERE email='admin@rm.test'")[0][0]
+        self.assertEqual(p["you"], lid or "admin@rm.test")   # the dialog names the signed-in admin
+        r = self.J("delete", f"/api/users/{sid}", json={"password": "Password123"})   # the student's own password
+        self.assertEqual((r.status_code, r.get_json().get("code")), (403, "their_password"))
+        self.assertIn("YOUR OWN password", r.get_json()["error"])
+        r = self.J("delete", f"/api/users/{sid}", json={"password": "nope"})
+        self.assertEqual((r.status_code, r.get_json().get("code")), (403, "wrong_password"))
+        self.assertEqual(self.J("get", f"/api/users/{sid}").status_code, 200)
+        self.assertEqual(self.J("delete", f"/api/users/{sid}", json={"password": "AdminPass123"}).status_code, 200)
+
     def test_03_no_records_needs_no_password(self):
         uid, _ = self.mk()
         self.assertFalse(self.J("get", f"/api/users/{uid}/removal").get_json()["has_records"])

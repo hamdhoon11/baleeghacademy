@@ -88,7 +88,7 @@ const ui = (() => {
       const el = f.querySelector("#" + px + "_" + fl.id);
       if (fl.type === "checkbox") { out[fl.id] = el.checked; continue; }
       if (fl.type === "file") { const file = el.files[0] || null; if (fl.required && !file) { el.setAttribute("aria-invalid", "true"); el.focus(); throw new Error(t("dlg_required").replace("{f}", fl.label)); } out[fl.id] = file; continue; }
-      const v = el.value.trim();
+      const v = fl.type === "password" ? el.value : el.value.trim();   // v0.8.62: a password is sent exactly as typed
       const bad = msg => { el.setAttribute("aria-invalid", "true"); el.focus(); throw new Error(msg); };
       if (fl.required && !v) bad(t("dlg_required").replace("{f}", fl.label));
       if (fl.type === "number" && v !== "") {

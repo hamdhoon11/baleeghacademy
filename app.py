@@ -636,6 +636,7 @@ def create_app(config=None):
         bad = removal_problem(u, uid)
         p["refused"] = (bad[0] if isinstance(bad, tuple) else bad).get_json()["error"] if bad else ""
         p["name"], p["role"], p["login_id"] = u["full_name"], u["role"], u["login_id"]
+        p["you"] = g.user["login_id"] or g.user["email"] or ""   # v0.8.62: the dialog says whose password to type
         return jsonify(p)
 
     @app.delete("/api/users/<int:uid>")
@@ -654,8 +655,13 @@ def create_app(config=None):
             pw = str(d.get("password") or "")
             if not pw: return jsonify(error="This person has records. Enter your password to remove them.", code="password_needed"), 400
             if not check_password_hash(one("SELECT password_hash FROM users WHERE id=?", (g.user["id"],))["password_hash"], pw):
-                audit("delete_user_refused", "user", uid, f"wrong password; {u['role']} {u['login_id'] or u['email']}"); db().commit()
-                return err("Your password is wrong", 403)
+                # v0.8.62: the password asked for is the signed-in admin's own, not the person's being removed. Say so when that mix-up happens.
+                theirs = bool(u["password_hash"]) and check_password_hash(u["password_hash"], pw)
+                audit("delete_user_refused", "user", uid, f"{'their password typed' if theirs else 'wrong password'}; {u['role']} {u['login_id'] or u['email']}"); db().commit()
+                you = g.user["login_id"] or g.user["email"] or ""
+                if theirs:
+                    return jsonify(error=f"That is {u['full_name']}'s password. Type YOUR OWN password instead: the one you sign in with as {you}.", code="their_password"), 403
+                return jsonify(error=f"Wrong password. Type your own password: the one you sign in with as {you}. Not the password of the person being removed.", code="wrong_password"), 403
         refs = removeperson.file_refs(db(), uid)
         try:
             done = removeperson.remove(db(), uid, g.user["id"])
