@@ -399,6 +399,10 @@ def register(app, c):
             db().execute("INSERT INTO attendance(session_id,student_id,status,note,marked_by) VALUES(?,?,?,?,?) "
                          "ON CONFLICT(session_id,student_id) DO UPDATE SET status=excluded.status,note=excluded.note,marked_by=excluded.marked_by,marked_at=datetime('now')",
                          (sid_, sid, status, note, g.user["id"]))
+        absent = [s for s, st_, _ in clean_recs if st_ == "absent" and prev.get(s) != "absent"]
+        if absent:   # v0.8.63: a student marked absent is told (once per class; a dedupe key stops a second message when the mark is saved again)
+            bn = one("SELECT b.code, c.name FROM batches b JOIN courses c ON c.id=b.course_id WHERE b.id=?", (bid,))
+            c.notify(absent, "absent", "Marked absent", f"{bn['name']} · {bn['code']} on {day.isoformat()} {st}. If this is wrong, tell your teacher.", "progress", f"absent:{sid_}")
         audit("mark_attendance", "session", sid_, f"batch {bid} {day} ({len(clean_recs)} students)" + (" as substitute" if as_sub else ""), batch_id=bid, old=",".join(was) or None, new=",".join(now) or "no change"); db().commit()
         return jsonify(session_id=sid_, saved=len(clean_recs))
 
@@ -897,6 +901,7 @@ def register(app, c):
             except ValueError as x: return err(str(x))
         mid = db().execute("INSERT INTO materials(batch_id,title,description,kind,file,file_name,url,uploaded_by) VALUES(?,?,?,?,?,?,?,?)",
                            (bid, f["title"].strip(), f.get("description"), kind, stored, shown, url or None, g.user["id"])).lastrowid
+        c.notify(c.notify_students_of(bid), "material_new", "New material", f["title"].strip()[:200], "materials", f"material:{mid}")   # v0.8.63
         audit("add_material", "material", mid, f["title"], batch_id=bid); db().commit()
         return jsonify(id=mid), 201
 
@@ -971,6 +976,7 @@ def register(app, c):
         if e: return e
         rid = db().execute("INSERT INTO recordings(batch_id,title,url,recorded_on,created_by) VALUES(?,?,?,?,?)",
                            (bid, title, url, day.isoformat(), g.user["id"])).lastrowid
+        c.notify(c.notify_students_of(bid), "recording_new", "New class recording", f"{title} ({day.isoformat()})", "recordings", f"recording:{rid}")   # v0.8.63
         audit("add_recording", "recording", rid, f"{b['code']}: {title}", batch_id=bid); db().commit()
         return jsonify(id=rid), 201
 
@@ -1059,6 +1065,10 @@ def register(app, c):
             except ValueError as x: return err(str(x))
         tid = db().execute("INSERT INTO tutorials(title,body,course_id,file,file_name,url,uploaded_by,max_points) VALUES(?,?,?,?,?,?,?,?)",
                            (f["title"].strip(), text or None, cid, stored, shown, url or None, g.user["id"], mx)).lastrowid
+        # v0.8.63: students who can see it are told (its course's active students, or every active student for a tutorial without a course)
+        who = [r["student_id"] for r in rows("SELECT DISTINCT e.student_id FROM enrollments e JOIN batches b ON b.id=e.batch_id JOIN users u ON u.id=e.student_id "
+                                             "WHERE e.status='active' AND u.is_active=1" + (" AND b.course_id=?" if cid else ""), (cid,) if cid else ())]
+        c.notify(who, "tutorial_new", "New tutorial", f["title"].strip()[:200], "tutorials", f"tutorial:{tid}")
         audit("add_tutorial", "tutorial", tid, f["title"], course_id=cid); db().commit()
         return jsonify(id=tid), 201
 
@@ -1357,6 +1367,61 @@ def register(app, c):
                                      "WHERE t.file IS NOT NULL AND t.uploaded_by=?", (u["id"],)), "/tutorials/{id}/file")
         out.sort(key=lambda x: (x["date"], x["title"] or ""), reverse=True)
         return jsonify(files=out[:1000])
+
+    def my_todo():
+        """v0.8.63: the signed-in student's or teacher's to-do list, with what is already done. Read only; used by GET /api/my/todo (todo.py).
+        Each item: {key, status: todo|waiting|done, title, sub, level, view, patch, n}. The page words come from en.json by key."""
+        u, t0, items = g.user, today(), []
+        add = lambda key, status, title=None, sub=None, level="warn", view=None, patch=None, n=None: items.append(
+            {"key": key, "status": status, "title": title, "sub": sub, "level": level, "view": view, "patch": patch or {}, "n": n})
+        bs = my_batches()
+        ids = [b["id"] for b in bs]
+        if u["role"] == "student":
+            if ids and can("assignments"):
+                q = marks(len(ids))
+                open_a = rows(f"SELECT a.id,a.title,a.due_date,c.name AS course_name FROM assignments a JOIN batches b ON b.id=a.batch_id JOIN courses c ON c.id=b.course_id "
+                              f"WHERE a.batch_id IN ({q}) AND a.kind='assignment' AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.assignment_id=a.id AND s.student_id=? "
+                              f"AND s.submitted_at IS NOT NULL) ORDER BY COALESCE(a.due_date,'9999-12-31') LIMIT 15", (*ids, u["id"]))
+                for a in open_a:
+                    late = bool(a["due_date"] and a["due_date"][:10] < t0.isoformat())
+                    add("td_hand_in_due" if a["due_date"] else "td_hand_in", "todo", a["title"], a["course_name"], "bad" if late else "warn", "assignments", {"aid": a["id"]}, n=a["due_date"][:10] if a["due_date"] else None)
+                since = (t0 - dt.timedelta(days=14)).isoformat()
+                for a in rows(f"SELECT a.id,a.title,a.max_points,s.grade,s.submitted_at,c.name AS course_name FROM submissions s JOIN assignments a ON a.id=s.assignment_id "
+                              f"JOIN batches b ON b.id=a.batch_id JOIN courses c ON c.id=b.course_id WHERE a.batch_id IN ({q}) AND s.student_id=? AND s.submitted_at>=? "
+                              f"ORDER BY s.submitted_at DESC LIMIT 10", (*ids, u["id"], since)):
+                    add("td_handed_in" if a["grade"] is None else "td_graded", "done", a["title"], a["course_name"], "ok", "assignments", {"aid": a["id"]},
+                        n=None if a["grade"] is None else f"{a['grade']:g} / {a['max_points']}")
+            if can("tutorials") and can("submit_tutorial_work"):
+                cids = sorted({b["course_id"] for b in bs if b.get("course_id")}) or [0]
+                since = (t0 - dt.timedelta(days=30)).isoformat()
+                for tt in rows(f"SELECT t.id,t.title,c.name AS course_name,(SELECT 1 FROM tutorial_submissions x WHERE x.tutorial_id=t.id AND x.student_id=?) AS done "
+                               f"FROM tutorials t JOIN users au ON au.id=t.uploaded_by LEFT JOIN courses c ON c.id=t.course_id WHERE au.role IN ('admin','teacher') "
+                               f"AND (t.course_id IS NULL OR t.course_id IN ({marks(len(cids))})) AND t.created_at>=? ORDER BY t.id DESC LIMIT 15", (u["id"], *cids, since)):
+                    add("td_tutorial_answered" if tt["done"] else "td_tutorial", "done" if tt["done"] else "todo", tt["title"], tt["course_name"],
+                        "ok" if tt["done"] else "info", "tutorials")
+        else:
+            if ids and can("classroom"):
+                t_s = now().isoformat()
+                todays = [o for o in occurrences(bs, t0, t0) if o["date"] == t0.isoformat() and o.get("status") != "cancelled"]
+                done = attendance_taken([o["batch_id"] for o in todays], t0.isoformat())
+                for o in todays:
+                    label = f"{o['course_name']} · {o['batch_code']}"
+                    if o["batch_id"] in done: add("td_attendance_taken", "done", label, o["start_time"], "ok", "classroom", {"ct": "attendance", "sb": o["batch_id"]})
+                    elif o["starts_at"] <= t_s: add("td_take_attendance", "todo", label, o["start_time"], "bad", "classroom", {"ct": "attendance", "sb": o["batch_id"]})
+                    else: add("td_class_later", "waiting", label, o["start_time"], "info", "classroom", {"ct": "attendance", "sb": o["batch_id"]})
+                aids = [r["id"] for r in rows(f"SELECT id FROM assignments WHERE kind='assignment' AND batch_id IN ({marks(len(ids))})", ids)]
+                cnt = assign_counts(aids)
+                waiting = [i for i in aids if cnt[i]["pending"]]
+                if waiting:
+                    for a in rows(f"SELECT a.id,a.title,b.code,c.name AS course_name FROM assignments a JOIN batches b ON b.id=a.batch_id JOIN courses c ON c.id=b.course_id "
+                                  f"WHERE a.id IN ({marks(len(waiting))}) ORDER BY a.id DESC LIMIT 15", waiting):
+                        add("td_grade", "todo", a["title"], f"{a['course_name']} · {a['code']}", "warn", "classroom", {"ct": "assignments", "aid": a["id"]}, n=cnt[a["id"]]["pending"])
+                elif aids: add("td_all_graded", "done", level="ok", view="classroom", patch={"ct": "assignments"})
+            if can("tutorials") and can("create_tutorials"):
+                n = one("SELECT COUNT(*) n FROM tutorial_submissions s JOIN tutorials t ON t.id=s.tutorial_id WHERE t.uploaded_by=? AND s.graded_at IS NULL", (u["id"],))["n"]
+                if n: add("td_tut_answers", "todo", level="warn", view="tutorials", n=n)
+        return items
+    app.extensions["my_todo"] = my_todo
 
     @app.get("/api/my/home")
     @auth("student", "teacher")

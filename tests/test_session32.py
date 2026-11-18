@@ -36,6 +36,12 @@ OPEN = {
  ("GET", "/api/staff/folders"): AT, ("POST", "/api/staff/folders"): AT, ("PATCH", "/api/staff/folders/<int:fid>"): AT, ("DELETE", "/api/staff/folders/<int:fid>"): AT,
  ("GET", "/api/staff/files"): AT, ("POST", "/api/staff/files"): AT, ("PATCH", "/api/staff/files/<int:xid>"): AT, ("DELETE", "/api/staff/files/<int:xid>"): AT,
  ("GET", "/api/staff/files/<int:xid>/file"): AT,
+ # v0.8.63: Notice board. Everyone reads what is meant for them; writing needs "write_posts" and is checked inside posts.py (tests/test_v0863.py).
+ ("GET", "/api/posts"): ALL, ("POST", "/api/posts/read"): ALL, ("POST", "/api/posts"): AT, ("PATCH", "/api/posts/<int:pid>"): AT, ("DELETE", "/api/posts/<int:pid>"): AT,
+ ("POST", "/api/posts/<int:pid>/pin"): AT, ("POST", "/api/posts/<int:pid>/files"): AT, ("DELETE", "/api/posts/<int:pid>/files/<int:fid>"): AT,
+ ("GET", "/api/posts/<int:pid>/files/<int:fid>"): ALL, ("GET", "/api/posts/<int:pid>/seen"): AT, ("GET", "/api/posts/<int:pid>/comments"): ALL,
+ ("POST", "/api/posts/<int:pid>/comments"): ALL, ("DELETE", "/api/posts/<int:pid>/comments/<int:cid>"): ALL,
+ ("GET", "/api/my/todo"): ALL,   # v0.8.63: each person's own to-do list
 }
 # admin-only routes with no permission area: each checks inside the route, and test_03 / test_04 prove it.
 NO_AREA = {("GET", "/api/admin/dashboard"), ("GET", "/api/dashboard"), ("GET", "/api/admin/todo"), ("GET", "/api/users"), ("POST", "/api/whatsapp/prepare"), ("POST", "/api/whatsapp/sent"),
@@ -134,7 +140,7 @@ class S32(unittest.TestCase):
             "expense-categories": i["exp_cat"], "expenses": i["expense"], "families": i["family"], "invoices": i["invoice"], "materials": i["material"], "notifications": 1, "payments": i["payment"],
             "recordings": i["recording"], "slips": i["slip"], "student-information": W["s1"][0], "submissions": i["submission"], "substitutions": 1, "teacher-information": W["t1"][0],
             "tutorial-submissions": i["tut_sub"], "tutorials": i["tutorial"], "users": W["s1"][0], "student-history": W["s1"][0], "members": W["s1"][0], "students": W["s1"][0], "recurring-expenses": 1, "revenue-types": 1, "accounts": W["s1"][0],
-            "messages": 1, "folders": 1, "files": 1, "interest": 1})   # v0.8.58: Teachers' room (an id that does not exist: refusals come first, allowed calls 404)
+            "messages": 1, "folders": 1, "files": 1, "interest": 1, "posts": 1, "comments": 1})   # v0.8.58: Teachers' room (an id that does not exist: refusals come first, allowed calls 404)
         cls.P = {"none": {}, "admin": W["A"], "lim": W["H_lim"], "t1": W["H_t1"], "t2": W["H_t2"], "t3": W["H_t3"], "s1": W["H_s1"], "s2": W["H_s2"], "sw": W["H_sw"]}
         cls.ROLE = {"admin": "admin", "lim": "admin", "t1": "teacher", "t2": "teacher", "t3": "teacher", "s1": "student", "s2": "student", "sw": "student"}
 

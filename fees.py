@@ -171,6 +171,12 @@ def register(app, c):
         return total, note
 
     # ---------- invoice creation ----------
+    def tell_invoice(iid):
+        """v0.8.63: the student hears about a new invoice they have to pay (not a waived one, not a walk-in customer's). Once per invoice."""
+        i = one("SELECT student_id,description,amount_due_mvr,due_date,status FROM invoices WHERE id=?", (iid,))
+        if i and i["student_id"] and i["status"] == "unpaid" and int(i["amount_due_mvr"] or 0) > 0:
+            c.notify([i["student_id"]], "invoice_new", "New invoice", f"{i['description']}: {i['amount_due_mvr']} MVR, due {i['due_date']}", f"fees:{iid}", f"invoice:{iid}")
+
     def make_invoice(e, period, first, user_id):
         """e: row with eid, student_id, bid, code, cid, cname, level, fee. Returns the new invoice id, or None when one already exists."""
         disc, note = discount_for(e["eid"], e["student_id"], e["fee"])
@@ -181,6 +187,7 @@ def register(app, c):
              due_date_for(period, first), note, user_id, stamp()))
         if not cur.rowcount: return None
         P.recompute(cur.lastrowid)   # a fully discounted invoice becomes 'waived' here
+        tell_invoice(cur.lastrowid)
         return cur.lastrowid
 
     ENR_SQL = ("SELECT e.id AS eid, e.student_id, e.enrolled_at, e.status AS estatus, b.id AS bid, b.code, c.id AS cid, c.name AS cname, c.level, "
@@ -216,6 +223,7 @@ def register(app, c):
             "VALUES(?,?,?,?,'REG-FEE',?,'registration',?,0,?,?,'unpaid',?,?) ON CONFLICT (enrollment_id, period) DO NOTHING",
             (e["eid"], e["student_id"], e["cid"], e["bid"], f"Registration fee · {e['cname']}{' ' + e['level'] if e['level'] else ''} · Batch {e['code']}", fee, fee,
              (today() + dt.timedelta(days=grace)).isoformat(), user_id, stamp()))
+        if cur.rowcount: tell_invoice(cur.lastrowid)
         return cur.lastrowid if cur.rowcount else None
 
     def first_invoice_result(eid, user_id=None):
@@ -533,6 +541,7 @@ def register(app, c):
                                 (d.get("note") or "").strip()[:300] or None, g.user["id"], stamp(), None if st else cname, None if st else cphone, rt["id"])).lastrowid
             who = st["full_name"] if st else cname + " (not in the portal)"
             audit_c("invoice_manual", "invoice", iid, f"{who}: {rt['name']}, {amount} MVR, {desc}")
+            if not paid: tell_invoice(iid)   # v0.8.63
             out, warn = record_paid([get_invoice(iid)], pamt, method, pd, d, slip) if paid else ([], [])
             db().commit()
         except pay.PayError as x:

@@ -27,7 +27,7 @@ DELETE, DETACH, NULL, OWNER, BLOCK = "delete", "detach", "null", "owner", "block
 PLAN = {
     # the person's own records: deleted
     ("notifications", "user_id"): DELETE, ("wa_log", "user_id"): DELETE, ("password_help", "user_id"): DELETE,
-    ("staff_messages", "user_id"): DELETE, ("attendance", "student_id"): DELETE, ("submissions", "student_id"): DELETE,
+    ("staff_messages", "user_id"): DELETE, ("post_reads", "user_id"): DELETE, ("post_comments", "user_id"): DELETE, ("attendance", "student_id"): DELETE, ("submissions", "student_id"): DELETE,
     ("tutorial_submissions", "student_id"): DELETE, ("enrollment_events", "student_id"): DELETE, ("family_members", "student_id"): DELETE,
     ("enrollments", "student_id"): DELETE, ("substitutions", "substitute_teacher_id"): DELETE,
     ("students", "user_id"): DELETE, ("teachers", "user_id"): DELETE,
@@ -35,7 +35,7 @@ PLAN = {
     ("invoices", "student_id"): DETACH, ("payments", "student_id"): DETACH, ("payment_slips", "student_id"): DETACH,
     ("applications", "student_user_id"): DETACH,
     # must have an owner: moved to the admin who removes the person
-    ("tutorials", "uploaded_by"): OWNER,
+    ("tutorials", "uploaded_by"): OWNER, ("posts", "author_id"): OWNER,
     # payroll needs the teacher
     ("teacher_earnings", "teacher_id"): BLOCK, ("teacher_payments", "teacher_id"): BLOCK, ("expenses", "teacher_id"): BLOCK,
     # "by whom" on everything else: emptied (the activity log keeps who did it)
@@ -46,7 +46,7 @@ PLAN = {
     ("payments", "recorded_by"): NULL, ("payments", "reversed_by"): NULL, ("recordings", "created_by"): NULL,
     ("recurring_expenses", "created_by"): NULL, ("reminders", "sent_by"): NULL, ("sessions", "created_by"): NULL,
     ("staff_files", "uploaded_by"): NULL, ("staff_files", "updated_by"): NULL, ("staff_folders", "created_by"): NULL,
-    ("staff_messages", "pinned_by"): NULL, ("staff_messages", "deleted_by"): NULL, ("submissions", "graded_by"): NULL,
+    ("staff_messages", "pinned_by"): NULL, ("posts", "pinned_by"): NULL, ("post_comments", "deleted_by"): NULL, ("staff_messages", "deleted_by"): NULL, ("submissions", "graded_by"): NULL,
     ("substitutions", "created_by"): NULL, ("substitutions", "removed_by"): NULL, ("substitutions", "original_teacher_id"): NULL,
     ("teacher_earnings", "calculated_by"): NULL, ("teacher_earnings", "approved_by"): NULL,
     ("teacher_payments", "recorded_by"): NULL, ("teacher_payments", "voided_by"): NULL, ("tutorial_submissions", "graded_by"): NULL,
@@ -59,7 +59,7 @@ EXTRA_DELETE = (("login_events", "user_id"),)
 LABELS = {"enrollments": "Enrolments", "attendance": "Attendance marks", "submissions": "Submitted work and grades",
           "tutorial_submissions": "Tutorial answers", "enrollment_events": "Transfers and withdrawals", "family_members": "Family membership",
           "notifications": "Notifications", "wa_log": "WhatsApp log entries", "password_help": "Password requests",
-          "staff_messages": "Teachers' room messages", "substitutions": "Classes booked to cover as a substitute",
+          "staff_messages": "Teachers' room messages", "post_reads": "Notice board posts marked as read", "post_comments": "Notice board comments", "substitutions": "Classes booked to cover as a substitute",
           "discounts": "Recurring discounts on their enrolments", "login_events": "Sign-in history"}
 FILES = (("submissions", "student_id", "file"), ("tutorial_submissions", "student_id", "file"), ("staff_messages", "user_id", "file"))
 
@@ -137,7 +137,7 @@ def remove(conn, uid, actor_id):
         elif act == NULL: run(None, f"UPDATE {t} SET {col}=NULL WHERE {col}=?", (uid,))
         elif act == OWNER: run(None, f"UPDATE {t} SET {col}=? WHERE {col}=?", (actor_id, uid))
     # the person's own records; children before parents (attendance/submissions before enrolments, enrolments last)
-    order = ("notifications", "wa_log", "password_help", "staff_messages", "attendance", "submissions", "tutorial_submissions",
+    order = ("notifications", "wa_log", "password_help", "staff_messages", "post_reads", "post_comments", "attendance", "submissions", "tutorial_submissions",
              "enrollment_events", "family_members", "substitutions", "enrollments", "students", "teachers")
     cols = {t: c for (t, c), a in PLAN.items() if a == DELETE}
     for t in order:

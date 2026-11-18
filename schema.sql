@@ -651,3 +651,46 @@ CREATE TABLE IF NOT EXISTS interest_list (
   updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_interest_list_batch ON interest_list(batch_id);
+
+-- v0.8.63: Notice board (posts.py). Posts for everyone, all students, all teachers or one batch. Files sit in the private "learning" area.
+CREATE TABLE IF NOT EXISTS posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  author_id INTEGER REFERENCES users(id),   -- moved to the removing admin when the author is removed (v0.8.61 rule)
+  title TEXT NOT NULL,
+  body TEXT,
+  video_url TEXT,                      -- YouTube / Google Drive / Vimeo plays in the post; other https links show as a link
+  audience TEXT NOT NULL DEFAULT 'everyone' CHECK (audience IN ('everyone','students','teachers','batch')),
+  batch_id INTEGER REFERENCES batches(id),   -- only for audience 'batch'; a batch with posts cannot be deleted (close it instead)
+  allow_comments INTEGER NOT NULL DEFAULT 1,
+  pinned_at TEXT,
+  pinned_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  edited_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_posts_batch ON posts(batch_id);
+CREATE TABLE IF NOT EXISTS post_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id INTEGER NOT NULL REFERENCES posts(id),
+  file TEXT NOT NULL,
+  file_name TEXT,
+  kind TEXT NOT NULL DEFAULT 'file' CHECK (kind IN ('image','file')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_post_files_post ON post_files(post_id);
+CREATE TABLE IF NOT EXISTS post_reads (
+  post_id INTEGER NOT NULL REFERENCES posts(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  read_at TEXT NOT NULL,
+  PRIMARY KEY (post_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_post_reads_user ON post_reads(user_id);
+CREATE TABLE IF NOT EXISTS post_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id INTEGER NOT NULL REFERENCES posts(id),
+  user_id INTEGER REFERENCES users(id),
+  body TEXT,                           -- emptied when the comment is deleted (soft delete)
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at TEXT,
+  deleted_by INTEGER REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_post_comments_post ON post_comments(post_id);
