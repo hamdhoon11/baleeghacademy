@@ -519,17 +519,22 @@ async function fnExpensesPanels() {   // expenses, categories, receipts (Session
   const active = cats.filter(k => k.is_active || (ed && k.id === ed.category_id));
   mount(() => {
     FN_KEYS.forEach(k => { const el = $("#fn_" + k); if (el && f[k] != null) el.value = f[k]; });
-    if (ed) { $("#fx_date").value = ed.expense_date; $("#fx_amt").value = ed.amount_mvr; $("#fx_cat").value = ed.category_id; $("#fx_desc").value = ed.description || ""; if ($("#fx_tch")) $("#fx_tch").value = ed.teacher_id || ""; }
+    if (ed) { $("#fx_date").value = ed.expense_date; $("#fx_amt").value = ed.amount_mvr; $("#fx_cat").value = ed.category_id; $("#fx_desc").value = ed.description || ""; if ($("#fx_tch")) $("#fx_tch").value = ed.teacher_id || "";
+      $("#fx_sup").value = ed.supplier || ""; $("#fx_inv").value = ed.invoice_no || ""; $("#fx_usd").value = ed.usd_amount || ""; }
+    const usd = $("#fx_usd"); if (usd) usd.oninput = () => { const v = parseFloat(usd.value); if (v > 0) $("#fx_amt").value = Math.round(v * (r.usd_rate || 15.42)); };   // v0.8.64
     onSubmit("ffn", async () => { S.fn = {page: 1, f: Object.fromEntries(FN_KEYS.filter(k => val("fn_" + k) !== "").map(k => [k, val("fn_" + k)])), edit: null}; });
     onSubmit("fex", async () => {
       const fd = new FormData();
       fd.append("expense_date", val("fx_date")); fd.append("amount_mvr", wholeNum("fx_amt", "Amount (MVR)", {min: 1, empty: false})); fd.append("category_id", val("fx_cat")); fd.append("description", val("fx_desc"));
       if ($("#fx_tch")) fd.append("teacher_id", val("fx_tch"));   // v0.8.51: a salary: also counts as paid to the teacher
+      fd.append("supplier", val("fx_sup")); fd.append("invoice_no", val("fx_inv"));   // v0.8.64
+      const u = parseFloat(val("fx_usd")); fd.append("usd_amount", u > 0 ? String(u) : ""); fd.append("fx_rate", u > 0 ? String(r.usd_rate || 15.42) : "");
+      if (!(ed && +val("fx_amt") === ed.amount_mvr && ed.amount_exact)) fd.append("amount_exact", u > 0 ? String(Math.round(u * (r.usd_rate || 15.42) * 100) / 100) : "");
       const file = $("#fx_file").files[0]; if (file) fd.append("file", file);
       if (ed && $("#fx_rm") && $("#fx_rm").checked) fd.append("remove_receipt", "1");
       await apiForm(ed ? "/expenses/" + ed.id : "/expenses", fd, ed ? "PATCH" : "POST"); S.fn.edit = null;
     });
-    onSubmit("fcat", async () => { await api("/expense-categories", "POST", {name: val("fc_name")}); });
+    onSubmit("fcat", async () => { await api("/expense-categories", "POST", {name: val("fc_name"), code: val("fc_code"), kind: val("fc_kind")}); });
     onSubmit("frec", async () => {
       const res = await api("/recurring-expenses", "POST", {category_id: val("fr2_cat"), amount_mvr: wholeNum("fr2_amt", "Amount (MVR)", {min: 1, empty: false}), day_of_month: val("fr2_day"), description: val("fr2_desc"), start_month: val("fr2_from"), end_month: val("fr2_to") || null});
       S.recNote = t("rec_added").replace("{n}", res.written);   // onSubmit shows "Saved"; this line under the list says how many were entered
@@ -538,15 +543,17 @@ async function fnExpensesPanels() {   // expenses, categories, receipts (Session
   const filters = form("ffn", field("fn_category_id", "Category", "text", [["", t("all")], ...cats.map(k => [k.id, k.name])]) + field("fn_date_from", "From", "date") + field("fn_date_to", "To", "date") + field("fn_q", "Words in description"), "Filter");
   const entry = `<form class="row" id="fex"><label>${esc(t("Expense date"))}<input id="fx_date" type="date" value="${mvToday()}" max="${mvToday()}" required></label>`
     + `<label>${esc(t("Amount (MVR)"))}<input id="fx_amt" type="number" min="1" step="1" inputmode="numeric" required></label>`
-    + field("fx_cat", "Category", "text", active.map(k => [k.id, k.name])) + field("fx_desc", "Description")
+    + field("fx_cat", "Category", "text", active.map(k => [k.id, (k.code ? k.code + " · " : "") + k.name])) + field("fx_desc", "Description")
+    + field("fx_sup", "Paid to (supplier)") + field("fx_inv", "Their invoice number")
+    + `<label>${esc(t("Paid in US dollars (optional)"))}<input id="fx_usd" type="number" min="0" step="0.01" inputmode="decimal"><span class="hint">${esc(t("Fills the MVR amount at {r} MVR per dollar (Settings > Fees).").replace("{r}", r.usd_rate || 15.42))}</span></label>`
     + ((tch.teachers || []).length ? field("fx_tch", "Salary paid to teacher (optional)", "text", [["", t("Not a salary")], ...tch.teachers.map(x => [x.id, x.full_name])]) : "")
     + `<label>${t("Receipt (PDF, JPG or PNG)")}<input id="fx_file" type="file" accept=".pdf,.jpg,.jpeg,.png"></label>`
     + (ed && ed.has_receipt ? `<label><input id="fx_rm" type="checkbox"> ${t("Remove the current receipt")}</label>` : "")
     + `<button class="btn alt">${t(ed ? "Save" : "Add expense")}</button>${ed ? ` <button type="button" class="btn" data-do="fnCancel">${t("Cancel")}</button>` : ""}</form>`;
-  const body = r.items.map(x => `<tr><td>${esc(x.expense_date)}</td><td>${esc(x.category)}</td><td>${esc(x.description || "")}${x.recurring_id ? " " + tag(t("rec_monthly")) : ""}${x.teacher_name ? " " + tag(t("Salary") + ": " + x.teacher_name, "ok") : ""}</td><td><bdi dir="ltr">${esc(x.amount_mvr)}</bdi></td><td>${x.has_receipt ? `<button class="btn sm alt" data-do="fnReceipt" data-id="${x.id}" data-name="${esc(x.receipt_name || "receipt")}">${t("Receipt")}</button>` : ""}</td>`
+  const body = r.items.map(x => `<tr><td>${esc(x.expense_date)}</td><td>${x.category_code ? `<span class="hint">${esc(x.category_code)}</span> ` : ""}${esc(x.category)}${x.category_kind === "capital" ? " " + tag(t("Capital")) : ""}</td><td>${x.supplier && x.supplier !== x.description ? `<b>${esc(x.supplier)}</b> · ` : ""}${esc(x.description || "")}${x.invoice_no ? ` <span class="hint">${esc(x.invoice_no)}</span>` : ""}${x.usd_amount ? ` <span class="hint">(USD ${esc(x.usd_amount)})</span>` : ""}${x.recurring_id ? " " + tag(t("rec_monthly")) : ""}${x.teacher_name ? " " + tag(t("Salary") + ": " + x.teacher_name, "ok") : ""}</td><td><bdi dir="ltr">${esc(x.amount_mvr)}</bdi></td><td>${x.has_receipt ? `<button class="btn sm alt" data-do="fnReceipt" data-id="${x.id}" data-name="${esc(x.receipt_name || "receipt")}">${t("Receipt")}</button>` : ""}</td>`
     + `<td><button class="btn sm alt" data-do="fnEdit" data-id="${x.id}">${t("Edit")}</button> <button class="btn sm" data-do="fnDel" data-id="${x.id}" data-name="${esc(x.expense_date + " · " + x.category + " · MVR " + x.amount_mvr)}">${t("Delete")}</button></td></tr>`).join("");
   const nav = `<p><button class="btn sm alt" data-do="fnPage" data-n="-1" ${S.fn.page <= 1 ? "disabled" : ""}>${t("Previous")}</button> ${t("Page")} ${S.fn.page} <button class="btn sm alt" data-do="fnPage" data-n="1" ${r.page * r.per_page >= r.count ? "disabled" : ""}>${t("Next")}</button></p>`;
-  const catRows = cats.map(k => `<span class="chip">${esc(k.name)} (${k.expense_count})${k.is_active ? "" : " · " + t("inactive")} <button class="btn sm alt" data-do="fnCatToggle" data-id="${k.id}" data-on="${k.is_active ? 0 : 1}">${t(k.is_active ? "Make inactive" : "Make active")}</button> <button class="btn sm alt" data-do="fnCatRename" data-id="${k.id}" data-name="${esc(k.name)}">${t("Rename")}</button>${k.expense_count ? "" : ` <button class="btn sm" data-do="fnCatDel" data-id="${k.id}" data-name="${esc(k.name)}">${t("Delete")}</button>`}</span>`).join(" ");
+  const catRows = cats.map(k => `<span class="chip">${k.code ? `<b>${esc(k.code)}</b> ` : ""}${esc(k.name)} (${k.expense_count})${k.kind === "capital" ? " · " + t("Capital") : ""}${k.is_active ? "" : " · " + t("inactive")} <button class="btn sm alt" data-do="fnCatToggle" data-id="${k.id}" data-on="${k.is_active ? 0 : 1}">${t(k.is_active ? "Make inactive" : "Make active")}</button> <button class="btn sm alt" data-do="fnCatEdit" data-id="${k.id}" data-name="${esc(k.name)}" data-code="${esc(k.code || "")}" data-kind="${k.kind || "operating"}">${t("Edit")}</button>${k.expense_count ? "" : ` <button class="btn sm" data-do="fnCatDel" data-id="${k.id}" data-name="${esc(k.name)}">${t("Delete")}</button>`}</span>`).join(" ");
   // v0.8.37: monthly expenses written automatically on their day
   const recRows = recs.map(x => `<div class="cl${x.is_active ? "" : " off"}"><div><b>${esc(x.category)}</b> · <bdi dir="ltr">MVR ${esc(x.amount_mvr)}</bdi> · ${t("rec_day")} ${x.day_of_month}${x.description ? " · " + esc(x.description) : ""} ${x.is_active ? "" : tag(t("rec_paused"), "warn")}<br>
     <span class="hint">${t("rec_from")} <bdi dir="ltr">${esc(x.start_month)}</bdi>${x.end_month ? ` ${t("rec_until")} <bdi dir="ltr">${esc(x.end_month)}</bdi>` : ""} · ${t("rec_written")}: ${x.months_written}${x.next_date ? ` · ${t("rec_next")} <bdi dir="ltr">${esc(x.next_date)}</bdi>` : ""}</span></div>
@@ -557,9 +564,9 @@ async function fnExpensesPanels() {   // expenses, categories, receipts (Session
     + `<label>${t("rec_start")}<input id="fr2_from" type="month" value="${month}" required></label><label>${t("rec_end")}<input id="fr2_to" type="month"></label><button class="btn alt">${t("rec_add")}</button></form><p class="hint">${t("rec_hint")}</p>`;
   return `<div class="panel"><h2>${t(ed ? "Edit expense" : "Add expense")}</h2>${cats.some(k => k.is_active) ? entry : `<p>${t("Add a category first.")}</p>`}</div>`
     + `<div class="panel"><h2>${t("rec_title")}</h2>${S.recNote ? `<p class="msg ok" role="status">${esc(S.recNote)}</p>` : ""}${(S.recNote = null, "")}${recRows || `<p class="hint">${t("rec_none")}</p>`}${cats.some(k => k.is_active) ? `<details class="addp"${recs.length ? "" : " open"}><summary>${t("rec_add")}</summary>${recForm}</details>` : ""}</div>`
-    + `<div class="panel"><h2>${t("Categories")}</h2><p>${catRows || t("empty")}</p>${form("fcat", field("fc_name", "Category name"), "Add category")}</div>`
+    + `<div class="panel"><h2>${t("Categories")}</h2><p>${catRows || t("empty")}</p><p class="hint">${esc(t("Codes are the registry's Expense Codes (5001 marketing, 5002 maintenance, ...). Capital spending (Cap-EX) is shown apart in the income statement and is not part of the profit."))}</p>${form("fcat", field("fc_name", "Category name") + field("fc_code", "Code (optional)") + field("fc_kind", "Kind", "text", [["operating", t("Running expense")], ["capital", t("Capital spending (Cap-EX)")]]), "Add category")}</div>`
     + `<div class="panel"><h2>${t("Expenses")}</h2>${filters}<p><b>${r.count}</b> ${t("expenses")} · ${t("Total")}: <b><bdi dir="ltr">MVR ${esc(r.total_mvr)}</bdi></b> ${xlBtns("/expenses/export", new URLSearchParams(Object.entries(f).filter(([, v]) => v)).toString(), "expenses")}</p>${nav}`
-    + (r.items.length ? `<table><thead><tr><th>${t("date")}</th><th>${t("Category")}</th><th>${t("Description")}</th><th>MVR</th><th></th><th></th></tr></thead><tbody>${body}</tbody></table>` : `<p>${t("empty")}</p>`) + `${nav}</div>` + impBox("expenses", t("xl_imp_expenses"));
+    + (r.items.length ? `<table><thead><tr><th>${t("date")}</th><th>${t("Category")}</th><th>${t("Description")}</th><th>MVR</th><th></th><th></th></tr></thead><tbody>${body}</tbody></table>` : `<p>${t("empty")}</p>`) + `${nav}</div>` + fnExpImport();
 }
 DO.recToggle = async d => { await api("/recurring-expenses/" + d.id, "PATCH", {is_active: d.on === "1"}); flash(t("saved"), true); };
 DO.recDel = async d => { if (!await ui.confirm(t("rec_del_q"), {danger: true, okText: t("Delete"), details: [d.name || ""]})) return false; await api("/recurring-expenses/" + d.id, "DELETE"); flash(t("saved"), true); };
@@ -571,8 +578,8 @@ DO.recEdit = async d => {
   await api("/recurring-expenses/" + d.id, "PATCH", {...v, end_month: v.end_month || null}); flash(t("rec_edit_done"), true);
 };
 views.finance = async () => {
-  const [dash, earn, exp] = await Promise.all([fnDashPanel(), feEarnPanel(), fnExpensesPanels()]);
-  return `<h1>${t("finance")}</h1>${dash}${earn}${exp}`;
+  const [dash, stmt, earn, exp] = await Promise.all([fnDashPanel(), fnStatementPanel(), feEarnPanel(), fnExpensesPanels()]);
+  return `<h1>${t("finance")}</h1>${dash}${stmt}${earn}${exp}`;
 };
 DO.finPdf = () => { const f = (S.fr || {}).f || {}; return fetchFile("/finance/report.pdf?" + new URLSearchParams(Object.entries(f).filter(([, v]) => v)).toString(), {name: "finance-report.pdf"}); };   // v0.8.48
 DO.fnPage = d => { S.fn.page = Math.max(1, S.fn.page + (+d.n)); };
@@ -581,6 +588,47 @@ DO.fnCancel = () => { S.fn.edit = null; };
 DO.fnReceipt = async d => { await viewFile("/expenses/" + d.id + "/receipt", d.name); return false; };
 DO.fnDel = async d => { if (!await ui.confirm(t("Delete this expense? The activity log keeps a record of it."), {danger: true, details: [d.name || ""]})) return false; await api("/expenses/" + d.id, "DELETE"); };
 DO.fnCatToggle = async d => { await api("/expense-categories/" + d.id, "PATCH", {is_active: +d.on}); };
+DO.fnCatEdit = async d => {   // v0.8.64: name, registry code, running or capital
+  const v = await ui.form(t("Edit") + " · " + d.name, [{id: "name", label: t("Category name"), required: true, maxlength: 60, value: d.name},
+    {id: "code", label: t("Code (optional)"), maxlength: 12, value: d.code, hint: t("The registry's Expense Code, like 5001.")},
+    {id: "kind", label: t("Kind"), type: "select", options: [["operating", t("Running expense")], ["capital", t("Capital spending (Cap-EX)")]], value: d.kind}], {okText: t("save")});
+  if (!v) return false;
+  await api("/expense-categories/" + d.id, "PATCH", v);
+};
+function fnExpImport() {   // v0.8.64: the Expense Registry (the whole workbook or the template)
+  const o = S.regExp = S.regExp || {add: true};
+  const extra = `<div class="rowflex row"><label class="inl"><input type="checkbox" id="re_add" ${o.add ? "checked" : ""}> ${esc(t("Add new codes (a new Expense Code becomes a category)"))}</label></div>`;
+  mount(() => { const el = $("#re_add"); if (el) el.onchange = () => { S.regExp = {add: el.checked}; IMPS.expenses.query = "add_codes=" + (el.checked ? 1 : 0); }; });
+  return impBox("expenses", t("Import the expense registry (Excel)"), {query: "add_codes=" + (o.add ? 1 : 0), extra,
+    hint: t("Upload the academy's registry workbook as it is, or the template (its Expense Registry sheet). Dollar amounts are turned into MVR at the rate in Settings > Fees. An expense already in the portal is skipped. Check file first: nothing is saved.")});
+}
+// v0.8.64: the registry's Monthly Report, made from the portal
+async function fnStatementPanel() {
+  S.fis = S.fis || {year: +mvToday().slice(0, 4)};
+  let s;
+  try { s = await api("/finance/income-statement?year=" + S.fis.year); } catch (x) { return `<div class="panel"><h2>${t("Income statement")}</h2><p class="msg err">${esc(x.message)}</p></div>`; }
+  const n = s.months_shown || 12, ms = s.months.slice(0, n), MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const sum = o => ms.reduce((a, m) => a + (o[m] || 0), 0);
+  const td = v => `<td class="${v < 0 ? "neg" : ""}">${v ? fmtNum(v) : "–"}</td>`;
+  const line = (code, name, o, cls = "") => `<tr class="${cls}"><th scope="row">${code ? `<span class="code">${esc(code)}</span>` : ""}${esc(name)}</th>${ms.map(m => td(o[m])).join("")}${td(sum(o))}</tr>`;
+  const sec = name => `<tr class="sec"><th scope="row" colspan="${ms.length + 2}">${esc(t(name))}</th></tr>`;
+  const body = sec("Revenue (money received)") + s.revenue.map(x => line(x.code, x.name, x.months)).join("") + line("", t("Total revenue"), s.totals.revenue, "tot")
+    + sec("Fees for the month still to pay (accrued)") + (s.accrued.length ? s.accrued.map(x => line("", x.name, x.months)).join("") : "") + line("", t("Total accrued"), s.totals.accrued, "tot")
+    + sec("Expenses") + s.expenses.map(x => line(x.code, x.name, x.months)).join("") + line("", t("Total expenses"), s.totals.operating, "tot")
+    + (s.capital.length ? sec("Capital spending (Cap-EX)") + s.capital.map(x => line(x.code, x.name, x.months)).join("") + line("", t("Total capital spending"), s.totals.capital, "tot") : "")
+    + sec("Profit & Loss") + line("", t("Collected profit (revenue − expenses)"), s.pl.profit, "tot") + line("", t("Budgeted profit (if all fees were paid)"), s.pl.if_all_paid)
+    + (s.capital.length ? line("", t("After capital spending"), s.pl.after_capital) : "");
+  const years = []; for (let y = +mvToday().slice(0, 4); y >= 2025; y--) years.push(y);
+  mount(() => { const el = $("#fis_y"); if (el) el.onchange = () => { S.fis = {year: +el.value}; render(); }; });
+  const yt = s.year_totals;
+  return `<div class="panel"><h2>${t("Income statement")}</h2><p class="hint">${esc(t("The registry's Monthly Report, made from the portal's payments, invoices and expenses."))}</p>`
+    + `<div class="rowflex row"><label>${t("Year")}<select id="fis_y">${years.map(y => `<option ${y === S.fis.year ? "selected" : ""}>${y}</option>`).join("")}</select></label>`
+    + `<span class="seg"><button type="button" class="btn sm alt" data-do="fisGet" data-x="xlsx">${t("Download Excel")}</button><button type="button" class="btn sm alt" data-do="fisGet" data-x="pdf">${t("Download PDF")}</button><button type="button" class="btn sm" data-do="fisReg">${t("Download the registry (Excel)")}</button></span></div>`
+    + `<div class="stats"><div class="stat"><b>${fnMoney(yt.collected)}</b>${esc(t("Revenue"))}</div><div class="stat"><b>${fnMoney(yt.operating)}</b>${esc(t("Expenses"))}</div><div class="stat"><b>${fnMoney(yt.profit)}</b>${esc(t(yt.profit < 0 ? "Net loss" : "Collected profit"))}</div><div class="stat"><b>${fnMoney(yt.accrued)}</b>${esc(t("Fees still to pay"))}</div>${yt.capital ? `<div class="stat"><b>${fnMoney(yt.capital)}</b>${esc(t("Capital spending"))}</div>` : ""}</div>`
+    + `<div class="scrollx"><table class="is nostack"><thead><tr><th>${esc(t("MVR"))}</th>${ms.map(m => `<th>${MON[+m.slice(5) - 1]}</th>`).join("")}<th>${t("Total")}</th></tr></thead><tbody>${body}</tbody></table></div><p class="hint">${esc(s.note)}</p></div>`;
+}
+DO.fisGet = async d => { await fetchFile(`/finance/income-statement.${d.x}?year=${S.fis.year}`, {name: `income-statement-${S.fis.year}.${d.x}`}); return false; };
+DO.fisReg = async () => { await fetchFile(`/finance/registry.xlsx?year=${S.fis.year}`, {name: `registry-${S.fis.year}.xlsx`}); return false; };
 DO.fnCatRename = async d => { const n = await ui.ask(t("Rename"), {label: t("Category name"), value: d.name, required: true, maxlength: 80, okText: t("save")}); if (!n || n === d.name) return false; await api("/expense-categories/" + d.id, "PATCH", {name: n}); };
 DO.fnCatDel = async d => { if (!await ui.confirm(t("Delete this category?"), {danger: true, details: [d.name || ""]})) return false; await api("/expense-categories/" + d.id, "DELETE"); };
 

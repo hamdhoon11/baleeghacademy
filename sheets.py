@@ -61,10 +61,13 @@ def register(app, c, today):
             items += body["items"]
             if page * 200 >= body["count"] or page >= 50: break
             page += 1
-        head = ["expense_date", "category", "description", "amount_mvr", "receipt", "monthly", "entered_by", "entered_at"]
+        head = ["expense_date", "category", "description", "amount_mvr", "receipt", "monthly", "entered_by", "entered_at",
+                "category_code", "supplier", "supplier_gst_no", "invoice_no", "gst_mvr", "usd_amount", "fx_rate", "amount_exact"]   # v0.8.64: the registry's columns at the end
         table = [[x["expense_date"], x["category"], x["description"] or "", x["amount_mvr"], "yes" if x["has_receipt"] else "", "yes" if x.get("recurring_id") else "",
-                  x.get("entered_by_name") or "", x["created_at"]] for x in items]
-        table.append(["", "Total", "", sum(x["amount_mvr"] for x in items), "", "", "", ""])
+                  x.get("entered_by_name") or "", x["created_at"], x.get("category_code") or "", x.get("supplier") or "", x.get("supplier_gst_no") or "", x.get("invoice_no") or "",
+                  x.get("gst_mvr") if x.get("gst_mvr") is not None else "", x.get("usd_amount") if x.get("usd_amount") is not None else "", x.get("fx_rate") if x.get("fx_rate") is not None else "",
+                  x.get("amount_exact") if x.get("amount_exact") is not None else ""] for x in items]
+        table.append(["", "Total", "", sum(x["amount_mvr"] for x in items)] + [""] * 12)
         logged(f"export_expenses_{ext}", f"{len(items)} rows; {dict(request.args)}")
         return X.send_table(ext, "expenses", head, table, "Expenses")
     ext_rule("/api/expenses/export.{ext}", "sh_expenses", expenses_export, perm="finance")
@@ -178,10 +181,11 @@ def register(app, c, today):
     # ---------------- imports through the screen's own routes ----------------
     C = lambda key, help, example="", required=False, **kw: {"key": key, "help": help, "example": example, "required": required, **kw}
 
-    def run(kind, need, row_fn, area_note=""):
-        """row_fn(row) -> (method, path, json) or raises ValueError; or returns ("skip", reason)."""
+    def run(kind, need, row_fn, area_note="", reader=None):
+        """row_fn(row) -> (method, path, json) or raises ValueError; or returns ("skip", reason). v0.8.64: a 4th item is a note shown with the
+        row ("Paid invoice INV-..."); reader() replaces X.read_table (the registry imports read the registry's own sheet and header row)."""
         try:
-            head, body = X.read_table()
+            head, body = (reader or X.read_table)()
             earlier, body, part = X.window(body)
         except ValueError as x: return err(str(x))
         miss = [h for h in need if h not in head]
@@ -212,6 +216,7 @@ def register(app, c, today):
                         if code >= 400: raise ValueError(res.get("error") or res.get("message") or f"Refused ({code})")
                         if res.get("changed") is False: item.update(status="unchanged"); out.append(item); continue
                         item["status"] = "would_create" if dry else "created"; ok += 1
+                        if len(call) > 3 and call[3]: item["message"] = call[3]
                         for k in ("id", "code"):
                             if k in res: item[k] = res[k]
                 except ValueError as x:
@@ -348,8 +353,9 @@ def register(app, c, today):
             rows=roster, note="Grades already saved show in the grade column. Changing a saved grade needs the 'Change saved grades' permission, as on the screen.")
         return aid, body, a["title"]
 
-    TEMPLATES = {"courses": ("courses", course_template), "batches": ("batches", batch_template), "expenses": ("finance", expense_template)}
-    RUNS = {"courses": ("courses", ["name"], course_row), "batches": ("batches", ["course_code", "code"], batch_row), "expenses": ("finance", ["expense_date", "amount_mvr", "category"], expense_row)}
+    TEMPLATES = {"courses": ("courses", course_template), "batches": ("batches", batch_template)}   # v0.8.64: expenses moved to registry.py (the registry's layout)
+    RUNS = {"courses": ("courses", ["name"], course_row), "batches": ("batches", ["course_code", "code"], batch_row)}
+    app.extensions["imports"] = {"run": run, "legacy_expense_row": expense_row}
     for kind, (area, need, fn) in RUNS.items():
         app.add_url_rule(f"/api/import/{kind}", f"sh_imp_{kind}", auth("admin", perm=area)(lambda kind=kind, need=need, fn=fn: run(kind, need, fn)), methods=["POST"])
     for kind, (area, fn) in TEMPLATES.items():

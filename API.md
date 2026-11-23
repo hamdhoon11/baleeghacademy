@@ -429,3 +429,18 @@ Changed in Session 32: `GET /api/users` needs the People area for full details; 
 | GET | /sw.js | public (static) | Service worker. Served with `Cache-Control: no-cache`. Never answers or stores `/api/`; page and scripts network-first, saved copy only offline |
 
 `/api/public/info` also returns `remember_days` (0 hides the option on the sign-in page) and `app_icon_url`.
+
+## v0.8.64: the Excel registry (registry.py; fees.py; finance.py)
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| POST | /import/revenue | admin (fees) | The academy's Revenue Registry (the whole workbook, or the template). `?dry_run=1` (default) checks and saves nothing. `?unknown=refuse` (default) or `walkin` for a Student ID not in the portal; `?add_codes=1` (default) makes a new revenue type for an unknown Revenue Code. Each row: skipped when the same payment is already there; paid on the student's open invoice for that fee month / course; or a new paid invoice. Through `/payments` and `/invoices/manual` |
+| GET | /import/revenue/template.xlsx | admin (fees) | Sheet "Revenue Registry" (title in row 1, column names in row 2), Lists, Instructions |
+| POST | /import/expenses | admin (finance) | Now the Expense Registry layout (the v0.8.38 columns still work). USD × Settings `usd_rate` (default 15.42) when Total is empty; rounded to whole MVR, exact amount kept. `?add_codes=1` (default) makes a category for an unknown Expense Code (Cap-EX types become capital) |
+| GET | /import/expenses/template.xlsx | admin (finance) | Sheet "Expense Registry", Lists, Instructions |
+| GET | /finance/income-statement | admin (finance) | `?year=` (default this year). The Monthly Report: revenue by revenue type (with its code) by month paid, accrued (fees for the month still to pay) by batch, expenses by category, capital apart, profit lines |
+| GET | /finance/income-statement.xlsx, .pdf | admin (finance) | The same; the .xlsx has the Monthly Report layout with SUM formulas |
+| GET | /finance/registry.xlsx | admin (finance) | `?year=` Revenue Registry (every payment), Expense Registry, Monthly Report, one payment-history sheet per batch. Uploading it again adds nothing |
+| PUT | /fees/notes | admin (fees) | `{student_id,batch_id,note}`: the office's comment on a student's fees in a batch (empty removes it). Logged as `fee_note` |
+| GET | /fees/status-grid.xlsx | admin (fees) | The fee grid as Excel, one sheet per batch, with months late and comments |
+
+Changed: `GET /fees/status-grid` adds per student `months_late`, `owed_late`, `late_since`, `note`, `note_by`, `note_at`, and per batch `counts[month] = {paid, not_paid}`. `GET/POST/PATCH /expense-categories` take `code` and `kind` (`operating` or `capital`). `GET/POST/PATCH /revenue-types` take `ledger_code`. `POST/PATCH /expenses` take `supplier`, `supplier_gst_no`, `invoice_no`, `gst_mvr`, `usd_amount`, `fx_rate`, `amount_exact`; `GET /expenses` returns them and `usd_rate`; the expenses export has them as extra columns.

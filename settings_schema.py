@@ -46,6 +46,8 @@ GROUPS = [
         S("first_invoice_mode", "select", "full", "First invoice for a new student", "full = charge the whole month; skip = start billing next month.", options=["full", "skip"]),
         S("first_invoice_grace_days", "number", "7", "Grace days before the first invoice is due", min=0, max=60),
         S("receipt_prefix", "text", "BA-R-", "Receipt number prefix", "Up to 12 letters, digits, - _ or /"),
+        # v0.8.64: expenses paid in US dollars (Meta ads, Google) are turned into MVR at this rate, as the registry does (15.42)
+        S("usd_rate", "text", "15.42", "US dollar rate (MVR for 1 USD)", "Used when an expense is entered or imported in US dollars. A number like 15.42.",),
         S("reminder_template_en", "longtext", "", "Overdue reminder for one invoice (email)"),
         # v0.8.48: one WhatsApp message per person with the total and the months (Fees -> Reminders)
         S("wa_overdue_template", "longtext", "Assalaamu alaikum {name}. This is a reminder from {academy}: your fees of MVR {amount} for {months} are overdue "

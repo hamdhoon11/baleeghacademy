@@ -27,7 +27,7 @@ DELETE, DETACH, NULL, OWNER, BLOCK = "delete", "detach", "null", "owner", "block
 PLAN = {
     # the person's own records: deleted
     ("notifications", "user_id"): DELETE, ("wa_log", "user_id"): DELETE, ("password_help", "user_id"): DELETE,
-    ("staff_messages", "user_id"): DELETE, ("post_reads", "user_id"): DELETE, ("post_comments", "user_id"): DELETE, ("attendance", "student_id"): DELETE, ("submissions", "student_id"): DELETE,
+    ("staff_messages", "user_id"): DELETE, ("fee_notes", "student_id"): DELETE, ("post_reads", "user_id"): DELETE, ("post_comments", "user_id"): DELETE, ("attendance", "student_id"): DELETE, ("submissions", "student_id"): DELETE,
     ("tutorial_submissions", "student_id"): DELETE, ("enrollment_events", "student_id"): DELETE, ("family_members", "student_id"): DELETE,
     ("enrollments", "student_id"): DELETE, ("substitutions", "substitute_teacher_id"): DELETE,
     ("students", "user_id"): DELETE, ("teachers", "user_id"): DELETE,
@@ -50,7 +50,7 @@ PLAN = {
     ("substitutions", "created_by"): NULL, ("substitutions", "removed_by"): NULL, ("substitutions", "original_teacher_id"): NULL,
     ("teacher_earnings", "calculated_by"): NULL, ("teacher_earnings", "approved_by"): NULL,
     ("teacher_payments", "recorded_by"): NULL, ("teacher_payments", "voided_by"): NULL, ("tutorial_submissions", "graded_by"): NULL,
-    ("wa_log", "sent_by"): NULL, ("users", "account_changed_by"): NULL,
+    ("wa_log", "sent_by"): NULL, ("fee_notes", "updated_by"): NULL, ("users", "account_changed_by"): NULL,
 }
 # columns without a database reference that still hold the person's id
 EXTRA_DELETE = (("login_events", "user_id"),)

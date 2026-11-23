@@ -190,6 +190,22 @@ def upgrade_v0845(conn):
             conn.execute("INSERT INTO revenue_types(name, code, is_active, created_at) VALUES(?,?,1,?)", (name + (" (built-in)" if taken else ""), code, dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")))
 
 
+# v0.8.64: registry codes and the registry's expense columns. Additive only: nullable or defaulted, no existing row changes meaning.
+V0864_COLUMNS = (("revenue_types", "ledger_code", "TEXT"), ("expense_categories", "code", "TEXT"),
+                 ("expense_categories", "kind", "TEXT NOT NULL DEFAULT 'operating' CHECK (kind IN ('operating','capital'))"),
+                 ("expenses", "supplier", "TEXT"), ("expenses", "supplier_gst_no", "TEXT"), ("expenses", "invoice_no", "TEXT"), ("expenses", "gst_mvr", "REAL"),
+                 ("expenses", "usd_amount", "REAL"), ("expenses", "fx_rate", "REAL"), ("expenses", "amount_exact", "REAL"))
+REGISTRY_REVENUE_CODES = (("registration", "1001"), ("monthly", "1002"))   # the built-in types get the registry's codes when nobody has set them
+
+
+def upgrade_v0864(conn):
+    for tbl, col, decl in V0864_COLUMNS:
+        if col not in conn.columns(tbl): conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {schema_to_pg(decl) if conn.pg else decl}")   # REAL -> DOUBLE PRECISION on PostgreSQL
+    for code, ledger in REGISTRY_REVENUE_CODES:
+        if not conn.execute("SELECT 1 FROM revenue_types WHERE ledger_code=?", (ledger,)).fetchone():
+            conn.execute("UPDATE revenue_types SET ledger_code=? WHERE code=? AND ledger_code IS NULL", (ledger, code))
+
+
 class Conn:
     def __init__(self, url=None, path=None, id_tables=()):
         self.pg = is_postgres(url)
@@ -315,6 +331,7 @@ def init_schema(conn, base):
     if "expense_id" not in conn.columns("teacher_payments"): conn.execute("ALTER TABLE teacher_payments ADD COLUMN expense_id INTEGER")
     if "end_time" not in conn.columns("batches"): conn.execute("ALTER TABLE batches ADD COLUMN end_time TEXT")   # v0.8.58: class end time (NULL = course minutes)
     if "is_head" not in conn.columns("teachers"): conn.execute("ALTER TABLE teachers ADD COLUMN is_head INTEGER NOT NULL DEFAULT 0")   # v0.8.58: head teacher
+    upgrade_v0864(conn)
     conn.execute("DROP INDEX IF EXISTS ux_earn_batch_period")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_earn_batch_period_seq ON teacher_earnings(batch_id, period, seq)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_batch ON audit_log(batch_id)")

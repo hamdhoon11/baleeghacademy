@@ -298,6 +298,7 @@ CREATE TABLE IF NOT EXISTS revenue_types (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
   code TEXT UNIQUE,                                            -- 'monthly' / 'registration' for the built-in two, NULL for types added later
+  ledger_code TEXT,                                            -- v0.8.64: the registry's Revenue Code (1001 registration, 1002 monthly, ...), used by the registry import and the income statement
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -423,6 +424,8 @@ CREATE INDEX IF NOT EXISTS idx_enrol_events_date ON enrollment_events(effective_
 CREATE TABLE IF NOT EXISTS expense_categories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
+  code TEXT,                                                   -- v0.8.64: the registry's Expense Code (5001 marketing, ...)
+  kind TEXT NOT NULL DEFAULT 'operating' CHECK (kind IN ('operating','capital')),   -- v0.8.64: capital spending (Cap-EX) is shown apart in the income statement
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -440,7 +443,14 @@ CREATE TABLE IF NOT EXISTS expenses (
   updated_at TEXT,
   recurring_id INTEGER,          -- v0.8.37: written by a recurring rule (NULL = entered by hand)
   recurring_month TEXT,
-  teacher_id INTEGER REFERENCES users(id)   -- v0.8.51: a salary paid to this teacher (also a row in teacher_payments, linked by expense_id)
+  teacher_id INTEGER REFERENCES users(id),  -- v0.8.51: a salary paid to this teacher (also a row in teacher_payments, linked by expense_id)
+  supplier TEXT,                 -- v0.8.64: registry columns. Who was paid,
+  supplier_gst_no TEXT,          --   their GST number,
+  invoice_no TEXT,               --   their invoice number,
+  gst_mvr REAL,                  --   the GST in it (information only; amount_mvr already includes it),
+  usd_amount REAL,               --   the part paid in US dollars and
+  fx_rate REAL,                  --   the MVR rate used for it,
+  amount_exact REAL              --   and the exact amount before rounding to whole MVR
 );
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);
 -- v0.8.37: monthly expenses. recurring_done records each month written, so a month deleted by hand is not written again.
@@ -694,3 +704,13 @@ CREATE TABLE IF NOT EXISTS post_comments (
   deleted_by INTEGER REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_post_comments_post ON post_comments(post_id);
+
+-- v0.8.64: the office's comment on a student's fees in one batch (the "Comments" column of the registry's payment history sheets)
+CREATE TABLE IF NOT EXISTS fee_notes (
+  student_id INTEGER NOT NULL REFERENCES users(id),
+  batch_id INTEGER NOT NULL REFERENCES batches(id),
+  note TEXT NOT NULL,
+  updated_by INTEGER REFERENCES users(id),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (student_id, batch_id)
+);

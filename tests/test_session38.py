@@ -64,7 +64,7 @@ class Excel(unittest.TestCase):
 
     # ---- templates ----
     def test_01_templates(self):
-        for kind in ("students", "teachers", "enrolments", "courses", "batches", "expenses"):
+        for kind in ("students", "teachers", "enrolments", "courses", "batches"):   # v0.8.64: expenses have the registry's layout (test_v0864)
             wb = self.book(self.c.get(f"/api/import/{kind}/template.xlsx", headers=self.H))
             self.assertEqual(wb.sheetnames[0], "Data", kind); self.assertIn("Instructions", wb.sheetnames)
             head = [c.value for c in wb["Data"][1]]
@@ -126,7 +126,7 @@ class Excel(unittest.TestCase):
     def test_04_expenses(self):
         self.c.post("/api/expense-categories", json={"name": "Rent"}, headers=self.H)
         r = self.c.get("/api/import/expenses/template.xlsx", headers=self.H)
-        self.assertIn("Rent", [c.value for c in self.book(r)["Lists"]["A"]])
+        self.assertIn("Rent", [c.value for c in self.book(r)["Lists"]["B"]])   # v0.8.64: the registry's layout (Expense Code, Expense Type)
         data = xlsx(["expense_date", "amount_mvr", "category", "description"],
                     [[dt.date(2027, 3, 1), 9000, "rent", "March rent"], ["2027-04-01", 10, "Rent", "future"], ["2027-03-02", 50, "Snacks", ""], ["2027-03-03", "abc", "Rent", ""]])
         r = self.up("/api/import/expenses", data, dry=False).get_json()

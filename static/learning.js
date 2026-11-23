@@ -521,10 +521,11 @@ function impBox(kind, title, opts = {}) {
   const st = {would_create: t("xl_would_save"), created: t("xl_saved"), rejected: t("rejected"), skipped: t("xl_skipped"), unchanged: t("xl_unchanged")};
   const res = r ? impStopped(r) + `<p role="status"><b>${r.dry_run ? t("Check result: nothing was saved") : t("Imported")}</b> · ${r.ok} ${r.dry_run ? t("would be created") : t("created")} · ${r.rejected} ${t("rejected")} / ${r.total}</p>`
     + r.rows.filter(x => x.status === "rejected").map(x => `<div class="msg err">${t("Row")} ${x.row}${x.name ? " · " + esc(x.name) : ""}: ${esc(x.message)}</div>`).join("")
-    + (r.rows.some(x => ["skipped", "unchanged"].includes(x.status)) ? `<p class="hint">${r.rows.filter(x => ["skipped", "unchanged"].includes(x.status)).map(x => `${t("Row")} ${x.row}: ${esc(st[x.status])}`).join(" · ")}</p>` : "")
+    + (r.rows.some(x => ["skipped", "unchanged"].includes(x.status)) ? `<details class="sub"><summary>${r.rows.filter(x => ["skipped", "unchanged"].includes(x.status)).length} ${esc(t("xl_skipped"))}</summary><p class="hint">${r.rows.filter(x => ["skipped", "unchanged"].includes(x.status)).map(x => `${t("Row")} ${x.row}${x.name ? " · " + esc(x.name) : ""}: ${esc(x.message || st[x.status])}`).join("<br>")}</p></details>` : "")
+    + (r.rows.some(x => ["created", "would_create"].includes(x.status) && x.message) ? `<details class="sub"><summary>${esc(t("What each row did"))}</summary><p class="hint">${r.rows.filter(x => ["created", "would_create"].includes(x.status) && x.message).map(x => `${t("Row")} ${x.row}${x.name ? " · " + esc(x.name) : ""}: ${esc(x.message)}`).join("<br>")}</p></details>` : "")
     + (r.dry_run && r.ok && !r.rejected ? `<p class="hint">${t("xl_all_good")}</p>` : "") : "";
   return `<details class="panel addp" data-imp="${kind}"${r || opts.open ? " open" : ""}><summary>${esc(title)}</summary>
-    <p class="hint">${t("xl_import_hint")}</p>
+    <p class="hint">${opts.hint ? esc(opts.hint) : t("xl_import_hint")}</p>${opts.extra || ""}
     <div class="rowflex row"><button type="button" class="btn sm alt" data-do="impTpl" data-k="${kind}">${t("xl_template")}</button>
     <label>${t("xl_file")}<input id="impf_${kind}" type="file" accept="${XL_ACCEPT}">${(S.impFiles || {})[kind] ? `<span class="hint">${t("xl_chosen")}: <bdi>${esc(S.impFiles[kind].name)}</bdi></span>` : ""}</label>
     <button type="button" class="btn alt" data-do="impChk" data-k="${kind}">${t("Check file")}</button><button type="button" class="btn" data-do="impRun" data-k="${kind}">${t("Import")}</button></div><p class="hint" role="status" id="impprog_${kind}"></p>${res}</details>`;

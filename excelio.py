@@ -57,15 +57,17 @@ def _cell_text(v):
     return str(v).strip()
 
 
-def read_table(f=None):
-    """The uploaded file (form field "file", or the raw body for CSV). Raises ValueError with a message fit to show."""
+def read_table(f=None, sheets=None, header=None):
+    """The uploaded file (form field "file", or the raw body for CSV). Raises ValueError with a message fit to show.
+    v0.8.64: sheets = sheet names to look for first (a whole registry workbook can be uploaded as it is); header(cells) -> the column keys
+    when that row is the header row, else None: the first such row among the first 15 is used (the registry has a title above its header)."""
     f = f if f is not None else request.files.get("file")
     raw = f.read(MAX_BYTES + 1) if f else (request.get_data() or b"")
     name = (getattr(f, "filename", "") or "").lower()
     if not raw.strip(): raise ValueError("No file received. Choose an Excel (.xlsx) or CSV file.")
     if len(raw) > MAX_BYTES: raise ValueError("The file is larger than 2 MB. Split it into smaller files.")
     if raw[:2] == b"PK" or name.endswith((".xlsx", ".xlsm")):
-        grid = _xlsx_rows(raw)
+        grid = _xlsx_rows(raw, sheets)
     elif name.endswith(".xls") or raw[:4] == b"\xd0\xcf\x11\xe0":
         raise ValueError("This is an old Excel file (.xls). In Excel choose File > Save As > Excel Workbook (.xlsx), then try again.")
     else:
@@ -75,22 +77,31 @@ def read_table(f=None):
     grid = [(n, r) for n, r in enumerate(grid, 1)]
     while grid and not any(grid[0][1]): grid.pop(0)
     if not grid: raise ValueError("The file is empty.")
-    hn, head = grid[0]; head = [norm_head(h) for h in head]
+    start = 0
+    if header:
+        for k, (_, cells) in enumerate(grid[:15]):
+            if header(cells): start = k; break
+        else: raise ValueError("The column names were not found. Use the template, or keep the registry's column names in one row at the top.")
+        head = header(grid[start][1])
+    else:
+        head = [norm_head(h) for h in grid[0][1]]
     body = []
-    for n, r in grid[1:]:
+    for n, r in grid[start + 1:]:
         if not any(x for x in r): continue
         body.append((n, {head[i]: unsafe(r[i]) for i in range(min(len(head), len(r))) if head[i]}))
     if len(body) > MAX_ROWS: raise ValueError(f"More than {MAX_ROWS} rows. Split the file.")
     return head, body
 
 
-def _xlsx_rows(raw):
+def _xlsx_rows(raw, prefer=None):
     from openpyxl import load_workbook
     try: wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
     except Exception: raise ValueError("This Excel file could not be opened. Save it again as .xlsx and try once more.")
     try:
         names = wb.sheetnames
-        sheet = wb["Data"] if "Data" in names else next((wb[n] for n in names if n not in ("Instructions", "Lists")), wb[names[0]])
+        low = {n.strip().lower(): n for n in names}
+        pick = next((low[p.lower()] for p in (prefer or ()) if p.lower() in low), None)
+        sheet = wb[pick] if pick else wb["Data"] if "Data" in names else next((wb[n] for n in names if n not in ("Instructions", "Lists")), wb[names[0]])
         out = []
         for i, r in enumerate(sheet.iter_rows(values_only=True)):
             if i > MAX_ROWS + 50: break

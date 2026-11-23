@@ -1477,6 +1477,7 @@ def create_app(config=None):
     portio.register(app, ns)   # Session 27: exports and imports
     import sheets
     sheets.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # v0.8.38: Excel exports and imports
+    import registry; registry.register(app, ns, lambda: (app.config["NOW"]() if app.config.get("NOW") else dt.datetime.now(MVT)).date())   # v0.8.64: the Excel registry (imports, income statement, registry workbook)
     import auditview
     auditview.register(app, ns)   # Session 21: activity log viewer (the old /api/audit route lives there now)
 

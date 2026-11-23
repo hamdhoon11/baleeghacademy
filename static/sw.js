@@ -5,7 +5,7 @@
      only when there is no connection, so the app still opens and says it is offline instead of showing the browser's error page.
    - Other sites (Google Fonts, class links) are left to the browser.
    Change VERSION when this file changes; old saved copies are then deleted. */
-const VERSION = "v0.8.63";
+const VERSION = "v0.8.64";
 const CACHE = "portal-shell-" + VERSION;
 const SHELL = ["/", "/ui.js", "/learning.js", "/fees.js", "/admin.js", "/notify.js", "/staffroom.js", "/posts.js", "/i18n/en.json",
                "/icons/icon-192.png", "/icons/icon-512.png", "/icons/apple-touch-icon.png"];
