@@ -605,3 +605,13 @@
 
 ## Done: v0.8.55 (see CHANGES-v0.8.55.md)
 - index.html: bmLoad/bfBar/bfKeep/bfSort/bfTag/bfOf (S.bf[key]) + bfRec/bfrVal (S.bfr[key], recent); GET /api/batch-members; Dashboard batchPanel() + GET /api/admin/batch-overview. Keys: people, enr, apps, slips, inv, over, rem, online. fees.js fxBk() for invoices.
+
+## Done: v0.8.64 (see CHANGES-v0.8.64.md)
+- registry.py (new): `/api/import/revenue` (fees) and `/api/import/expenses` (finance, moved from sheets.py; the v0.8.38 columns still work through `app.extensions["imports"]["legacy_expense_row"]`), their templates in the registry's layout (title row 1, headers row 2), `/api/finance/income-statement(.xlsx|.pdf)`, `/api/finance/registry.xlsx`. `statement(year)` is in `app.extensions["registry"]`.
+- excelio.read_table(sheets=, header=): prefers named sheets and finds the header row (first 15 rows). sheets.run(..., reader=) and a 4th item in a row call = a note shown with the row. impBox(kind, title, {hint, extra}) shows skip reasons and "What each row did".
+- Revenue rows: dedupe on (person, paid_on, amount, revenue type) against payments with id <= the max at the start of the request; monthly/registration pay the open invoice, skip when paid before the import, refuse when paid by an earlier row of the file; else POST /api/invoices/manual with paid=1. Name-only match is a fallback for a mistyped ID, not for a blank ID that belongs to an existing walk-in.
+- Schema: dbx.upgrade_v0864 (V0864_COLUMNS; built-in revenue types get ledger codes 1001/1002), table fee_notes (removeperson PLAN, resetdata LABELS). Setting `usd_rate` (fees.validate_setting).
+- fees.py: grid_data(args) is the grid (the route, the PDF, the .xlsx and the registry workbook use it); per student months_late/owed_late/late_since/note; per batch counts; PUT /api/fees/notes; GET /api/fees/status-grid.xlsx; `app.extensions["fee_grid_sheets"]`.
+- Front end: admin.js fnStatementPanel, fnExpImport, DO.fnCatEdit/fisGet/fisReg, USD field in the expense form; fees.js fxLate, DO.fxNote/fxGridXlsx/fxRtCode, fxRegImport; CSS `.is` (income statement). sw.js v0.8.64.
+- Tests: test_v0864.py (made-up workbook with the registry's shape; the real file is NOT in the repo, which is public), e2e_v0864.py. 611 unit tests pass.
+- Not run: PostgreSQL (no driver here), live Vercel.

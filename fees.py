@@ -40,6 +40,10 @@ def validate_setting(k, v):
     if k == "receipt_prefix" and v:
         if len(v) > 12 or not re.match(r"^[A-Za-z0-9_\-/]+$", v): return "Receipt prefix: up to 12 letters, digits, - _ or /"
     if k.startswith("reminder_template") and len(v) > 1000: return "Message templates can be up to 1000 characters"
+    if k == "usd_rate" and v:   # v0.8.64
+        try: r = float(v)
+        except ValueError: return "US dollar rate must be a number, like 15.42"
+        if not 1 <= r <= 100: return "US dollar rate must be between 1 and 100"
     return None
 
 
@@ -455,15 +459,26 @@ def register(app, c):
         if len(name) > 60: return None, err("Keep the name under 60 characters")
         return name, None
 
+    def rt_code(d, rid=None):
+        """v0.8.64: the registry's Revenue Code (1001, 1002, ...). Optional, unique. Returns (code or None, error response or None)."""
+        v = str(d.get("ledger_code") or "").strip()
+        if not v: return None, None
+        if len(v) > 12 or not re.match(r"^[A-Za-z0-9/\-]+$", v): return None, err("Code: up to 12 letters or digits (like 1003)")
+        if one("SELECT 1 x FROM revenue_types WHERE UPPER(ledger_code)=UPPER(?)" + (" AND id<>?" if rid else ""), (v, rid) if rid else (v,)):
+            return None, err(f"Another revenue type already has the code {v}", 409)
+        return v, None
+
     @app.post("/api/revenue-types")
     @auth("admin", perm="fees")
     def rt_create():
         name, e_ = rt_name(body())
         if e_: return e_
+        code, e_ = rt_code(body())
+        if e_: return e_
         if one("SELECT 1 x FROM revenue_types WHERE LOWER(name)=?", (name.lower(),)): return err("There is already a revenue type with that name", 409)
-        rid = db().execute("INSERT INTO revenue_types(name,is_active,created_at) VALUES(?,1,?)", (name, stamp())).lastrowid
-        audit_c("revenue_type_create", "revenue_type", rid, name); db().commit()
-        return jsonify(id=rid, name=name), 201
+        rid = db().execute("INSERT INTO revenue_types(name,is_active,created_at,ledger_code) VALUES(?,1,?,?)", (name, stamp(), code)).lastrowid
+        audit_c("revenue_type_create", "revenue_type", rid, name + (f" ({code})" if code else "")); db().commit()
+        return jsonify(id=rid, name=name, ledger_code=code), 201
 
     @app.patch("/api/revenue-types/<int:rid>")
     @auth("admin", perm="fees")
@@ -476,6 +491,11 @@ def register(app, c):
             if one("SELECT 1 x FROM revenue_types WHERE LOWER(name)=? AND id<>?", (name.lower(), rid)): return err("There is already a revenue type with that name", 409)
             db().execute("UPDATE revenue_types SET name=? WHERE id=?", (name, rid))
             audit_c("revenue_type_rename", "revenue_type", rid, f"{r['name']} -> {name}")
+        if "ledger_code" in d:   # v0.8.64
+            code, e_ = rt_code(d, rid)
+            if e_: return e_
+            db().execute("UPDATE revenue_types SET ledger_code=? WHERE id=?", (code, rid))
+            audit_c("revenue_type_code", "revenue_type", rid, f"{r['name']}: code {r['ledger_code'] or '-'} -> {code or '-'}")
         if "is_active" in d:
             on = 1 if d["is_active"] in (True, 1, "1", "true") else 0
             if not on and r["code"]: return err("The built-in types (monthly and registration fees) are used by the portal and cannot be turned off", 409)
@@ -1018,11 +1038,15 @@ def register(app, c):
     def fee_grid():
         """v0.8.53: batch by batch, each student's fee for each month: paid / part paid / slip sent / unpaid / overdue / waived.
         ?end=YYYY-MM (default this month) &months=1..12 (default 6) &batch_id= &q= (student name). Void invoices are left out."""
-        a = request.args
+        r = grid_data(request.args)
+        return err(r) if isinstance(r, str) else jsonify(r)
+
+    def grid_data(a):
+        """The grid as a dict, or an error message (str)."""
         end = a.get("end") or month_of(today())
-        if not PERIOD.match(end): return err("Month must look like 2026-03")
+        if not PERIOD.match(end): return "Month must look like 2026-03"
         try: n = max(1, min(12, int(a.get("months") or 6)))
-        except ValueError: return err("months must be a number")
+        except ValueError: return "months must be a number"
         y, mo = int(end[:4]), int(end[5:7])
         months = [f"{(y * 12 + mo - 1 - k) // 12:04d}-{(y * 12 + mo - 1 - k) % 12 + 1:02d}" for k in range(n - 1, -1, -1)]
         w, args = [f"i.period IN ({','.join('?' * n)})", "i.batch_id IS NOT NULL", "i.status<>'void'", "i.kind<>'registration'"], list(months)
@@ -1049,11 +1073,118 @@ def register(app, c):
             else:
                 p["cells"][r["period"]] = {"id": r["id"], "status": st, "due": r["due"], "paid": r["paid"], "balance": max(r["balance"], 0), "due_date": r["due_date"], "paid_on": r["paid_on"]}
             mm = b["months"][r["period"]]; mm["due"] += r["due"]; mm["collected"] += r["paid"]; mm["outstanding"] += max(r["balance"], 0)
+        # v0.8.64: the registry's payment-history extras: how many months each student is behind (all their overdue fees in that batch, not
+        # only the months shown), the office's comment, and paid / not paid counts per month
+        late = {(r["student_id"], r["batch_id"]): r for r in rows(
+            "SELECT i.student_id, i.batch_id, COUNT(*) AS n, SUM(i.amount_due_mvr-i.waived_mvr-i.paid_mvr) AS owed, MIN(i.period) AS since FROM invoices i "
+            "WHERE i.batch_id IS NOT NULL AND i.student_id IS NOT NULL AND i.kind<>'registration' AND i.status IN ('unpaid','slip_submitted') "
+            "AND i.amount_due_mvr-i.waived_mvr-i.paid_mvr>0 AND i.due_date<? GROUP BY i.student_id, i.batch_id", (t,))}
+        notes = {(r["student_id"], r["batch_id"]): r for r in rows("SELECT n.student_id, n.batch_id, n.note, n.updated_at, u.full_name AS by_name FROM fee_notes n "
+                                                                  "LEFT JOIN users u ON u.id=n.updated_by")}
         batches = []
         for b in out.values():
             b["students"] = sorted(b["students"].values(), key=lambda x: x["name"].lower())
+            for p in b["students"]:
+                lt, nt = late.get((p["student_id"], b["batch_id"])), notes.get((p["student_id"], b["batch_id"]))
+                p["months_late"], p["owed_late"], p["late_since"] = (lt["n"], int(lt["owed"]), lt["since"]) if lt else (0, 0, None)
+                p["note"], p["note_at"], p["note_by"] = (nt["note"], nt["updated_at"], nt["by_name"]) if nt else (None, None, None)
+            b["counts"] = {}
+            for m in months:
+                cells = [p["cells"][m] for p in b["students"] if m in p["cells"]]
+                b["counts"][m] = {"paid": sum(1 for x in cells if x["status"] in ("paid", "waived")), "not_paid": sum(1 for x in cells if x["status"] in ("unpaid", "overdue", "partial", "slip"))}
             batches.append(b)
-        return jsonify(months=months, batches=batches)
+        return {"months": months, "batches": batches}
+
+    @app.put("/api/fees/notes")
+    @auth("admin", perm="fees")
+    def fee_note_put():
+        """v0.8.64: the office's comment on a student's fees in one batch, like the registry's Comments column. An empty note removes it."""
+        d = body()
+        try: sid, bid = int(d.get("student_id")), int(d.get("batch_id"))
+        except (TypeError, ValueError): return err("Choose the student and the batch")
+        if not one("SELECT 1 x FROM enrollments WHERE student_id=? AND batch_id=?", (sid, bid)) and not one("SELECT 1 x FROM invoices WHERE student_id=? AND batch_id=?", (sid, bid)):
+            return err("That student is not in that batch", 404)
+        note = re.sub(r"\s+", " ", str(d.get("note") or "")).strip()
+        if len(note) > 200: return err("Keep the comment under 200 characters")
+        old = one("SELECT note FROM fee_notes WHERE student_id=? AND batch_id=?", (sid, bid))
+        if not note:
+            db().execute("DELETE FROM fee_notes WHERE student_id=? AND batch_id=?", (sid, bid))
+        elif old:
+            db().execute("UPDATE fee_notes SET note=?, updated_by=?, updated_at=? WHERE student_id=? AND batch_id=?", (note, g.user["id"], stamp(), sid, bid))
+        else:
+            db().execute("INSERT INTO fee_notes(student_id,batch_id,note,updated_by,updated_at) VALUES(?,?,?,?,?)", (sid, bid, note, g.user["id"], stamp()))
+        if (old["note"] if old else "") != note:
+            audit_c("fee_note", "user", sid, f"batch {bid}: {note or '(removed)'}", old=old["note"] if old else None, new=note or None)
+        db().commit()
+        return jsonify(ok=True, note=note or None)
+
+    GRID_WORDS = {"paid": "Paid", "waived": "Waived", "slip": "Slip sent", "partial": "Part paid", "unpaid": "Not paid", "overdue": "Not paid"}
+    GRID_FILLS = {"paid": "D9EAD3", "waived": "E7E6E6", "slip": "FFF2CC", "partial": "FCE5CD", "unpaid": "F4CCCC", "overdue": "EA9999"}
+
+    def grid_sheets(wb, g_):
+        """v0.8.64: one sheet per batch in the registry's "Student Payment History" layout: Student ID | Name | months | Months late | Comments,
+        then Total Number of Students / Total Paid / Total Not Paid."""
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter as L
+        import excelio as X
+        lab = lambda m: MONTHS[int(m[5:]) - 1] + ("" if len({x[:4] for x in g_["months"]}) == 1 else " " + m[:4])
+        used = set()
+        for b in g_["batches"]:
+            name = re.sub(r"[\[\]:*?/\\]", "-", "Payments " + b["name"])[:31]
+            k = 2
+            while name in used: name = name[:28] + f" {k}"; k += 1
+            used.add(name)
+            ws = wb.create_sheet(name)
+            ws["A1"] = X.csv_safe(b["name"].upper()); ws["A1"].font = Font(bold=True, size=13)
+            head = ["Student ID", "Name"] + [lab(m) for m in g_["months"]] + ["Months late", "Comments"]
+            for j, h in enumerate(head, 1):
+                c_ = ws.cell(row=2, column=j, value=h); c_.font = Font(bold=True, color="FFFFFF"); c_.fill = PatternFill("solid", fgColor=X.HEAD_FILL)
+            r = 3
+            for p in b["students"]:
+                ws.cell(row=r, column=1, value=p["student_code"] or "").number_format = "@"
+                ws.cell(row=r, column=2, value=X.csv_safe(p["name"]))
+                for j, m in enumerate(g_["months"], 3):
+                    x = p["cells"].get(m)
+                    if not x: continue
+                    c_ = ws.cell(row=r, column=j, value=GRID_WORDS[x["status"]]); c_.fill = PatternFill("solid", fgColor=GRID_FILLS[x["status"]])
+                    c_.alignment = Alignment(horizontal="center")
+                ws.cell(row=r, column=len(g_["months"]) + 3, value=p.get("months_late") or "")
+                ws.cell(row=r, column=len(g_["months"]) + 4, value=X.csv_safe(p.get("note") or ""))
+                r += 1
+            ws.cell(row=r, column=1, value="Total Number of Students").font = Font(bold=True); ws.cell(row=r, column=3, value=len(b["students"])); r += 1
+            for label, src, key in (("Total Paid", "counts", "paid"), ("Total Not Paid", "counts", "not_paid"), ("Collected (MVR)", "months", "collected"), ("Still to pay (MVR)", "months", "outstanding")):
+                ws.cell(row=r, column=2, value=label).font = Font(bold=True)
+                for j, m in enumerate(g_["months"], 3): ws.cell(row=r, column=j, value=b[src][m][key])
+                r += 1
+            ws.column_dimensions["A"].width, ws.column_dimensions["B"].width = 15, 28
+            for j in range(3, len(g_["months"]) + 3): ws.column_dimensions[L(j)].width = 10
+            ws.column_dimensions[L(len(g_["months"]) + 3)].width = 11; ws.column_dimensions[L(len(g_["months"]) + 4)].width = 34
+            ws.freeze_panes = "C3"
+
+    @app.get("/api/fees/status-grid.xlsx")
+    @auth("admin", perm="fees")
+    def fee_grid_xlsx():   # v0.8.64: the grid as shown, as Excel, one sheet per batch (the registry's payment history sheets)
+        import io as _io
+        from openpyxl import Workbook
+        import excelio as X
+        j = grid_data(request.args)
+        if isinstance(j, str): return err(j)
+        wb = Workbook(); wb.remove(wb.active)
+        grid_sheets(wb, j)
+        if not j["batches"]: wb.create_sheet("Payments")["A1"] = "No fees for these months."
+        out = _io.BytesIO(); wb.save(out)
+        audit_c("export_fee_grid_xlsx", "report", None, f"{j['months'][0]} to {j['months'][-1]}"); db().commit()
+        return X.send_xlsx(out.getvalue(), f"payment-history-{j['months'][-1]}")
+
+    def registry_grid(wb, year):
+        """Used by Finance -> Download the registry: the payment history of every batch for the year, January to this month."""
+        t = today()
+        end = f"{year}-12" if year < t.year else month_of(t)
+        n = 12 if year < t.year else t.month
+        if year > t.year: return
+        g_ = grid_data({"end": end, "months": str(n)})
+        if isinstance(g_, dict): grid_sheets(wb, g_)
+    app.extensions["fee_grid_sheets"] = registry_grid
 
     @app.get("/api/fees/status-grid.pdf")
     @auth("admin", perm="fees")

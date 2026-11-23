@@ -17,7 +17,7 @@ served through the download route below. Every create, edit and delete writes an
 Session 24 (same area):
   GET    /api/finance/revenue                       ?date_from=&date_to=&course_id=&batch_id=&kind=course|tuition -> collected, by kind/course/batch/month, outstanding
   GET    /api/finance/dashboard                     ?date_from=&date_to= (default: this month so far) -> revenue, expenses, net, outstanding, 12-month series"""
-import datetime as dt
+import datetime as dt, re
 from flask import g, jsonify, request
 import common
 import payments as pay
@@ -27,6 +27,13 @@ def register(app, c, today):
     db, rows, one, err, auth, audit, store = c.db, c.rows, c.one, c.err, c.auth, c.audit, c.store
     AREA = "finance"
 
+    def usd_rate():
+        """v0.8.64: Settings -> Fees -> US dollar rate (default 15.42, the registry's rate)."""
+        try:
+            r = float((c.raw_setting("usd_rate") or "").strip() or "15.42")
+            return r if 1 <= r <= 100 else 15.42
+        except ValueError: return 15.42
+
     def iso(v, what="Date"):
         try: d = dt.date.fromisoformat(str(v or ""))
         except ValueError: raise ValueError(f"{what} must be a date (YYYY-MM-DD)")
@@ -35,6 +42,20 @@ def register(app, c, today):
     def data():
         """Form fields (multipart) or JSON, whichever came."""
         return request.form if (request.form or request.files) else (request.get_json(silent=True) or {})
+
+    def category_code(raw, kid=None):
+        """v0.8.64: the registry's Expense Code (5001 ...). Optional; letters, digits, - or /, unique."""
+        v = str(raw or "").strip()
+        if not v: return None
+        if len(v) > 12 or not re.match(r"^[A-Za-z0-9/\-]+$", v): raise ValueError("Code: up to 12 letters or digits (like 5001)")
+        if one("SELECT 1 x FROM expense_categories WHERE UPPER(code)=UPPER(?)" + (" AND id<>?" if kid else ""), (v, kid) if kid else (v,)):
+            raise ValueError(f"Another category already has the code {v}")
+        return v
+
+    def category_kind(raw):
+        v = str(raw or "operating").strip().lower()
+        if v not in ("operating", "capital"): raise ValueError("Kind must be operating or capital")
+        return v
 
     def category_name(raw):
         n = " ".join(str(raw or "").split())
@@ -46,18 +67,19 @@ def register(app, c, today):
     @app.get("/api/expense-categories")
     @auth("admin", perm=AREA)
     def exp_cat_list():
-        return jsonify(rows("SELECT k.id,k.name,k.is_active,k.created_at,(SELECT COUNT(*) FROM expenses e WHERE e.category_id=k.id) AS expense_count "
-                            "FROM expense_categories k ORDER BY k.name"))
+        return jsonify(rows("SELECT k.id,k.name,k.code,k.kind,k.is_active,k.created_at,(SELECT COUNT(*) FROM expenses e WHERE e.category_id=k.id) AS expense_count "
+                            "FROM expense_categories k ORDER BY k.code IS NULL, k.code, k.name"))
 
     @app.post("/api/expense-categories")
     @auth("admin", perm=AREA)
     def exp_cat_create():
-        try: n = category_name((request.get_json(silent=True) or {}).get("name"))
+        d = request.get_json(silent=True) or {}
+        try: n, code, kind = category_name(d.get("name")), category_code(d.get("code")), category_kind(d.get("kind"))
         except ValueError as x: return err(str(x))
         if one("SELECT 1 x FROM expense_categories WHERE LOWER(name)=LOWER(?)", (n,)): return err("That category already exists", 409)
-        cur = db().execute("INSERT INTO expense_categories(name) VALUES(?)", (n,))
-        audit("expense_category_create", "expense_category", cur.lastrowid, n, new=n); db().commit()
-        return jsonify(id=cur.lastrowid, name=n), 201
+        cur = db().execute("INSERT INTO expense_categories(name,code,kind) VALUES(?,?,?)", (n, code, kind))
+        audit("expense_category_create", "expense_category", cur.lastrowid, n + (f" ({code})" if code else "") + (", capital" if kind == "capital" else ""), new=n); db().commit()
+        return jsonify(id=cur.lastrowid, name=n, code=code, kind=kind), 201
 
     @app.patch("/api/expense-categories/<int:kid>")
     @auth("admin", perm=AREA)
@@ -65,14 +87,16 @@ def register(app, c, today):
         k = one("SELECT * FROM expense_categories WHERE id=?", (kid,))
         if not k: return err("Category not found", 404)
         d = request.get_json(silent=True) or {}
-        name, active = k["name"], k["is_active"]
-        if "name" in d:
-            try: name = category_name(d["name"])
-            except ValueError as x: return err(str(x))
-            if one("SELECT 1 x FROM expense_categories WHERE LOWER(name)=LOWER(?) AND id<>?", (name, kid)): return err("That category already exists", 409)
+        name, active, code, kind = k["name"], k["is_active"], k["code"], k["kind"]
+        try:
+            if "name" in d: name = category_name(d["name"])
+            if "code" in d: code = category_code(d["code"], kid)
+            if "kind" in d: kind = category_kind(d["kind"])
+        except ValueError as x: return err(str(x))
+        if "name" in d and one("SELECT 1 x FROM expense_categories WHERE LOWER(name)=LOWER(?) AND id<>?", (name, kid)): return err("That category already exists", 409)
         if "is_active" in d: active = 1 if d["is_active"] in (True, 1, "1", "true") else 0
-        db().execute("UPDATE expense_categories SET name=?, is_active=? WHERE id=?", (name, active, kid))
-        audit("expense_category_update", "expense_category", kid, f"{k['name']} -> {name}; active {k['is_active']} -> {active}",
+        db().execute("UPDATE expense_categories SET name=?, is_active=?, code=?, kind=? WHERE id=?", (name, active, code, kind, kid))
+        audit("expense_category_update", "expense_category", kid, f"{k['name']} -> {name}; active {k['is_active']} -> {active}; code {k['code'] or '-'} -> {code or '-'}; {k['kind']} -> {kind}",
               old=f"{k['name']} (active={k['is_active']})", new=f"{name} (active={active})"); db().commit()
         return jsonify(ok=True)
 
@@ -88,7 +112,8 @@ def register(app, c, today):
 
     # ---------- expenses ----------
     BASE = ("SELECT e.id,e.expense_date,e.amount_mvr,e.category_id,k.name AS category,e.description,e.receipt_name,(e.receipt_file IS NOT NULL) AS has_receipt,e.recurring_id,"
-            "e.entered_by,u.full_name AS entered_by_name,e.created_at,e.updated_at,e.teacher_id,tu.full_name AS teacher_name FROM expenses e JOIN expense_categories k ON k.id=e.category_id "
+            "e.entered_by,u.full_name AS entered_by_name,e.created_at,e.updated_at,e.teacher_id,tu.full_name AS teacher_name,"
+            "e.supplier,e.supplier_gst_no,e.invoice_no,e.gst_mvr,e.usd_amount,e.fx_rate,e.amount_exact,k.code AS category_code,k.kind AS category_kind FROM expenses e JOIN expense_categories k ON k.id=e.category_id "
             "LEFT JOIN users u ON u.id=e.entered_by LEFT JOIN users tu ON tu.id=e.teacher_id")
 
     def shape(r):
@@ -115,6 +140,20 @@ def register(app, c, today):
             ds = " ".join(str(d.get("description") or "").split())
             if len(ds) > 500: raise ValueError("The description is too long (500 letters max)")
             v["description"] = ds or None
+        for key, n in (("supplier", 100), ("supplier_gst_no", 40), ("invoice_no", 60)):   # v0.8.64: the registry's columns (optional)
+            if cur is None or key in d:
+                t_ = " ".join(str(d.get(key) or "").split())
+                if t_ in ("-", "--"): t_ = ""
+                if len(t_) > n: raise ValueError(f"{key.replace('_', ' ').capitalize()} is too long ({n} letters max)")
+                v[key] = t_ or None
+        for key, what in (("gst_mvr", "GST"), ("usd_amount", "The US dollar amount"), ("fx_rate", "The dollar rate"), ("amount_exact", "The exact amount")):
+            if cur is None or key in d:
+                raw = str(d.get(key) if d.get(key) is not None else "").strip()
+                if raw in ("", "-"): v[key] = None; continue
+                try: f_ = float(raw)
+                except ValueError: raise ValueError(f"{what} must be a number")
+                if f_ < 0 or f_ > 10_000_000: raise ValueError(f"{what} must be 0 or more")
+                v[key] = round(f_, 4)
         if cur is None or "teacher_id" in d:   # v0.8.51: a salary paid to a teacher (optional)
             raw = str(d.get("teacher_id") or "").strip()
             if raw:
@@ -154,13 +193,14 @@ def register(app, c, today):
                 try: where.append(f"e.expense_date{op}?"); args.append(iso(a[key]).isoformat())
                 except ValueError as x: return err(str(x))
         if a.get("q"):
-            where.append("(LOWER(COALESCE(e.description,'')) LIKE ? OR LOWER(k.name) LIKE ?)"); like = "%" + a["q"].lower()[:60] + "%"; args += [like, like]
+            where.append("(LOWER(COALESCE(e.description,'')) LIKE ? OR LOWER(k.name) LIKE ? OR LOWER(COALESCE(e.supplier,'')) LIKE ? OR LOWER(COALESCE(e.invoice_no,'')) LIKE ?)")
+            like = "%" + a["q"].lower()[:60] + "%"; args += [like, like, like, like]
         w = (" WHERE " + " AND ".join(where)) if where else ""
         try: page, per = max(1, int(a.get("page", 1))), min(200, max(1, int(a.get("per_page", 50))))
         except ValueError: return err("Bad paging")
         tot = one("SELECT COUNT(*) n, COALESCE(SUM(e.amount_mvr),0) s FROM expenses e JOIN expense_categories k ON k.id=e.category_id" + w, tuple(args))
         items = rows(BASE + w + " ORDER BY e.expense_date DESC, e.id DESC LIMIT ? OFFSET ?", tuple(args) + (per, (page - 1) * per))
-        return jsonify(items=[shape(r) for r in items], count=tot["n"], total_mvr=int(tot["s"]), page=page, per_page=per)
+        return jsonify(items=[shape(r) for r in items], count=tot["n"], total_mvr=int(tot["s"]), page=page, per_page=per, usd_rate=usd_rate())
 
     @app.post("/api/expenses")
     @auth("admin", perm=AREA)
@@ -173,8 +213,10 @@ def register(app, c, today):
             try: name, _, shown = common.save_private(request.files["file"], store, "receipts")
             except ValueError as x: return err(str(x))
         try:
-            cur = db().execute("INSERT INTO expenses(expense_date,amount_mvr,category_id,description,receipt_file,receipt_name,entered_by,teacher_id) VALUES(?,?,?,?,?,?,?,?)",
-                               (v["expense_date"], v["amount_mvr"], v["category_id"], v["description"], name, shown, g.user["id"], v.get("teacher_id")))
+            cur = db().execute("INSERT INTO expenses(expense_date,amount_mvr,category_id,description,receipt_file,receipt_name,entered_by,teacher_id,"
+                               "supplier,supplier_gst_no,invoice_no,gst_mvr,usd_amount,fx_rate,amount_exact) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                               (v["expense_date"], v["amount_mvr"], v["category_id"], v["description"], name, shown, g.user["id"], v.get("teacher_id"),
+                                v.get("supplier"), v.get("supplier_gst_no"), v.get("invoice_no"), v.get("gst_mvr"), v.get("usd_amount"), v.get("fx_rate"), v.get("amount_exact")))
             if v.get("teacher_id"): salary_sync(cur.lastrowid, v, (d.get("method") or "").strip().lower() or None)
             audit("expense_create", "expense", cur.lastrowid, f"{v['expense_date']} MVR {v['amount_mvr']}" + (", receipt attached" if name else ""), new=v["amount_mvr"]); db().commit()
         except Exception:
@@ -200,7 +242,7 @@ def register(app, c, today):
         elif str(d.get("remove_receipt", "")) in ("1", "true", "True") and cur["receipt_file"]:
             drop, name, shown = cur["receipt_file"], None, None
         v["receipt_file"], v["receipt_name"] = name, shown
-        changed = [k for k in ("expense_date", "amount_mvr", "category_id", "description", "teacher_id") if k in v and v[k] != cur[k]]
+        changed = [k for k in ("expense_date", "amount_mvr", "category_id", "description", "teacher_id", "supplier", "supplier_gst_no", "invoice_no", "gst_mvr", "usd_amount", "fx_rate", "amount_exact") if k in v and v[k] != cur[k]]
         if name != cur["receipt_file"]: changed.append("receipt")
         try:
             sets = ", ".join(f"{k}=?" for k in v) + ", updated_by=?, updated_at=datetime('now')"

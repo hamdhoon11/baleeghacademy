@@ -73,7 +73,10 @@ try:
         # ---- Finance: expenses import ----
         a.click("nav [data-v=finance]"); a.wait_for_selector("[data-imp=expenses]"); a.click("[data-imp=expenses] summary")
         tpl, _ = dl(a, "[data-imp=expenses] [data-do=impTpl]")
-        f = fill(tpl, [[time.strftime("%Y-%m-%d"), 1200, "Rent", "Office"], [time.strftime("%Y-%m-%d"), 50, "Tea", ""]], os.path.join(tmp, "exp.xlsx"))
+        # v0.8.64: the template has the registry's layout (sheet "Expense Registry", column names in row 2); rows from row 3
+        wb = load_workbook(tpl); ws = wb["Expense Registry"]
+        for r in ([1, time.strftime("%Y-%m-%d"), "-", "Landlord", "R-1", "", "Rent", 1200, "-", "-", "-", None, None, "Office"], [2, time.strftime("%Y-%m-%d"), "-", "Cafe", "-", "", "Tea", 50]): ws.append(r)
+        f = os.path.join(tmp, "exp.xlsx"); wb.save(f)
         a.set_input_files("#impf_expenses", f); a.click("[data-imp=expenses] [data-do=impRun]"); e2e_shim.dialog(a); a.wait_for_selector("text=No category called Tea")
         check(sql("SELECT COUNT(*) FROM expenses WHERE amount_mvr=1200")[0][0] == 1, "the good expense was saved, the bad one listed with its reason")
         path, _ = dl(a, "[data-do=xlGet][data-p='/expenses/export'][data-x=xlsx]")

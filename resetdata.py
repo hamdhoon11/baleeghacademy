@@ -37,7 +37,7 @@ LABELS = {"users": "Teacher and student accounts", "students": "Student profiles
           "teacher_earnings": "Teacher earnings", "teacher_payments": "Payments to teachers", "stored_files": "Files stored in the database",
           "password_help": "Password requests", "rate_hits": "Attempt counters",
           "staff_messages": "Teachers' room messages", "staff_folders": "Teachers' guide folders", "staff_files": "Teachers' guide files", "interest_list": "Interest list",
-          "posts": "Notice board posts", "post_files": "Notice board files", "post_reads": "Notice board read marks", "post_comments": "Notice board comments"}
+          "posts": "Notice board posts", "post_files": "Notice board files", "post_reads": "Notice board read marks", "post_comments": "Notice board comments", "fee_notes": "Fee comments"}
 
 
 def table_refs(script):

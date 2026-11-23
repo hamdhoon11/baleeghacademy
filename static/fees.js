@@ -190,10 +190,25 @@ DO.fxRtRename = async d => {
   const v = await ui.ask(t("fx_rename") + ": " + d.name, {label: t("fx_type_name"), value: d.name, required: true}); if (v === null) return false;
   await api("/revenue-types/" + d.id, "PATCH", {name: v}); S.fxTypeList = null; flash(t("saved"), true);
 };
+DO.fxRtCode = async d => {   // v0.8.64: the registry's Revenue Code (1001, 1002, ...)
+  const v = await ui.ask(t("Code") + ": " + d.name, {label: t("Revenue Code in the registry"), value: d.code, maxlength: 12, hint: t("Like 1001. Used by the registry import and the income statement. Empty = no code.")});
+  if (v === null || v === d.code) return false;
+  await api("/revenue-types/" + d.id, "PATCH", {ledger_code: v}); S.fxTypeList = null; flash(t("saved"), true);
+};
+// v0.8.64: import the academy's Revenue Registry (the whole workbook or the template)
+function fxRegImport() {
+  const o = S.regRev = S.regRev || {walkin: false, add: true};
+  const extra = `<div class="rowflex row"><label class="inl"><input type="checkbox" id="rr_walkin" ${o.walkin ? "checked" : ""}> ${esc(t("Student ID not in the portal: record it under their name"))}</label>`
+    + `<label class="inl"><input type="checkbox" id="rr_add" ${o.add ? "checked" : ""}> ${esc(t("Add new codes (a new Revenue Code becomes a revenue type)"))}</label></div>`;
+  mount(() => { for (const [id, k] of [["rr_walkin", "walkin"], ["rr_add", "add"]]) { const el = $("#" + id); if (el) el.onchange = () => { S.regRev = {...S.regRev, [k]: el.checked}; IMPS.revenue.query = fxRegQuery(); }; } });
+  return impBox("revenue", t("Import the revenue registry (Excel)"), {query: fxRegQuery(), extra,
+    hint: t("Upload the academy's registry workbook as it is, or the template (its Revenue Registry sheet). Check file first: nothing is saved. A payment already in the portal is skipped; a monthly or registration fee with an open invoice is paid on that invoice; anything else becomes a paid invoice with a receipt.")});
+}
+const fxRegQuery = () => { const o = S.regRev || {}; return `unknown=${o.walkin ? "walkin" : "refuse"}&add_codes=${o.add === false ? 0 : 1}`; };
 DO.fxRtToggle = async d => { await api("/revenue-types/" + d.id, "PATCH", {is_active: d.on === "1"}); S.fxTypeList = null; flash(t("saved"), true); };
 document.addEventListener("submit", async e => {
   if (e.target.id !== "fxrt") return; e.preventDefault();
-  try { await api("/revenue-types", "POST", {name: val("fxrt_n")}); S.fxTypeList = null; flash(t("saved"), true); render(); } catch (x) { flash(x.message, false); }
+  try { await api("/revenue-types", "POST", {name: val("fxrt_n"), ledger_code: val("fxrt_c")}); S.fxTypeList = null; flash(t("saved"), true); render(); } catch (x) { flash(x.message, false); }
 });
 DO.fxEdit = async d => {
   const i = (S.fxInvList || []).find(x => x.id === +d.id) || await api("/invoices/" + d.id), types = await fxTypes();
@@ -253,15 +268,27 @@ function fxGrid(g) {
   };
   return legend + g.batches.map(b => {
     const cur = b.months[g.months[g.months.length - 1]];
-    const owing = b.students.filter(p => Object.values(p.cells).some(x => x.balance > 0)).length;
+    const owing = b.students.filter(p => Object.values(p.cells).some(x => x.balance > 0)).length, late = b.students.filter(p => p.months_late).length;
     return `<details class="sub" ${g.batches.length === 1 ? "open" : ""}><summary><b>${esc(b.name)}</b> <span class="hint">· ${b.students.length} ${esc(t(b.students.length === 1 ? "student" : "students"))}`
-      + ` · ${esc(fxMon(g.months[g.months.length - 1]))}: ${esc(t("Collected"))} ${mvr(cur.collected.toLocaleString("en"))} / ${mvr(cur.due.toLocaleString("en"))}${owing ? ` · ${owing} ${esc(t("still owe"))}` : ""}</span></summary>`
+      + ` · ${esc(fxMon(g.months[g.months.length - 1]))}: ${esc(t("Collected"))} ${mvr(cur.collected.toLocaleString("en"))} / ${mvr(cur.due.toLocaleString("en"))}${owing ? ` · ${owing} ${esc(t("still owe"))}` : ""}${late ? ` · <span class="bad">${late} ${esc(t("late"))}</span>` : ""}</span></summary>`
       + `<div class="scrollx"><table class="fg nostack"><thead><tr><th>${esc(t("Student"))}</th>${g.months.map(m => `<th class="c">${esc(fxMon(m))}</th>`).join("")}</tr></thead><tbody>`
-      + b.students.map(p => `<tr><th scope="row">${esc(p.name)}${p.student_code ? `<br><span class="hint">${esc(p.student_code)}</span>` : ""}</th>${g.months.map(m => cell(p.cells[m], m)).join("")}</tr>`).join("")
-      + `</tbody><tfoot><tr><th>${esc(t("Collected"))}</th>${g.months.map(m => `<td class="c">${b.months[m].collected.toLocaleString("en")}</td>`).join("")}</tr>`
+      + b.students.map(p => `<tr><th scope="row">${esc(p.name)}${p.student_code ? `<br><span class="hint">${esc(p.student_code)}</span>` : ""}${fxLate(p)}`
+        + `<br><button type="button" class="linkbtn hint" data-do="fxNote" data-s="${p.student_id}" data-b="${b.batch_id}" data-n="${esc(p.name)}" data-v="${esc(p.note || "")}" title="${esc(p.note_by ? t("Comment by {n}").replace("{n}", p.note_by) + " · " + String(p.note_at || "").slice(0, 10) : t("Add a comment"))}">${p.note ? "✎ " + esc(p.note) : "+ " + esc(t("Comment"))}</button></th>${g.months.map(m => cell(p.cells[m], m)).join("")}</tr>`).join("")
+      + `</tbody><tfoot><tr><th>${esc(t("Paid / not paid"))}</th>${g.months.map(m => { const n = (b.counts || {})[m] || {paid: 0, not_paid: 0}; return `<td class="c">${n.paid} / <span class="${n.not_paid ? "bad" : ""}">${n.not_paid}</span></td>`; }).join("")}</tr><tr><th>${esc(t("Collected"))}</th>${g.months.map(m => `<td class="c">${b.months[m].collected.toLocaleString("en")}</td>`).join("")}</tr>`
       + `<tr><th>${esc(t("To pay"))}</th>${g.months.map(m => `<td class="c${b.months[m].outstanding ? " bad" : ""}">${b.months[m].outstanding.toLocaleString("en")}</td>`).join("")}</tr></tfoot></table></div></details>`;
   }).join("");
 }
+// v0.8.64: how far behind a student is in this batch (all overdue months, not only those shown), like the registry's "Need reminder 2nd month"
+const fxLate = p => p.months_late ? `<br><span class="tag ${p.months_late > 1 ? "bad" : "warn"}" title="${esc(t("Overdue since {m}: MVR {a}").replace("{m}", fxMon(p.late_since)).replace("{a}", fmtNum(p.owed_late)))}">${esc(p.months_late === 1 ? t("1 month late") : t("{n} months late").replace("{n}", p.months_late))}</span>` : "";
+DO.fxNote = async d => {
+  const v = await ui.ask(t("Comment") + " · " + d.n, {label: t("Comment"), value: d.v || "", maxlength: 200, okText: t("save"), hint: t("For the office only. Leave empty to remove it.")});
+  if (v === null || v === d.v) return false;
+  await api("/fees/notes", "PUT", {student_id: +d.s, batch_id: +d.b, note: v}); flash(t("saved"), true);
+};
+DO.fxGridXlsx = async () => {   // v0.8.64: the grid as Excel, one sheet per batch (the registry's payment history sheets)
+  const f = S.fxRec || {}, q = new URLSearchParams(Object.entries({end: f.period, months: f.period ? 1 : (f.span || 3), batch_id: f.batch === "none" ? "" : f.batch, q: f.q}).filter(([, v]) => v)).toString();
+  await fetchFile("/fees/status-grid.xlsx" + (q ? "?" + q : ""), {name: "payment-history.xlsx"}); return false;
+};
 DO.fxRecPick = d => {
   if (!$(`#fxp_i option[value="${+d.id}"]`)) { S.fxRecPick = +d.id; S.fxRec = {...(S.fxRec || {}), period: "", q: ""}; return; }
   S.fxRecPick = +d.id; const fi = $("#fxp_i"); if (fi) { fi.value = d.id; const x = (S.fxRecInv || []).find(i => i.id === +d.id); if (x && $("#fxp_a")) $("#fxp_a").value = x.balance; $("#fxp_h").scrollIntoView({behavior: "smooth", block: "start"}); $("#fxp_a") && $("#fxp_a").focus({preventScroll: true}); } return false; };
@@ -342,8 +369,8 @@ const FX = {
       if ($("#fxm_w")) { $("#fxm_w").onchange = who; $("#fxm_s").onchange = fxBatchOpts; $("#fxm_p").onchange = paid; who(); paid(); }
       onSubmit("fxm", fxManualSend);
     });
-    const typeRow = r => `<div class="cl${r.is_active ? "" : " off"}"><div><b>${esc(r.name)}</b> ${r.built_in ? tag(t("fx_built_in")) : ""} ${r.is_active ? "" : tag(t("inactive"), "warn")}<br><span class="hint">${t("fx_n_invoices").replace("{n}", r.invoices)}</span></div>
-      <div class="seg"><button class="btn sm alt" data-do="fxRtRename" data-id="${r.id}" data-name="${esc(r.name)}">${t("fx_rename")}</button>${r.built_in ? "" : `<button class="btn sm" data-do="fxRtToggle" data-id="${r.id}" data-on="${r.is_active ? 0 : 1}">${r.is_active ? t("fx_turn_off") : t("fx_turn_on")}</button>`}</div></div>`;
+    const typeRow = r => `<div class="cl${r.is_active ? "" : " off"}"><div>${r.ledger_code ? `<span class="chip">${esc(r.ledger_code)}</span> ` : ""}<b>${esc(r.name)}</b> ${r.built_in ? tag(t("fx_built_in")) : ""} ${r.is_active ? "" : tag(t("inactive"), "warn")}<br><span class="hint">${t("fx_n_invoices").replace("{n}", r.invoices)}</span></div>
+      <div class="seg"><button class="btn sm alt" data-do="fxRtRename" data-id="${r.id}" data-name="${esc(r.name)}">${t("fx_rename")}</button><button class="btn sm alt" data-do="fxRtCode" data-id="${r.id}" data-name="${esc(r.name)}" data-code="${esc(r.ledger_code || "")}">${t("Code")}</button>${r.built_in ? "" : `<button class="btn sm" data-do="fxRtToggle" data-id="${r.id}" data-on="${r.is_active ? 0 : 1}">${r.is_active ? t("fx_turn_off") : t("fx_turn_on")}</button>`}</div></div>`;
     return `<div class="panel"><h2>${t("fx_tab_manual")}</h2><p class="hint">${t("fx_manual_hint")}</p><form id="fxm" class="row">
       <label>${t("fx_bill_to")}<select id="fxm_w"><option value="student">${t("fx_bill_student")}</option><option value="customer">${t("fx_bill_customer")}</option></select></label>
       <div id="fxm_sbox" class="rowflex full">${pickField("fxm_s", "student", [["", "-"], ...studs.filter(u => u.is_active !== 0).map(u => [u.id, u.full_name + (u.login_id ? " (" + u.login_id + ")" : "")])], "")}
@@ -364,7 +391,8 @@ const FX = {
         <label class="inl"><input id="fxm_pt" type="checkbox"> ${t("fx_tell_student")}</label></div>
       <button class="btn alt">${t("fx_create_invoice")}</button></form></div>
       <div class="panel"><h2>${t("fx_revenue_types")}</h2><p class="hint">${t("fx_revenue_types_hint")}</p>${types.map(typeRow).join("")}
-      <form id="fxrt" class="row"><label>${t("fx_new_type")}<input id="fxrt_n" maxlength="60" required></label><button class="btn alt">${t("add")}</button></form></div>`;
+      <form id="fxrt" class="row"><label>${t("fx_new_type")}<input id="fxrt_n" maxlength="60" required></label><label>${t("Code (optional)")}<input id="fxrt_c" maxlength="12" placeholder="1004"></label><button class="btn alt">${t("add")}</button></form></div>`
+      + fxRegImport();
   },
   // v0.8.52: open fees batch by batch (tap a month to fill the form), and payments that say which month they paid for
   async record() {
@@ -408,7 +436,7 @@ const FX = {
       + [...g.people.values()].sort((a, b) => a.name.localeCompare(b.name)).map(pe => `<div class="cl"><span>${esc(pe.name)}</span><span class="seg">${pe.items.sort((a, b) => a.period.localeCompare(b.period)).map(i => `<button type="button" class="btn sm ${i.status === "slip_submitted" ? "alt" : ""}" data-do="fxRecPick" data-id="${i.id}" title="${esc(i.number)}">${esc(fxMon(i.period))} · ${mvr(i.balance)}${i.status === "slip_submitted" ? " · " + esc(t("Slip sent")) : ""}</button>`).join("")}</span></div>`).join("")
       + `</details>`).join("");
     return `<div class="panel"><h2>${t("fx_tab_record")}</h2>${filt}
-      <h3>${esc(t("Fee status by batch"))}</h3><p><button type="button" class="btn sm alt" data-do="fxGridPdf">${esc(t("Download PDF"))}</button></p>${fxGrid(grid)}${open ? `<h3>${esc(t("Other invoices"))}</h3>${open}` : ""}${!inv.length ? `<p class="msg ok">${t("fx_nothing_open")}</p>` : ""}
+      <h3>${esc(t("Fee status by batch"))}</h3><p class="seg"><button type="button" class="btn sm alt" data-do="fxGridPdf">${esc(t("Download PDF"))}</button><button type="button" class="btn sm alt" data-do="fxGridXlsx">${esc(t("Download Excel"))}</button></p>${fxGrid(grid)}${open ? `<h3>${esc(t("Other invoices"))}</h3>${open}` : ""}${!inv.length ? `<p class="msg ok">${t("fx_nothing_open")}</p>` : ""}
       <h3 id="fxp_h">${esc(t("Record a payment"))}</h3>${shown.length ? `<form id="fxp" class="row">${field("fxp_i", t("fx_invoice"), "", shown.map(i => [i.id, `${fxMon(i.period)} · ${i.student_name} · ${i.course_name ? i.course_name + " " + (i.batch_code || "") : (i.description || "")} · MVR ${i.balance}`]))}
       <label>${t("fx_amount_received")}<input id="fxp_a" type="number" min="1" step="1" inputmode="numeric" required></label>${field("fxp_m", t("fx_method"), "", ["cash", "bank_transfer", "other"].map(m => [m, t("fx_m_" + m)]))}
       <label>${t("date")}<input id="fxp_d" type="date" max="${mvToday()}" value="${mvToday()}"></label><label>${t("fx_reference")}<input id="fxp_r"></label><label>${t("fx_note")}<input id="fxp_n"></label><label>${t("fx_attach_slip")}<input id="fxp_f" type="file" accept="${FX_SLIP_ACCEPT}"><span class="hint">${t("fx_attach_slip_hint")}</span></label><label class="inl"><input id="fxp_t" type="checkbox" checked> ${t("fx_tell_student")}</label><button class="btn alt">${t("fx_record")}</button></form>` : `<p>${t("empty")}</p>`}</div>

@@ -74,7 +74,7 @@ class S49(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         from openpyxl import load_workbook
         wb = load_workbook(io.BytesIO(r.data))
-        vals = [c.value for c in wb["Lists"]["A"]]
+        vals = [c.value for c in wb["Lists"]["B"]]   # v0.8.64: the registry's layout (Expense Code, Expense Type)
         self.assertIn("Badname", vals)
 
     def test_05_calculate_explains(self):
